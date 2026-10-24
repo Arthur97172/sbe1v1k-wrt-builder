@@ -423,7 +423,8 @@ CI 的装配树里没有厂商 QSDK 树，而默认设备的 `DEVICE_PACKAGES` �
 - 生成：`scripts/ci/export-nss-src.sh`（固定排序/mtime/属主，输出可重复；
   打包前复核许可并拒绝任何 `*.bin`/`*.ko`/`*.o`）；
 - 上传：`scripts/ci/export-nss-src.sh --upload`（需要 `GH_TOKEN`，发布到
-  `Arthur97172/sbe1v1k` 的 `nss-src-v1` Release；仓库是公开的，CI 下载不需要 token）；
+  `Arthur97172/sbe1v1k` 的 `nss-src-v1` Release；仓库为私有后，CI 用
+  workflow 的 `GH_TOKEN` 通过 `gh release download` 认证下载）；
 - 校验：仓库里提交 `nss/nss-src.tar.gz.sha256`，`prepare-tree.sh` 解包前必须通过
   `sha256sum -c`；CI 端缓存到 `<工作区>/.sbe-cache/nss-src-v1`。
 

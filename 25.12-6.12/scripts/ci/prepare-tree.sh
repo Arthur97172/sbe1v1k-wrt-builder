@@ -119,7 +119,8 @@ done
 # nss-src-v1。默认设备 spectrum_sbe1v1k 的 DEVICE_PACKAGES 依赖
 # kmod-qca-ssdk-nohnat / kmod-qca-nss-dp / kmod-qca-nss-ppe，而补丁 0009
 # 又删掉了主线 PPE 节点；不装这几个包，镜像就没有以太网。
-NSS_URL=${NSS_SRC_URL:-https://github.com/Arthur97172/sbe1v1k/releases/download/nss-src-v1/nss-src-v1.tar.gz}
+NSS_REPO=${SBE_REPO:-${GITHUB_REPOSITORY:-Arthur97172/sbe1v1k}}
+NSS_URL=${NSS_SRC_URL:-https://github.com/$NSS_REPO/releases/download/nss-src-v1/nss-src-v1.tar.gz}
 NSS_SHA_FILE=$PROJ/nss/nss-src.tar.gz.sha256
 NSS_CACHE=$ROOT/.sbe-cache
 
@@ -136,6 +137,13 @@ else
 	if [ -n "${SBE_NSS_SRC_TARBALL:-}" ]; then
 		echo "[prepare]   使用本地源码包 $SBE_NSS_SRC_TARBALL"
 		cp "$SBE_NSS_SRC_TARBALL" "$tmp/nss-src-v1.tar.gz"
+	elif [ -n "${GH_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+		# 私有仓库的 Release 资产不能匿名下载；有 token 时走 gh（CI 里始终有）。
+		echo "[prepare]   用 gh 下载 $NSS_REPO 的 nss-src-v1"
+		GH_TOKEN="$GH_TOKEN" gh release download nss-src-v1 \
+			--repo "$NSS_REPO" \
+			--pattern 'nss-src-v1.tar.gz' \
+			--dir "$tmp" --clobber
 	else
 		echo "[prepare]   下载 $NSS_URL"
 		curl -fL --retry 3 --retry-delay 2 -o "$tmp/nss-src-v1.tar.gz" "$NSS_URL"
