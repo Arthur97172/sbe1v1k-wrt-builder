@@ -5,17 +5,18 @@
 # 不入库），而默认设备 spectrum_sbe1v1k 的 DEVICE_PACKAGES 依赖
 # kmod-qca-ssdk-nohnat / kmod-qca-nss-dp / kmod-qca-nss-ppe。没有源码就装
 # 不上这三个包，而补丁 0009 又删掉了主线 PPE 节点 —— 结果是没有以太网的
-# 镜像。因此把四个包的源码单独发布，CI 在 prepare-tree.sh 里下载。
+# 镜像。因此把这些包的源码单独发布，CI 在 prepare-tree.sh 里下载。
 #
 # 只打包源码，不含任何二进制固件：
 #   base/     qca-ssdk  qca-nss-phy  qca-nss-dp  qca-nss-ppe
-#   clients/  qca-nss-ecm  qca-nss-ae-clients
+#   clients/  qca-nss-ecm  qca-nss-ae-clients  qca-nss-sfe
 #
-# clients/ 的两个包是 W1（PPE 数据通路）才接入的：ecm 是连接管理器，
-# ae-clients 的 Makefile 定义了 bridge-mgr / vlan-mgr / ath-clients 等子包。
+# clients/ 的三个包是 W1（PPE 数据通路）才接入的：ecm 是连接管理器，
+# ae-clients 的 Makefile 定义了 bridge-mgr / vlan-mgr / ath-clients 等子包，
+# sfe 提供 ipq95xx 上 ECM 的 SFE 前端所需的快捷转发模块。
 # 它们只在 ipq95xx 上被选中，不改变既有四个包的内容。
 #
-# 授权：四个包内的 .c/.h/Makefile 全部是 ISC（部分文件带 SPDX 行，其余在
+# 授权：这些包内的 .c/.h/Makefile 全部是 ISC（部分文件带 SPDX 行，其余在
 # 文件头写明同样的 ISC 许可文本）。脚本最后会复核一次，并生成
 # NOTICE-ISC.txt 一并打包。
 #
@@ -36,7 +37,7 @@ REPO=Arthur97172/sbe1v1k
 TAG=nss-src-v1
 NAME=nss-src-v1
 PKGS_BASE="qca-ssdk qca-nss-phy qca-nss-dp qca-nss-ppe"
-PKGS_CLIENTS="qca-nss-ecm qca-nss-ae-clients"
+PKGS_CLIENTS="qca-nss-ecm qca-nss-ae-clients qca-nss-sfe"
 
 UPLOAD=0
 if [ "${1:-}" = "--upload" ]; then
@@ -99,7 +100,7 @@ NSS source bundle (nss-src-v1)
 ==============================
 
 Contents: qca-ssdk, qca-nss-phy, qca-nss-dp, qca-nss-ppe (from
-qca/src/nss/base) and qca-nss-ecm, qca-nss-ae-clients (from
+qca/src/nss/base) and qca-nss-ecm, qca-nss-ae-clients, qca-nss-sfe (from
 qca/src/nss/clients), taken verbatim from the QSDK 14.x vendor tree.
 
 License: ISC, as stated in every source file (either as an SPDX line or as the
