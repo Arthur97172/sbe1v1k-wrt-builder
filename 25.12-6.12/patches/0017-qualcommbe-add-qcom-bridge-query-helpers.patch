@@ -1,0 +1,223 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 补上 ecm 还需要的三个网桥查询辅助函数
+
+0015 的 0146 只补了 br_fdb_find_vid_by_mac / br_port_dev_get /
+br_is_hairpin_enabled。继续编译 ecm.ko 又遇到三个 QSDK 独有的查询函数，
+主线 6.12 没有导出：
+
+  br_dev_is_vlan_filter_enabled()  端口/网桥是否有可用的 VLAN 过滤配置
+                                   （注意语义是反的：0 = 可用，与 ECM 的
+                                   读法一致，来自 QSDK br_vlan.c）；
+  br_fdb_has_entry()               按 MAC+VID 查端口所在网桥的 FDB 表项；
+  br_fdb_entry_refresh()           刷新已学习表项的时间戳，避免被卸载的
+                                   流把 FDB 表项过期掉。
+
+实现基于主线已有的 br_vlan_enabled()/br_vlan_group()/nbp_vlan_group() 与
+br_port_get_rcu()/br_fdb_find_rcu()，行为与 QSDK 一致；地址参数用
+const unsigned char *（ECM 传的就是它，QSDK 的 const char * 会只会产生
+pointer-sign 告警）。
+
+分类：必须 shim（厂商内核 ABI）；移植 QSDK 实现到主线原语上。
+--- a/target/linux/qualcommbe/patches-6.12/0375-net-bridge-add-qcom-query-helpers.patch
++++ b/target/linux/qualcommbe/patches-6.12/0375-net-bridge-add-qcom-query-helpers.patch
+@@ -0,0 +1,200 @@
++net: bridge: add the remaining QSDK query helpers used by qca-nss-ecm
++
++QSDK's kernel carries three more bridge helpers that qca-nss-ecm calls while
++classifying a connection.  Mainline 6.12 has the primitives but no exported
++wrappers, so ecm.ko fails to compile (-Wimplicit-function-declaration):
++
++  br_dev_is_vlan_filter_enabled(dev)
++	Returns 0 when @dev (a bridge or a bridge port) has a usable VLAN
++	filter configuration, an error otherwise -- note the inverted sense,
++	which is how ECM reads it (ecm_db_connection.c treats non-zero as
++	"skip this bridge").  Ported from QSDK br_vlan.c.
++
++  br_fdb_has_entry(dev, addr, vid)
++	Returns the bridge FDB entry of port @dev for @addr/@vid, or NULL.
++	ECM uses the pointer as a boolean before accelerating a bridged flow.
++
++  br_fdb_entry_refresh(dev, addr, vid)
++	Bumps the timestamp of an already learned entry so that a flow being
++	forwarded by an offload engine keeps the bridge's FDB entry alive.
++	Nothing is created for an unknown address.
++
++The first lives in br_vlan.c (it needs br_vlan_enabled() and the VLAN
++groups); the other two use br_port_get_rcu()/br_fdb_find_rcu() and live in
++br_fdb.c.  The signatures use const unsigned char * for the address, which
++is what ECM passes; QSDK declares const char *, which only produced
++pointer-sign warnings at the call sites.
++
++Classification: must-shim (vendor kernel ABI); QSDK implementations ported
++onto mainline primitives, behaviour unchanged.
++
++--- a/include/linux/if_bridge.h
+++++ b/include/linux/if_bridge.h
++@@ -123,6 +123,7 @@
++ bool br_mst_enabled(const struct net_device *dev);
++ int br_mst_get_info(const struct net_device *dev, u16 msti, unsigned long *vids);
++ int br_mst_get_state(const struct net_device *dev, u16 msti, u8 *state);
+++int br_dev_is_vlan_filter_enabled(const struct net_device *dev);
++ #else
++ static inline bool br_vlan_enabled(const struct net_device *dev)
++ {
++@@ -171,8 +172,15 @@
++ {
++ 	return -EINVAL;
++ }
+++
+++static inline int br_dev_is_vlan_filter_enabled(const struct net_device *dev)
+++{
+++	return -EINVAL;
+++}
++ #endif
++ 
+++struct net_bridge_fdb_entry;
+++
++ #if IS_ENABLED(CONFIG_BRIDGE)
++ struct net_device *br_fdb_find_port(const struct net_device *br_dev,
++ 				    const unsigned char *addr,
++@@ -189,6 +197,11 @@
++ 				   unsigned char *addr, struct sk_buff *skb,
++ 				   unsigned int cookie);
++ bool br_is_hairpin_enabled(struct net_device *dev);
+++void br_fdb_entry_refresh(struct net_device *dev, const unsigned char *addr,
+++			  u16 vid);
+++struct net_bridge_fdb_entry *br_fdb_has_entry(struct net_device *dev,
+++					      const unsigned char *addr,
+++					      u16 vid);
++ #else
++ static inline struct net_device *
++ br_fdb_find_port(const struct net_device *br_dev,
++@@ -233,6 +246,17 @@
++ 	return false;
++ }
++ 
+++static inline void br_fdb_entry_refresh(struct net_device *dev,
+++					const unsigned char *addr, u16 vid)
+++{
+++}
+++
+++static inline struct net_bridge_fdb_entry *
+++br_fdb_has_entry(struct net_device *dev, const unsigned char *addr, u16 vid)
+++{
+++	return NULL;
+++}
+++
++ static inline u8 br_port_get_stp_state(const struct net_device *dev)
++ {
++ 	return BR_STATE_DISABLED;
++--- a/net/bridge/br_fdb.c
+++++ b/net/bridge/br_fdb.c
++@@ -311,6 +311,58 @@
++ }
++ EXPORT_SYMBOL_GPL(br_fdb_find_vid_by_mac);
++ 
+++/*
+++ * br_fdb_entry_refresh()
+++ *	Update the timestamp of an already learned entry so that a flow being
+++ *	forwarded by an offload engine keeps the bridge's FDB entry alive.
+++ *	Nothing is created: an unknown address is simply ignored.
+++ */
+++void br_fdb_entry_refresh(struct net_device *dev, const unsigned char *addr,
+++			  u16 vid)
+++{
+++	struct net_bridge_fdb_entry *fdb;
+++	struct net_bridge_port *p;
+++
+++	if (!dev || !is_valid_ether_addr(addr))
+++		return;
+++
+++	/*
+++	 * QSDK looks the port up before taking the lock; do it inside, since
+++	 * br_port_get_rcu() dereferences under RCU.
+++	 */
+++	rcu_read_lock();
+++	p = br_port_get_rcu(dev);
+++	if (!p || p->state == BR_STATE_DISABLED) {
+++		rcu_read_unlock();
+++		return;
+++	}
+++
+++	fdb = br_fdb_find_rcu(p->br, addr, vid);
+++	if (likely(fdb))
+++		fdb->updated = jiffies;
+++	rcu_read_unlock();
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_entry_refresh);
+++
+++/*
+++ * br_fdb_has_entry()
+++ *	Returns the FDB entry for @addr/@vid learned on the bridge port @dev, or
+++ *	NULL.  Caller must hold rcu_read_lock().  QSDK keeps using the pointer
+++ *	only as a boolean.
+++ */
+++struct net_bridge_fdb_entry *br_fdb_has_entry(struct net_device *dev,
+++					      const unsigned char *addr,
+++					      u16 vid)
+++{
+++	struct net_bridge_port *p = br_port_get_rcu(dev);
+++
+++	if (!p || p->state == BR_STATE_DISABLED)
+++		return NULL;
+++
+++	return br_fdb_find_rcu(p->br, addr, vid);
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_has_entry);
+++
++ /* When a static FDB entry is added, the mac address from the entry is
++  * added to the bridge private HW address list and all required ports
++  * are then updated with the new information.
++--- a/net/bridge/br_vlan.c
+++++ b/net/bridge/br_vlan.c
++@@ -2315,3 +2315,50 @@
++ {
++ 	rtnl_unregister_many(br_vlan_rtnl_msg_handlers);
++ }
+++
+++/*
+++ * br_dev_is_vlan_filter_enabled()
+++ *	Caller should hold rcu_read_lock().
+++ *	Returns 0 when @dev (a bridge or a bridge port) has a usable VLAN
+++ *	filter configuration, and an error code otherwise -- the inverse of
+++ *	what the name suggests, as in QSDK:
+++ *	  -ENODEV  no device
+++ *	  -EINVAL  neither a bridge nor a bridge port, or no master
+++ *	  -ENOENT  VLAN filtering disabled
+++ *	  -ENXIO   filtering enabled but no VLAN configured
+++ */
+++int br_dev_is_vlan_filter_enabled(const struct net_device *dev)
+++{
+++	struct net_bridge_vlan_group *vg = NULL;
+++	struct net_bridge_port *p;
+++	struct net_device *master;
+++
+++	if (!dev)
+++		return -ENODEV;
+++
+++	if (netif_is_bridge_master(dev)) {
+++		if (!br_vlan_enabled(dev))
+++			return -ENOENT;
+++
+++		vg = br_vlan_group(netdev_priv(dev));
+++	} else if (dev->priv_flags & IFF_BRIDGE_PORT) {
+++		master = netdev_master_upper_dev_get_rcu((struct net_device *)dev);
+++		if (!master)
+++			return -EINVAL;
+++
+++		if (!br_vlan_enabled(master))
+++			return -ENOENT;
+++
+++		p = br_port_get_rcu(dev);
+++		if (p)
+++			vg = nbp_vlan_group(p);
+++	} else {
+++		return -EINVAL;
+++	}
+++
+++	if (vg && vg->num_vlans)
+++		return 0;
+++
+++	return -ENXIO;
+++}
+++EXPORT_SYMBOL_GPL(br_dev_is_vlan_filter_enabled);

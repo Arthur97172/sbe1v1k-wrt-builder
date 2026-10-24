@@ -1,0 +1,776 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe-rule: build against Linux 6.12 / OpenWrt 25.12
+
+Three unrelated errors surface when qca-nss-ppe-rule is built with the
+25.12 toolchain:
+
+1. Linux 6.8 changed struct ctl_table's proc_handler to take a const
+   pointer.  ppe_rfs_mcast_rfs_enable_handler() still takes a mutable
+   one, which 6.12 rejects with -Wincompatible-pointer-types.  Same
+   change as 0021 for ppe_vp.
+
+2. OpenWrt 25.12 enables -Wmissing-prototypes and builds with -Werror.
+   The vendor sources define many helpers at file scope with no
+   prototype in any header and call them only from the same file.  They
+   are given internal linkage (static), the same way the rest of the
+   module is written.  No symbol touched here is referenced from another
+   translation unit or exported: each name occurs in exactly one .c file
+   of the package and in none of its headers.
+
+3. strlcpy() has been removed from the kernel; strscpy() replaces it.
+   Both stop at a NUL-terminated source and truncate to the destination
+   size, so the dev-name copy behaves as before.
+
+No behaviour change: the handler keeps its body, the helpers keep their
+bodies, and the copy still truncates to fit.
+---
+diff -ruN a/drv/ppe_rule/ppe_acl/ppe_acl.c b/drv/ppe_rule/ppe_acl/ppe_acl.c
+--- a/drv/ppe_rule/ppe_acl/ppe_acl.c	2026-10-21 04:46:14.876813067 +0000
++++ b/drv/ppe_rule/ppe_acl/ppe_acl.c	2026-10-24 09:54:34.857992213 +0000
+@@ -242,7 +242,7 @@
+  * ppe_acl_rule_process_skb()
+  *	Process the packet based on ACL rule.
+  */
+-bool ppe_acl_rule_process_skb(void *appdata, struct sk_buff *skb, struct ppe_drv_acl_metadata *acl_info)
++static bool ppe_acl_rule_process_skb(void *appdata, struct sk_buff *skb, struct ppe_drv_acl_metadata *acl_info)
+ {
+ 	struct ppe_acl_base *acl_g = &ppe_acl_gbl;
+ 	struct ppe_acl_rule_hw_ind_map *acl_hw_map = NULL;
+@@ -287,7 +287,7 @@
+  * ppe_acl_rule_flow_del_cb()
+  *	 Flow delete callback for n-tuple match.
+  */
+-bool ppe_acl_rule_flow_del_cb(void *app_data, struct ppe_drv_acl_flow_bind *info)
++static bool ppe_acl_rule_flow_del_cb(void *app_data, struct ppe_drv_acl_flow_bind *info)
+ {
+ 	struct ppe_acl_base *acl_g = &ppe_acl_gbl;
+ 	struct ppe_acl *acl;
+@@ -322,7 +322,7 @@
+  * ppe_acl_rule_flow_add_cb()
+  *	 Return a service code corresponding to rule ID for n-tuple match.
+  */
+-bool ppe_acl_rule_flow_add_cb(void *app_data, struct ppe_drv_acl_flow_bind *info)
++static bool ppe_acl_rule_flow_add_cb(void *app_data, struct ppe_drv_acl_flow_bind *info)
+ {
+ 	struct ppe_acl_base *acl_g = &ppe_acl_gbl;
+ 	struct ppe_acl *acl;
+@@ -3305,7 +3305,7 @@
+  * ppe_acl_hw_ind_map_entries_free()
+  *	Free the ACL hw index map table.
+  */
+-void ppe_acl_hw_ind_map_entries_free(struct ppe_acl_rule_hw_ind_map *acl_hw_map)
++static void ppe_acl_hw_ind_map_entries_free(struct ppe_acl_rule_hw_ind_map *acl_hw_map)
+ {
+ 	vfree(acl_hw_map);
+ }
+@@ -3314,7 +3314,7 @@
+  * ppe_acl_hw_ind_map_entries_alloc()
+  *	Allocates and initialize the ACL hw index map.
+  */
+-struct ppe_acl_rule_hw_ind_map *ppe_acl_hw_ind_map_entries_alloc(void)
++static struct ppe_acl_rule_hw_ind_map *ppe_acl_hw_ind_map_entries_alloc(void)
+ {
+ 	struct ppe_acl_base *acl_g = &ppe_acl_gbl;
+ 	struct ppe_acl_rule_hw_ind_map *acl_hw_map = NULL;
+diff -ruN a/drv/ppe_rule/ppe_acl/ppe_acl_dump.c b/drv/ppe_rule/ppe_acl/ppe_acl_dump.c
+--- a/drv/ppe_rule/ppe_acl/ppe_acl_dump.c	2026-10-21 04:46:14.877110221 +0000
++++ b/drv/ppe_rule/ppe_acl/ppe_acl_dump.c	2026-10-24 09:56:54.881212337 +0000
+@@ -156,7 +156,7 @@
+  * ppe_acl_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_acl_dump_write_reset(struct ppe_acl_dump_instance *adi, char *base_prefix)
++static int ppe_acl_dump_write_reset(struct ppe_acl_dump_instance *adi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -178,7 +178,7 @@
+  * ppe_acl_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_acl_dump_prefix_add(struct ppe_acl_dump_instance *adi, char *prefix)
++static int ppe_acl_dump_prefix_add(struct ppe_acl_dump_instance *adi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -202,7 +202,7 @@
+  * ppe_acl_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_acl_dump_prefix_index_add(struct ppe_acl_dump_instance *adi, uint32_t index)
++static int ppe_acl_dump_prefix_index_add(struct ppe_acl_dump_instance *adi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -225,7 +225,7 @@
+  * ppe_acl_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_acl_dump_prefix_remove(struct ppe_acl_dump_instance *adi)
++static int ppe_acl_dump_prefix_remove(struct ppe_acl_dump_instance *adi)
+ {
+ 	int pxsz;
+ 
+@@ -240,7 +240,7 @@
+  * ppe_acl_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_acl_dump_write(struct ppe_acl_dump_instance *adi, char *name, char *fmt, ...)
++static int ppe_acl_dump_write(struct ppe_acl_dump_instance *adi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -282,7 +282,7 @@
+  * ppe_acl_dump_one()
+  *	Fill ACL dump information for one ACL rule.
+  */
+-int ppe_acl_dump_one(struct ppe_acl_dump_instance *adi, struct ppe_acl *acl)
++static int ppe_acl_dump_one(struct ppe_acl_dump_instance *adi, struct ppe_acl *acl)
+ {
+ 	int result;
+ 	uint64_t pkts, bytes;
+diff -ruN a/drv/ppe_rule/ppe_cos_map/ppe_cos_map.c b/drv/ppe_rule/ppe_cos_map/ppe_cos_map.c
+--- a/drv/ppe_rule/ppe_cos_map/ppe_cos_map.c	2026-10-21 04:46:14.877110221 +0000
++++ b/drv/ppe_rule/ppe_cos_map/ppe_cos_map.c	2026-10-24 10:04:25.487362428 +0000
+@@ -75,7 +75,7 @@
+  * ppe_cos_map_alloc
+  *	Alloc ppe CoS map alloc
+  */
+-struct ppe_cos_map_rule *ppe_cos_map_alloc(void)
++static struct ppe_cos_map_rule *ppe_cos_map_alloc(void)
+ {
+ 	/*
+ 	 * Allocate memory for a new rule
+@@ -90,7 +90,7 @@
+  * ppe_cos_map_free
+  *	Alloc ppe CoS map free
+  */
+-void ppe_cos_map_free(struct ppe_cos_map_rule *rule)
++static void ppe_cos_map_free(struct ppe_cos_map_rule *rule)
+ {
+ 	kfree(rule);
+ }
+@@ -462,7 +462,7 @@
+ 		}
+ 	}
+ 
+-	strlcpy(port_grp->dev, info->dev, IFNAMSIZ);
++	strscpy(port_grp->dev, info->dev, IFNAMSIZ);
+ 	port_grp->port_id = port_id;
+ 	port_grp->cfg.tci_grp_id = info->tci_grp_id;
+ 	port_grp->cfg.tos_grp_id = info->tos_grp_id;
+diff -ruN a/drv/ppe_rule/ppe_cos_map/ppe_cos_map_dump.c b/drv/ppe_rule/ppe_cos_map/ppe_cos_map_dump.c
+--- a/drv/ppe_rule/ppe_cos_map/ppe_cos_map_dump.c	2026-10-21 04:46:14.877509158 +0000
++++ b/drv/ppe_rule/ppe_cos_map/ppe_cos_map_dump.c	2026-10-24 10:01:19.639447932 +0000
+@@ -13,7 +13,7 @@
+  * ppe_cos_map_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_cos_map_dump_write_reset(struct ppe_cos_map_dump_instance *pqmdi, char *base_prefix)
++static int ppe_cos_map_dump_write_reset(struct ppe_cos_map_dump_instance *pqmdi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -35,7 +35,7 @@
+  * ppe_cos_map_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_cos_map_dump_prefix_add(struct ppe_cos_map_dump_instance *pqmdi, char *prefix)
++static int ppe_cos_map_dump_prefix_add(struct ppe_cos_map_dump_instance *pqmdi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -63,7 +63,7 @@
+  * ppe_cos_map_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_cos_map_dump_prefix_index_add(struct ppe_cos_map_dump_instance *pqmdi, uint32_t index)
++static int ppe_cos_map_dump_prefix_index_add(struct ppe_cos_map_dump_instance *pqmdi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -86,7 +86,7 @@
+  * ppe_cos_map_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_cos_map_dump_prefix_remove(struct ppe_cos_map_dump_instance *pqmdi)
++static int ppe_cos_map_dump_prefix_remove(struct ppe_cos_map_dump_instance *pqmdi)
+ {
+ 	int pxsz;
+ 
+@@ -101,7 +101,7 @@
+  * ppe_cos_map_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_cos_map_dump_write(struct ppe_cos_map_dump_instance *pqmdi, char *name, char *fmt, ...)
++static int ppe_cos_map_dump_write(struct ppe_cos_map_dump_instance *pqmdi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+diff -ruN a/drv/ppe_rule/ppe_dot1p/ppe_dot1p_dump.c b/drv/ppe_rule/ppe_dot1p/ppe_dot1p_dump.c
+--- a/drv/ppe_rule/ppe_dot1p/ppe_dot1p_dump.c	2026-10-21 04:46:14.877818306 +0000
++++ b/drv/ppe_rule/ppe_dot1p/ppe_dot1p_dump.c	2026-10-24 10:01:19.639707394 +0000
+@@ -21,7 +21,7 @@
+  * ppe_dot1p_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_dot1p_dump_write_reset(struct ppe_dot1p_dump_instance *ddi, char *base_prefix)
++static int ppe_dot1p_dump_write_reset(struct ppe_dot1p_dump_instance *ddi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -43,7 +43,7 @@
+  * ppe_dot1p_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_dot1p_dump_prefix_add(struct ppe_dot1p_dump_instance *ddi, char *prefix)
++static int ppe_dot1p_dump_prefix_add(struct ppe_dot1p_dump_instance *ddi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -67,7 +67,7 @@
+  * ppe_dot1p_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_dot1p_dump_prefix_index_add(struct ppe_dot1p_dump_instance *ddi, uint32_t index)
++static int ppe_dot1p_dump_prefix_index_add(struct ppe_dot1p_dump_instance *ddi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -90,7 +90,7 @@
+  * ppe_dot1p_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_dot1p_dump_prefix_remove(struct ppe_dot1p_dump_instance *ddi)
++static int ppe_dot1p_dump_prefix_remove(struct ppe_dot1p_dump_instance *ddi)
+ {
+ 	int pxsz;
+ 
+@@ -105,7 +105,7 @@
+  * ppe_dot1p_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_dot1p_dump_write(struct ppe_dot1p_dump_instance *ddi, char *name, char *fmt, ...)
++static int ppe_dot1p_dump_write(struct ppe_dot1p_dump_instance *ddi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -147,7 +147,7 @@
+  * ppe_dot1p_dump_def()
+  *	Fill DOT1P dump information with the default DOT1P rule.
+  */
+-int ppe_dot1p_dump_def(struct ppe_dot1p_dump_instance *ddi, struct ppe_dot1p_def_rule *r_def)
++static int ppe_dot1p_dump_def(struct ppe_dot1p_dump_instance *ddi, struct ppe_dot1p_def_rule *r_def)
+ {
+ 	int result;
+ 
+@@ -208,7 +208,7 @@
+  * ppe_dot1p_policer_dump_one()
+  *	Fill DOT1P dump information for one DOT1P policer rule.
+  */
+-int ppe_dot1p_policer_dump_one(struct ppe_dot1p_dump_instance *ddi, struct ppe_dot1p_policer *dot1p)
++static int ppe_dot1p_policer_dump_one(struct ppe_dot1p_dump_instance *ddi, struct ppe_dot1p_policer *dot1p)
+ {
+ 	int result;
+ 	struct ppe_dot1p_policer_rule_match *r;
+@@ -296,7 +296,7 @@
+  * ppe_dot1p_dump_one()
+  *	Fill DOT1P dump information for one DOT1P rule.
+  */
+-int ppe_dot1p_dump_one(struct ppe_dot1p_dump_instance *ddi, struct ppe_dot1p *dot1p)
++static int ppe_dot1p_dump_one(struct ppe_dot1p_dump_instance *ddi, struct ppe_dot1p *dot1p)
+ {
+ 	int result;
+ 	struct ppe_dot1p_rule_match *r;
+diff -ruN a/drv/ppe_rule/ppe_dscp/ppe_dscp_dump.c b/drv/ppe_rule/ppe_dscp/ppe_dscp_dump.c
+--- a/drv/ppe_rule/ppe_dscp/ppe_dscp_dump.c	2026-10-21 04:46:14.878070428 +0000
++++ b/drv/ppe_rule/ppe_dscp/ppe_dscp_dump.c	2026-10-24 10:01:19.639799571 +0000
+@@ -12,7 +12,7 @@
+  * ppe_dscp_dump_write()
+  *	Write out to the message buffer.
+  */
+-int ppe_dscp_dump_write(struct ppe_dscp_dump_instance *ddi, char *fmt, ...)
++static int ppe_dscp_dump_write(struct ppe_dscp_dump_instance *ddi, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+diff -ruN a/drv/ppe_rule/ppe_gemport/ppe_gemport_dump.c b/drv/ppe_rule/ppe_gemport/ppe_gemport_dump.c
+--- a/drv/ppe_rule/ppe_gemport/ppe_gemport_dump.c	2026-10-21 04:46:14.878289811 +0000
++++ b/drv/ppe_rule/ppe_gemport/ppe_gemport_dump.c	2026-10-24 10:01:19.639975205 +0000
+@@ -11,7 +11,7 @@
+  * ppe_gem_port_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_gem_port_dump_write_reset(struct ppe_gem_port_dump_instance *ddi, char *base_prefix)
++static int ppe_gem_port_dump_write_reset(struct ppe_gem_port_dump_instance *ddi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -33,7 +33,7 @@
+  * ppe_gem_port_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_gem_port_dump_prefix_add(struct ppe_gem_port_dump_instance *ddi, char *prefix)
++static int ppe_gem_port_dump_prefix_add(struct ppe_gem_port_dump_instance *ddi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -57,7 +57,7 @@
+  * ppe_gem_port_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_gem_port_dump_prefix_index_add(struct ppe_gem_port_dump_instance *ddi, uint32_t index)
++static int ppe_gem_port_dump_prefix_index_add(struct ppe_gem_port_dump_instance *ddi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -80,7 +80,7 @@
+  * ppe_gem_port_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_gem_port_dump_prefix_remove(struct ppe_gem_port_dump_instance *ddi)
++static int ppe_gem_port_dump_prefix_remove(struct ppe_gem_port_dump_instance *ddi)
+ {
+ 	int pxsz;
+ 
+@@ -95,7 +95,7 @@
+  * ppe_gem_port_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_gem_port_dump_write(struct ppe_gem_port_dump_instance *ddi, char *name, char *fmt, ...)
++static int ppe_gem_port_dump_write(struct ppe_gem_port_dump_instance *ddi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -137,7 +137,7 @@
+  * ppe_gem_port_dump_one()
+  *	Fill GEM PORT dump information for one GEM PORT rule.
+  */
+-int ppe_gem_port_dump_one(struct ppe_gem_port_dump_instance *ddi, struct ppe_gem_port *gem_port)
++static int ppe_gem_port_dump_one(struct ppe_gem_port_dump_instance *ddi, struct ppe_gem_port *gem_port)
+ {
+ 	int result;
+ 	struct ppe_gem_port_rule_match *r;
+diff -ruN a/drv/ppe_rule/ppe_mcast/ppe_mcast_dump.c b/drv/ppe_rule/ppe_mcast/ppe_mcast_dump.c
+--- a/drv/ppe_rule/ppe_mcast/ppe_mcast_dump.c	2026-10-21 04:46:14.878552963 +0000
++++ b/drv/ppe_rule/ppe_mcast/ppe_mcast_dump.c	2026-10-24 10:01:19.640146204 +0000
+@@ -12,7 +12,7 @@
+  * ppe_mcast_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_mcast_dump_write_reset(struct ppe_mcast_dump_instance *pmdi, char *base_prefix)
++static int ppe_mcast_dump_write_reset(struct ppe_mcast_dump_instance *pmdi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -34,7 +34,7 @@
+  * ppe_mcast_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_mcast_dump_prefix_add(struct ppe_mcast_dump_instance *pmdi, char *prefix)
++static int ppe_mcast_dump_prefix_add(struct ppe_mcast_dump_instance *pmdi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -58,7 +58,7 @@
+  * ppe_mcast_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_mcast_dump_prefix_index_add(struct ppe_mcast_dump_instance *pmdi, uint32_t index)
++static int ppe_mcast_dump_prefix_index_add(struct ppe_mcast_dump_instance *pmdi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -81,7 +81,7 @@
+  * ppe_mcast_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_mcast_dump_prefix_remove(struct ppe_mcast_dump_instance *pmdi)
++static int ppe_mcast_dump_prefix_remove(struct ppe_mcast_dump_instance *pmdi)
+ {
+ 	int pxsz;
+ 
+@@ -96,7 +96,7 @@
+  * ppe_mcast_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_mcast_dump_write(struct ppe_mcast_dump_instance *pmdi, char *name, char *fmt, ...)
++static int ppe_mcast_dump_write(struct ppe_mcast_dump_instance *pmdi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -203,7 +203,7 @@
+  * ppe_mcast_dump_one_group()
+  *	Fill multicast dump information for one group.
+  */
+-int ppe_mcast_dump_one_group(struct ppe_mcast_dump_instance *pmdi, struct ppe_mcast_group *group)
++static int ppe_mcast_dump_one_group(struct ppe_mcast_dump_instance *pmdi, struct ppe_mcast_group *group)
+ {
+ 	int result;
+ 	struct ppe_mcast_entry *mc_entry;
+diff -ruN a/drv/ppe_rule/ppe_mirror/ppe_mirror.c b/drv/ppe_rule/ppe_mirror/ppe_mirror.c
+--- a/drv/ppe_rule/ppe_mirror/ppe_mirror.c	2026-10-21 04:46:14.878552963 +0000
++++ b/drv/ppe_rule/ppe_mirror/ppe_mirror.c	2026-10-24 10:03:16.757393811 +0000
+@@ -29,7 +29,7 @@
+  * ppe_mirror_process_skb()
+  *	Process mirrored packets from PPE.
+  */
+-bool ppe_mirror_process_skb(void *appdata, struct sk_buff *skb, void *info)
++static bool ppe_mirror_process_skb(void *appdata, struct sk_buff *skb, void *info)
+ {
+ 	struct ppe_mirror *mirror_g = &gbl_ppe_mirror;
+ 	struct ppe_drv_cc_metadata *cc_info = (struct ppe_drv_cc_metadata *)info;
+@@ -175,7 +175,7 @@
+  *	Serach the group info for the ACL index.
+  *	Create one if it does not exists.
+  */
+-ppe_mirror_ret_t ppe_mirror_get_group_info_for_acl(struct ppe_mirror *mirror_g,
++static ppe_mirror_ret_t ppe_mirror_get_group_info_for_acl(struct ppe_mirror *mirror_g,
+ 						   struct ppe_mirror_acl_mapping_info *map_info,
+ 						   struct ppe_mirror_group_info **group_info)
+ {
+diff -ruN a/drv/ppe_rule/ppe_pm/ppe_pm_dump.c b/drv/ppe_rule/ppe_pm/ppe_pm_dump.c
+--- a/drv/ppe_rule/ppe_pm/ppe_pm_dump.c	2026-10-21 04:46:14.879090232 +0000
++++ b/drv/ppe_rule/ppe_pm/ppe_pm_dump.c	2026-10-24 10:01:19.640331850 +0000
+@@ -64,7 +64,7 @@
+  * ppe_pm_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_pm_dump_write_reset(struct ppe_pm_dump_instance *pdi, char *base_prefix)
++static int ppe_pm_dump_write_reset(struct ppe_pm_dump_instance *pdi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -86,7 +86,7 @@
+  * ppe_pm_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_pm_dump_prefix_add(struct ppe_pm_dump_instance *pdi, char *prefix)
++static int ppe_pm_dump_prefix_add(struct ppe_pm_dump_instance *pdi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -110,7 +110,7 @@
+  * ppe_pm_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_pm_dump_prefix_index_add(struct ppe_pm_dump_instance *pdi, uint32_t index)
++static int ppe_pm_dump_prefix_index_add(struct ppe_pm_dump_instance *pdi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -133,7 +133,7 @@
+  * ppe_pm_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_pm_dump_prefix_remove(struct ppe_pm_dump_instance *pdi)
++static int ppe_pm_dump_prefix_remove(struct ppe_pm_dump_instance *pdi)
+ {
+ 	int pxsz;
+ 
+@@ -148,7 +148,7 @@
+  * ppe_pm_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_pm_dump_write(struct ppe_pm_dump_instance *pdi, char *name, char *fmt, ...)
++static int ppe_pm_dump_write(struct ppe_pm_dump_instance *pdi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -190,7 +190,7 @@
+  * ppe_pm_dump_one()
+  *	Fill pm_gen dump information for one pm gen rule.
+  */
+-int ppe_pm_dump_one(struct ppe_pm_dump_instance *pdi, struct ppe_pm_gen *pm_gen)
++static int ppe_pm_dump_one(struct ppe_pm_dump_instance *pdi, struct ppe_pm_gen *pm_gen)
+ {
+ 	int result;
+ 	struct ppe_pm_counter_gen *r;
+diff -ruN a/drv/ppe_rule/ppe_policer/ppe_policer.c b/drv/ppe_rule/ppe_policer/ppe_policer.c
+--- a/drv/ppe_rule/ppe_policer/ppe_policer.c	2026-10-21 04:46:14.879090232 +0000
++++ b/drv/ppe_rule/ppe_policer/ppe_policer.c	2026-10-24 10:00:15.144235415 +0000
+@@ -12,7 +12,7 @@
+  * ppe_policer_alloc
+  *	Alloc ppe policer alloc
+  */
+-struct ppe_policer *ppe_policer_alloc(void)
++static struct ppe_policer *ppe_policer_alloc(void)
+ {
+ 	/*
+ 	 * Allocate memory for a new rule
+@@ -27,7 +27,7 @@
+  * ppe_policer_free
+  *	Alloc ppe policer free
+  */
+-void ppe_policer_free(struct ppe_policer *pol)
++static void ppe_policer_free(struct ppe_policer *pol)
+ {
+ 	kfree(pol);
+ }
+@@ -669,12 +669,12 @@
+ EXPORT_SYMBOL(ppe_policer_create);
+ 
+ #ifdef PPE_RULE_FLOW_TBL_POLICER
+-bool ppe_policer_rule_flow_add_cb(void *app_data, struct ppe_drv_policer_flow *info)
++static bool ppe_policer_rule_flow_add_cb(void *app_data, struct ppe_drv_policer_flow *info)
+ {
+ 	return true;
+ }
+ 
+-bool ppe_policer_rule_flow_del_cb(void *app_data, struct ppe_drv_policer_flow *info)
++static bool ppe_policer_rule_flow_del_cb(void *app_data, struct ppe_drv_policer_flow *info)
+ {
+ 	return true;
+ }
+@@ -684,7 +684,7 @@
+  * ppe_policer_rule_flow_del_cb()
+  *	 Flow delete callback.
+  */
+-bool ppe_policer_rule_flow_del_cb(void *app_data, struct ppe_drv_policer_flow *info)
++static bool ppe_policer_rule_flow_del_cb(void *app_data, struct ppe_drv_policer_flow *info)
+ {
+ 	struct ppe_policer_base *g_policer = &gbl_ppe_policer;
+ 	struct ppe_policer *pol;
+@@ -718,7 +718,7 @@
+  * ppe_policer_rule_flow_add_cb()
+  *	 Return a service code corresponding to rule ID for n-tuple match.
+  */
+-bool ppe_policer_rule_flow_add_cb(void *app_data, struct ppe_drv_policer_flow *info)
++static bool ppe_policer_rule_flow_add_cb(void *app_data, struct ppe_drv_policer_flow *info)
+ {
+ 	struct ppe_policer_base *g_policer = &gbl_ppe_policer;
+ 	struct ppe_acl_rule_flow_policer flow_rule = {0};
+diff -ruN a/drv/ppe_rule/ppe_policer/ppe_policer_dump.c b/drv/ppe_rule/ppe_policer/ppe_policer_dump.c
+--- a/drv/ppe_rule/ppe_policer/ppe_policer_dump.c	2026-10-21 04:46:14.879351797 +0000
++++ b/drv/ppe_rule/ppe_policer/ppe_policer_dump.c	2026-10-24 10:01:19.640538413 +0000
+@@ -12,7 +12,7 @@
+  * ppe_policer_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_policer_dump_write_reset(struct ppe_policer_dump_instance *pdi, char *base_prefix)
++static int ppe_policer_dump_write_reset(struct ppe_policer_dump_instance *pdi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -34,7 +34,7 @@
+  * ppe_policer_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_policer_dump_prefix_add(struct ppe_policer_dump_instance *pdi, char *prefix)
++static int ppe_policer_dump_prefix_add(struct ppe_policer_dump_instance *pdi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -58,7 +58,7 @@
+  * ppe_policer_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_policer_dump_prefix_index_add(struct ppe_policer_dump_instance *pdi, uint32_t index)
++static int ppe_policer_dump_prefix_index_add(struct ppe_policer_dump_instance *pdi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -81,7 +81,7 @@
+  * ppe_policer_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_policer_dump_prefix_remove(struct ppe_policer_dump_instance *pdi)
++static int ppe_policer_dump_prefix_remove(struct ppe_policer_dump_instance *pdi)
+ {
+ 	int pxsz;
+ 
+@@ -96,7 +96,7 @@
+  * ppe_policer_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_policer_dump_write(struct ppe_policer_dump_instance *pdi, char *name, char *fmt, ...)
++static int ppe_policer_dump_write(struct ppe_policer_dump_instance *pdi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -138,7 +138,7 @@
+  * ppe_policer_dump_one()
+  *	Fill POLICER dump information for one POLICER rule.
+  */
+-int ppe_policer_dump_one(struct ppe_policer_dump_instance *pdi, struct ppe_policer *policer)
++static int ppe_policer_dump_one(struct ppe_policer_dump_instance *pdi, struct ppe_policer *policer)
+ {
+ 	int result;
+ 	bool policer_type;
+diff -ruN a/drv/ppe_rule/ppe_qos/ppe_qos.c b/drv/ppe_rule/ppe_qos/ppe_qos.c
+--- a/drv/ppe_rule/ppe_qos/ppe_qos.c	2026-10-21 04:46:14.879816229 +0000
++++ b/drv/ppe_rule/ppe_qos/ppe_qos.c	2026-10-24 10:02:20.003839966 +0000
+@@ -883,7 +883,7 @@
+ 		return PPE_QOS_CREATE_SHAPER_FAIL;
+ 	}
+ 
+-	strlcpy(profile->name, info->name, PPE_QOS_MAX_NAME_LENGTH);
++	strscpy(profile->name, info->name, PPE_QOS_MAX_NAME_LENGTH);
+ 	profile->shaper.rate = info->cir;
+ 	profile->shaper.crate = info->eir;
+ 	profile->shaper.burst = info->cbs;
+@@ -1750,7 +1750,7 @@
+ 			return PPE_QOS_SET_INTERFACE_SHAPER_FAIL;
+ 		}
+ 
+-		strlcpy(tm_if->shaper_name, info->shaper_name, PPE_QOS_MAX_NAME_LENGTH);
++		strscpy(tm_if->shaper_name, info->shaper_name, PPE_QOS_MAX_NAME_LENGTH);
+ 		ppe_qos_stats_inc(&g_qos->stats.qos_set_interface_shaper_success);
+ 		spin_unlock_bh(&g_qos->lock);
+ 		return PPE_QOS_SUCCESS;
+@@ -2037,7 +2037,7 @@
+ 	struct ppe_drv_queue_info q_info = {0};
+ 	struct net_device *dev;
+ 
+-	strlcpy(dev_name, req->dev, IFNAMSIZ);
++	strscpy(dev_name, req->dev, IFNAMSIZ);
+ 	if (dev_name[strlen(dev_name) - 1] == '\n') {
+ 		dev_name[strlen(dev_name) - 1] = '\0';
+ 	}
+diff -ruN a/drv/ppe_rule/ppe_qos/ppe_qos_dump.c b/drv/ppe_rule/ppe_qos/ppe_qos_dump.c
+--- a/drv/ppe_rule/ppe_qos/ppe_qos_dump.c	2026-10-21 04:46:14.880096089 +0000
++++ b/drv/ppe_rule/ppe_qos/ppe_qos_dump.c	2026-10-24 10:01:19.640828024 +0000
+@@ -12,7 +12,7 @@
+  * ppe_qos_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_qos_dump_write_reset(struct ppe_qos_dump_instance *pqdi, char *base_prefix)
++static int ppe_qos_dump_write_reset(struct ppe_qos_dump_instance *pqdi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -34,7 +34,7 @@
+  * ppe_qos_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_qos_dump_prefix_add(struct ppe_qos_dump_instance *pqdi, char *prefix)
++static int ppe_qos_dump_prefix_add(struct ppe_qos_dump_instance *pqdi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -58,7 +58,7 @@
+  * ppe_qos_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_qos_dump_prefix_index_add(struct ppe_qos_dump_instance *pqdi, uint32_t index)
++static int ppe_qos_dump_prefix_index_add(struct ppe_qos_dump_instance *pqdi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -81,7 +81,7 @@
+  * ppe_qos_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_qos_dump_prefix_remove(struct ppe_qos_dump_instance *pqdi)
++static int ppe_qos_dump_prefix_remove(struct ppe_qos_dump_instance *pqdi)
+ {
+ 	int pxsz;
+ 
+@@ -96,7 +96,7 @@
+  * ppe_qos_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_qos_dump_write(struct ppe_qos_dump_instance *pqdi, char *name, char *fmt, ...)
++static int ppe_qos_dump_write(struct ppe_qos_dump_instance *pqdi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -531,7 +531,7 @@
+  * ppe_qos_dump_one_shaper()
+  *	Fill QoS dump information for one shaper rule.
+  */
+-int ppe_qos_dump_one_shaper(struct ppe_qos_dump_instance *pqdi, struct ppe_qos_shaper_profile *profile)
++static int ppe_qos_dump_one_shaper(struct ppe_qos_dump_instance *pqdi, struct ppe_qos_shaper_profile *profile)
+ {
+ 	int result;
+ 	struct ppe_drv_qos_shaper *shaper;
+diff -ruN a/drv/ppe_rule/ppe_rfs/ppe_rfs.c b/drv/ppe_rule/ppe_rfs/ppe_rfs.c
+--- a/drv/ppe_rule/ppe_rfs/ppe_rfs.c	2026-10-21 04:46:14.880096089 +0000
++++ b/drv/ppe_rule/ppe_rfs/ppe_rfs.c	2026-10-24 09:50:47.780471278 +0000
+@@ -525,7 +525,7 @@
+  * ppe_rfs_mcast_rfs_enable_handler()
+  *	Sysctl handler called when mcast_rfs_enable is set.
+  */
+-static int ppe_rfs_mcast_rfs_enable_handler(struct ctl_table *table, int write,
++static int ppe_rfs_mcast_rfs_enable_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+diff -ruN a/drv/ppe_rule/ppe_tun_rps/ppe_tun_rps.c b/drv/ppe_rule/ppe_tun_rps/ppe_tun_rps.c
+--- a/drv/ppe_rule/ppe_tun_rps/ppe_tun_rps.c	2026-10-21 04:46:14.880471913 +0000
++++ b/drv/ppe_rule/ppe_tun_rps/ppe_tun_rps.c	2026-10-24 10:02:20.004036431 +0000
+@@ -781,7 +781,7 @@
+ 	/*
+ 	 * Copy WAN interface name
+ 	 */
+-	strlcpy(prpsc.wan_if, create_ipv4->wan_if, IFNAMSIZ);
++	strscpy(prpsc.wan_if, create_ipv4->wan_if, IFNAMSIZ);
+ 
+ 	/*
+ 	 * Copy inner IP protocol fields to ppe_drv structure
+@@ -910,7 +910,7 @@
+ 	/*
+ 	 * Copy WAN interface name
+ 	 */
+-	strlcpy(prpsc.wan_if, create_ipv6->wan_if, IFNAMSIZ);
++	strscpy(prpsc.wan_if, create_ipv6->wan_if, IFNAMSIZ);
+ 
+ 	/*
+ 	 * Copy inner IP protocol fields to ppe_drv structure
+diff -ruN a/drv/ppe_rule/ppe_vlan/ppe_vlan_dump.c b/drv/ppe_rule/ppe_vlan/ppe_vlan_dump.c
+--- a/drv/ppe_rule/ppe_vlan/ppe_vlan_dump.c	2026-10-21 04:46:14.881040479 +0000
++++ b/drv/ppe_rule/ppe_vlan/ppe_vlan_dump.c	2026-10-24 10:01:19.641124804 +0000
+@@ -174,7 +174,7 @@
+  * ppe_vlan_dump_write_reset()
+  *	Reset the msg buffer, specifying a new initial prefix
+  */
+-int ppe_vlan_dump_write_reset(struct ppe_vlan_dump_instance *vdi, char *base_prefix)
++static int ppe_vlan_dump_write_reset(struct ppe_vlan_dump_instance *vdi, char *base_prefix)
+ {
+ 	int result;
+ 
+@@ -196,7 +196,7 @@
+  * ppe_vlan_dump_prefix_add()
+  *	Add another level to the prefix
+  */
+-int ppe_vlan_dump_prefix_add(struct ppe_vlan_dump_instance *vdi, char *prefix)
++static int ppe_vlan_dump_prefix_add(struct ppe_vlan_dump_instance *vdi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -220,7 +220,7 @@
+  * ppe_vlan_dump_prefix_index_add()
+  *	Add another level (numeric) to the prefix
+  */
+-int ppe_vlan_dump_prefix_index_add(struct ppe_vlan_dump_instance *vdi, uint32_t index)
++static int ppe_vlan_dump_prefix_index_add(struct ppe_vlan_dump_instance *vdi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -243,7 +243,7 @@
+  * ppe_vlan_dump_prefix_remove()
+  *	Remove level from the prefix
+  */
+-int ppe_vlan_dump_prefix_remove(struct ppe_vlan_dump_instance *vdi)
++static int ppe_vlan_dump_prefix_remove(struct ppe_vlan_dump_instance *vdi)
+ {
+ 	int pxsz;
+ 
+@@ -258,7 +258,7 @@
+  * ppe_vlan_dump_write()
+  *	Write out to the message buffer, prefix is added automatically.
+  */
+-int ppe_vlan_dump_write(struct ppe_vlan_dump_instance *vdi, char *name, char *fmt, ...)
++static int ppe_vlan_dump_write(struct ppe_vlan_dump_instance *vdi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -300,7 +300,7 @@
+  * ppe_vlan_dump_one()
+  *	Fill VLAN dump information for one VLAN rule.
+  */
+-int ppe_vlan_dump_one(struct ppe_vlan_dump_instance *vdi, struct ppe_vlan *vlan)
++static int ppe_vlan_dump_one(struct ppe_vlan_dump_instance *vdi, struct ppe_vlan *vlan)
+ {
+ 	int result;
+ 	struct ppe_vlan_rule_match *r;

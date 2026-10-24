@@ -1,0 +1,129 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 恢复 QSDK 的 netdev 硬件卸载回调
+
+QSDK 的 net_device 带有 struct netdev_hw_offload_ops 指针和
+netdev_hw_offload_ops_register()/unregister()，NSS PPE 的 ath-client
+模块用它把 PPE 虚拟端口的收包回调挂到 WLAN 网卡上。主线 6.12 没有
+这套接口，qca-nss-ae-clients 的 ath_client 因此编译失败：
+
+  error: storage size of 'ppe_vp_netdev_ops' isn't known
+  error: implicit declaration of function 'netdev_hw_offload_ops_register'
+
+本补丁按 QSDK 原样移植：netdevice.h 增加结构与字段，dev.c 增加基于
+cmpxchg 的注册/注销函数。主线没有代码读取该字段，回调只有在厂商
+ath12k 驱动调用时才生效。
+
+分类：必须 shim（厂商内核 ABI）；QSDK 实现移植到主线 6.12。
+
+--- a/target/linux/qualcommbe/patches-6.12/0378-net-core-restore-netdev-hw-offload-ops.patch
++++ b/target/linux/qualcommbe/patches-6.12/0378-net-core-restore-netdev-hw-offload-ops.patch
+@@ -0,0 +1,109 @@
++net: core: restore QSDK's per-netdev hardware offload ops
++
++QSDK's netdevice carries a struct netdev_hw_offload_ops pointer plus
++netdev_hw_offload_ops_register()/unregister(), letting a datapath engine
++attach xmit/recv callbacks to a device.  The NSS PPE ath-client module
++(qca-nss-ppe-ath-clients) registers a receive callback on WLAN netdevs so
++that the PPE virtual port feeds the wireless driver:
++
++  error: storage size of 'ppe_vp_netdev_ops' isn't known
++  error: implicit declaration of function 'netdev_hw_offload_ops_register'
++
++Mainline 6.12 has no such API.  Port QSDK's implementation verbatim: the
++structure and a field in struct net_device, plus register/unregister
++built on cmpxchg so that only one owner can attach at a time.
++
++Nothing in mainline dereferences dev->offload_ops; the callbacks only
++become live once a driver (the vendor ath12k on QSDK) invokes them.
++
++--- a/include/linux/netdevice.h
+++++ b/include/linux/netdevice.h
++@@ -1717,6 +1717,21 @@
++ };
++ 
++ /**
+++ * struct netdev_hw_offload_ops - hardware offload operations for a net_device
+++ * @xmit: optional transmit offload callback
+++ * @recv: optional receive offload callback
+++ *
+++ * QSDK lets a datapath engine attach per-device offload callbacks (the PPE
+++ * driver uses this to push packets to a virtual port from the Wi-Fi driver).
+++ * Mainline has no equivalent; the field is carried here so the offload
+++ * clients build and register unchanged.
+++ */
+++struct netdev_hw_offload_ops {
+++	bool (*xmit)(struct net_device *dev, struct sk_buff *skb);
+++	bool (*recv)(struct net_device *dev, struct sk_buff *skb);
+++};
+++
+++/**
++  *	struct net_device - The DEVICE structure.
++  *
++  *	Actually, this whole structure is a big mistake.  It mixes I/O
++@@ -2269,6 +2284,7 @@
++ #define GRO_MAX_SIZE		(8 * 65535u)
++ 	unsigned int		xdp_zc_max_segs;
++ 	struct netdev_queue __rcu *ingress_queue;
+++	struct netdev_hw_offload_ops __rcu *offload_ops;
++ #ifdef CONFIG_NETFILTER_INGRESS
++ 	struct nf_hook_entries __rcu *nf_hooks_ingress;
++ #endif
++@@ -3203,6 +3219,11 @@
++ struct net_device *netdev_sk_get_lowest_dev(struct net_device *dev,
++ 					    struct sock *sk);
++ struct net_device *dev_get_by_index(struct net *net, int ifindex);
+++int netdev_hw_offload_ops_register(struct net_device *dev,
+++				   struct netdev_hw_offload_ops *ops,
+++				   const char *owner);
+++int netdev_hw_offload_ops_unregister(struct net_device *dev,
+++				     struct netdev_hw_offload_ops *ops);
++ struct net_device *__dev_get_by_index(struct net *net, int ifindex);
++ struct net_device *netdev_get_by_index(struct net *net, int ifindex,
++ 				       netdevice_tracker *tracker, gfp_t gfp);
++--- a/net/core/dev.c
+++++ b/net/core/dev.c
++@@ -12142,6 +12142,44 @@
++ }								\
++ EXPORT_SYMBOL(func);
++ 
+++/**
+++ * netdev_hw_offload_ops_register - register offload ops for a net_device
+++ * @dev: the net_device to attach the ops to
+++ * @ops: offload operation structure
+++ * @owner: name of the registering module, for the log message
+++ *
+++ * Returns 0 on success, -1 when another set of ops is already attached.
+++ */
+++int netdev_hw_offload_ops_register(struct net_device *dev,
+++				   struct netdev_hw_offload_ops *ops,
+++				   const char *owner)
+++{
+++	int status;
+++
+++	status = (cmpxchg((struct netdev_hw_offload_ops **)&dev->offload_ops,
+++			  NULL, ops) == NULL) ? 0 : -1;
+++	netdev_info(dev, "Registering offload ops with owner: %s, status = %s\n",
+++		    owner, status ? "Failed" : "Success");
+++	return status;
+++}
+++EXPORT_SYMBOL_GPL(netdev_hw_offload_ops_register);
+++
+++/**
+++ * netdev_hw_offload_ops_unregister - unregister offload ops
+++ * @dev: the net_device the ops are attached to
+++ * @ops: the same structure passed to netdev_hw_offload_ops_register()
+++ *
+++ * Only removes @ops if it is still the registered set.  The caller is
+++ * responsible for an RCU grace period before freeing @ops.
+++ */
+++int netdev_hw_offload_ops_unregister(struct net_device *dev,
+++				     struct netdev_hw_offload_ops *ops)
+++{
+++	return cmpxchg((struct netdev_hw_offload_ops **)&dev->offload_ops,
+++		       ops, NULL) == ops ? 0 : -1;
+++}
+++EXPORT_SYMBOL_GPL(netdev_hw_offload_ops_unregister);
+++
++ define_netdev_printk_level(netdev_emerg, KERN_EMERG);
++ define_netdev_printk_level(netdev_alert, KERN_ALERT);
++ define_netdev_printk_level(netdev_crit, KERN_CRIT);

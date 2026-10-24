@@ -1,0 +1,223 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe-vp: drop the QSDK fast-xmit/recycler ABI
+
+Mainline 6.12 has no CONFIG_SKB_RECYCLER, no sk_buff fast_xmit /
+fast_recycled / recycled_for_ds fields, no dev_fast_xmit_vp() or
+dev_fast_xmit_qdisc(), and no <linux/debug_mem_usage.h>.  The VP
+datapath reaches into all of them, so ppe_vp fails to build:
+
+  ppe_vp.c:25        'struct sk_buff' has no member 'fast_xmit'
+  ppe_vp_rx.c:12/27  no debug_mem_usage.h, no fast_xmit/fast_recycled
+  ppe_vp_rx.c:240    implicit declaration of 'dev_fast_xmit_vp'
+  ppe_vp_rx.c:278    implicit declaration of 'dev_fast_xmit_qdisc'
+  ppe_vp_tx.c:14/72  no debug_mem_usage.h, no fast_xmit
+
+Same treatment as the EDMA v2 patch
+(qca-nss-dp/0006-edma-v2-fastpath-skb-recycler-shims.patch):
+
+  * The mem-tracer hooks become no-ops (option cannot be enabled on this
+    kernel).
+  * The sk_buff flag writes/clears are dropped; the fields do not exist.
+
+Functionality is reduced, not just silenced:
+
+  * dev_fast_xmit_vp() skipped the qdisc path and marked skb->fast_xmit
+    for the EDMA Tx completion.  The replacement sets up the protocol
+    fields exactly as the vendor fallback did and calls dev_queue_xmit(),
+    which consumes the skb and reaches the same netdev through the
+    normal qdisc path.  Packets still arrive; the qdisc is exercised.
+  * dev_fast_xmit_qdisc() ran the skb through the qdisc attached to
+    qdisc_dev and then transmitted on the bottom device.  The
+    replacement transmits on the bottom device (skb->dev) through that
+    device's own qdisc, so shaping on the separate qdisc_dev interface
+    is not applied.  This is a known behavioural gap of the port.
+  * Without the recycler the EDMA Tx completion cannot batch frees for
+    skb->fast_xmit packets; buffers are freed one at a time.
+  * ppe_vp_rx.c did not include its own header, so the two exported
+    callbacks had no visible prototype (-Werror=missing-prototypes).
+
+---
+diff -ruN a/drv/ppe_vp/ppe_vp.c b/drv/ppe_vp/ppe_vp.c
+--- a/drv/ppe_vp/ppe_vp.c	2026-10-21 04:46:14.881554202 +0000
++++ b/drv/ppe_vp/ppe_vp.c	2026-10-24 09:43:28.097333831 +0000
+@@ -22,7 +22,6 @@
+ 	struct ppe_vp *vp = vp_priv->vp;
+ 
+ 	if (unlikely(!ppe_vp_tx_to_ppe(vp->port_num, skb))) {
+-		skb->fast_xmit = 0;
+ 		dev_kfree_skb_any(skb);
+ 	}
+ 
+diff -ruN a/drv/ppe_vp/ppe_vp.h b/drv/ppe_vp/ppe_vp.h
+--- a/drv/ppe_vp/ppe_vp.h	2026-10-21 04:46:14.881554202 +0000
++++ b/drv/ppe_vp/ppe_vp.h	2026-10-24 09:43:28.097067368 +0000
+@@ -16,6 +16,17 @@
+ 
+ struct ppe_vp_base;
+ 
++/*
++ * QSDK's CONFIG_DEBUG_MEM_USAGE mem-tracer hooks live in the vendor
++ * kernel's <linux/debug_mem_usage.h>.  Mainline 6.12 ships neither that
++ * header nor the __wrap_* allocator plumbing, so the hooks are no-ops
++ * here; the option cannot be enabled on this kernel.
++ */
++#ifndef mem_debug_update_skb
++#define mem_debug_update_skb(skb)		do { } while (0)
++#define mem_debug_update_skb_list(skb_list)	do { } while (0)
++#endif
++
+ #define PPE_VP_FLAG_VP_ACTIVE		0x01	/* VP is active */
+ #define PPE_VP_FLAG_VP_FAST_XMIT	0x02	/* Enable fast_xmit when delivering to VP interface */
+ #define PPE_VP_FLAG_EGRESS_MACID_VALID	0x10	/* Egress macid is valid */
+diff -ruN a/drv/ppe_vp/ppe_vp_rx.c b/drv/ppe_vp/ppe_vp_rx.c
+--- a/drv/ppe_vp/ppe_vp_rx.c	2026-10-21 04:46:14.881554202 +0000
++++ b/drv/ppe_vp/ppe_vp_rx.c	2026-10-24 09:45:36.637014432 +0000
+@@ -9,7 +9,7 @@
+ #include <net/page_pool/helpers.h>
+ #include <ppe_drv.h>
+ #include "ppe_vp_base.h"
+-#include <linux/debug_mem_usage.h>
++#include "ppe_vp_rx.h"
+ 
+ #define PPE_VP_FLOW_IDX_FOR_NO_QDISC	-1
+ extern struct ppe_vp_base vp_base;
+@@ -24,13 +24,12 @@
+ 	struct net_device *dev = skb->dev;
+ 
+ 	skb->protocol = eth_type_trans(skb, dev);
+-	skb->fast_xmit = 0;
+ 
+ 	/*
+-	 * Reset the below flags in case any of DS flow is exceptioned.
++	 * The vendor kernel also clears fast_xmit, fast_recycled and
++	 * recycled_for_ds here; none of those sk_buff fields exist on
++	 * mainline 6.12, so there is nothing to reset.
+ 	 */
+-	skb->fast_recycled = 0;
+-	skb->recycled_for_ds = 0;
+ 	mem_debug_update_skb(skb);
+ 	netif_receive_skb(skb);
+ 	return true;
+@@ -236,21 +235,23 @@
+ 					return;
+ 				}
+ 
+-				mem_debug_update_skb(skb);
+-				if (unlikely(!dev_fast_xmit_vp(skb, dev))) {
+-					atomic64_inc(&vp_base.base_stats.rx_fastxmit_fails);
+-
+-					/*
+-					 * Update the skb protocol field
+-					 */
+-					ethh = (struct ethhdr *)skb->data;
+-					skb->protocol = ethh->h_proto;
+-					skb_reset_mac_header(skb);
+-					skb_set_network_header(skb, rxi->l3offset);
++				/*
++				 * Mainline 6.12 has no dev_fast_xmit_vp().
++				 * The vendor helper bypassed the qdisc path
++				 * and marked skb->fast_xmit for the EDMA Tx
++				 * completion; dev_queue_xmit() consumes the
++				 * skb and reaches the same netdev, at the
++				 * cost of the regular qdisc pass.  Set up the
++				 * protocol fields exactly as the vendor
++				 * fallback path did.
++				 */
++				ethh = (struct ethhdr *)skb->data;
++				skb->protocol = ethh->h_proto;
++				skb_reset_mac_header(skb);
++				skb_set_network_header(skb, rxi->l3offset);
+ 
+-					mem_debug_update_skb(skb);
+-					dev_queue_xmit(skb);
+-				}
++				mem_debug_update_skb(skb);
++				dev_queue_xmit(skb);
+ 
+ 				rcu_read_unlock();
+ 				return;
+@@ -275,19 +276,27 @@
+ 				if (likely(qdisc_dev)) {
+ 					skb->priority = ppe_drv_get_qos_tag(flow_idx);
+ 					mem_debug_update_skb(skb);
+-					if (likely(dev_fast_xmit_qdisc(skb, qdisc_dev, dev))) {
+-						dev_put(qdisc_dev);
+-						rcu_read_unlock();
+-						return;
+-					}
++
++					/*
++					 * Mainline 6.12 has no
++					 * dev_fast_xmit_qdisc().  The skb
++					 * is transmitted on the bottom
++					 * device (skb->dev, set above)
++					 * through its own qdisc; the
++					 * vendor helper would have run it
++					 * through the qdisc attached to
++					 * qdisc_dev first, so shaping on
++					 * that interface is not applied.
++					 */
++					dev_queue_xmit(skb);
++					dev_put(qdisc_dev);
++					rcu_read_unlock();
++					return;
+ 				}
+ 
+ 				atomic64_inc(&vp_base.base_stats.rx_qdisc_fastxmit_fails);
+ 				mem_debug_update_skb(skb);
+ 				dev_queue_xmit(skb);
+-				if (unlikely(qdisc_dev)) {
+-					dev_put(qdisc_dev);
+-				}
+ 
+ 				rcu_read_unlock();
+ 				return;
+diff -ruN a/drv/ppe_vp/ppe_vp_tx.c b/drv/ppe_vp/ppe_vp_tx.c
+--- a/drv/ppe_vp/ppe_vp_tx.c	2026-10-21 04:46:14.881554202 +0000
++++ b/drv/ppe_vp/ppe_vp_tx.c	2026-10-24 09:43:28.097256148 +0000
+@@ -11,7 +11,6 @@
+ #include <ppe_drv_sc.h>
+ #include "ppe_vp_base.h"
+ #include "ppe_vp_tx.h"
+-#include <linux/debug_mem_usage.h>
+ 
+ extern struct ppe_vp_base vp_base;
+ 
+@@ -65,13 +64,6 @@
+ 		dptxi.egress_macid = ppe_vp_tx_get_macid(skb->mark);
+ 	}
+ 
+-	/*
+-	 * This would enable making list of skb's while freeing in edma tx complete
+-	 */
+-	if (likely(!skb_is_nonlinear(skb))) {
+-		skb->fast_xmit = 1;
+-	}
+-
+ 	len = skb->len;
+ 
+ 	/*
+@@ -85,7 +77,6 @@
+ 		u64_stats_update_begin(&tx_stats->syncp);
+ 		tx_stats->tx_drops++;
+ 		u64_stats_update_end(&tx_stats->syncp);
+-		skb->fast_xmit = 0;
+ 		mem_debug_update_skb(skb);
+ 		dev_kfree_skb_any(skb);
+ 		rcu_read_unlock();
+@@ -139,7 +130,6 @@
+ 		rcu_read_unlock();
+ 
+ 		ppe_vp_info("%px: Dest VP %d inactive, dropping skb %px", dvp, vp_num, skb);
+-		skb->fast_xmit = 0;
+ 		mem_debug_update_skb(skb);
+ 		dev_kfree_skb_any(skb);
+ 		return false;
+@@ -203,7 +193,6 @@
+ 		u64_stats_update_begin(&rx_stats->syncp);
+ 		rx_stats->rx_drops++;
+ 		u64_stats_update_end(&rx_stats->syncp);
+-		skb->fast_xmit = 0;
+ 		mem_debug_update_skb(skb);
+ 		dev_kfree_skb_any(skb);
+ 		rcu_read_unlock();

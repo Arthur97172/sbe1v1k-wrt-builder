@@ -1,0 +1,190 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 导出 QSDK 的网桥卸载辅助函数（qca-nss-ecm 依赖）
+
+ECM 在分类连接时要算出报文从哪个网桥端口转发出去，主线 6.12 没有可用的导出接口。
+本补丁补上 QSDK 的同名、同签名三个函数：
+
+  br_fdb_find_vid_by_mac()  按 MAC 查网桥 FDB，并回填该表项所属 VLAN；
+                            ecm_front_end_ipv4/ipv6.c 与 ecm_db_connection.c 使用；
+  br_port_dev_get()         QSDK 对同一查询的包装。QSDK 允许卸载引擎通过
+                            br_port_dev_get_hook() 改写查询结果，主线没有该钩子，
+                            因此始终走 FDB 查找，skb/cookie 仅为保持签名兼容；
+                            ecm_interface.c 与 ecm_front_end_ipv4/ipv6.c 使用；
+  br_is_hairpin_enabled()   读取端口的 BR_HAIRPIN_MODE；ecm_front_end_ipv4/ipv6.c 使用。
+
+三个函数都是纯查询，实现基于主线的 FDB 与网桥端口原语，对非卸载流量没有行为变化。
+
+分类：必须 shim（厂商内核 ABI），实现走主线等价路径。
+
+diff -ruN
+--- a/target/linux/qualcommbe/patches-6.12/0146-net-bridge-add-qcom-offload-helpers.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.12/0146-net-bridge-add-qcom-offload-helpers.patch	1970-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,168 @@
++net: bridge: add the QSDK offload helpers used by qca-nss-ecm
++
++ECM resolves the bridge port a frame is forwarded through while it is
++classifying a connection, and mainline 6.12 has no exported helper that does
++that.  QSDK exports three; this adds them with the same names and signatures:
++
++  br_fdb_find_vid_by_mac(dev, mac, &vid)
++	Look up the FDB of the bridge @dev for @mac and report the VLAN the
++	entry was learned on.  Returns the port device with a reference held,
++	or NULL.  Caller must hold rcu_read_lock().
++	Used by ecm_front_end_ipv4/ipv6.c and ecm_db_connection.c.
++
++  br_port_dev_get(dev, addr, skb, cookie)
++	QSDK's wrapper around the same lookup.  QSDK additionally lets an
++	offload engine steer it through a br_port_dev_get_hook(); mainline has
++	no such hook, so the FDB lookup is always used and @skb/@cookie are
++	accepted for source compatibility only.
++	Used by ecm_interface.c and ecm_front_end_ipv4/ipv6.c.
++
++  br_is_hairpin_enabled(dev)
++	Report whether the bridge port @dev has BR_HAIRPIN_MODE set.
++	Used by ecm_front_end_ipv4/ipv6.c.
++
++No behaviour changes for frames that are not handled by an offload engine:
++the helpers are pure lookups and are only called from the ECM module.
++
++Classification: required shim (vendor kernel ABI), implemented on the mainline
++FDB and bridge-port primitives.
++--- a/include/linux/if_bridge.h
+++++ b/include/linux/if_bridge.h
++@@ -183,6 +183,12 @@
++ bool br_port_flag_is_set(const struct net_device *dev, unsigned long flag);
++ u8 br_port_get_stp_state(const struct net_device *dev);
++ clock_t br_get_ageing_time(const struct net_device *br_dev);
+++struct net_device *br_fdb_find_vid_by_mac(struct net_device *dev,
+++					  const unsigned char *mac, u16 *vid);
+++struct net_device *br_port_dev_get(struct net_device *dev,
+++				   unsigned char *addr, struct sk_buff *skb,
+++				   unsigned int cookie);
+++bool br_is_hairpin_enabled(struct net_device *dev);
++ #else
++ static inline struct net_device *
++ br_fdb_find_port(const struct net_device *br_dev,
++@@ -207,6 +213,25 @@
++ {
++ 	return false;
++ }
+++
+++static inline struct net_device *
+++br_fdb_find_vid_by_mac(struct net_device *dev, const unsigned char *mac,
+++		       u16 *vid)
+++{
+++	return NULL;
+++}
+++
+++static inline struct net_device *
+++br_port_dev_get(struct net_device *dev, unsigned char *addr,
+++		struct sk_buff *skb, unsigned int cookie)
+++{
+++	return NULL;
+++}
+++
+++static inline bool br_is_hairpin_enabled(struct net_device *dev)
+++{
+++	return false;
+++}
++ 
++ static inline u8 br_port_get_stp_state(const struct net_device *dev)
++ {
++--- a/net/bridge/br_fdb.c
+++++ b/net/bridge/br_fdb.c
++@@ -274,6 +274,43 @@
++ 	return fdb_find_rcu(&br->fdb_hash_tbl, addr, vid);
++ }
++ 
+++/*
+++ * br_fdb_find_vid_by_mac()
+++ *	Caller must hold rcu_read_lock().
+++ *	Look up the bridge FDB for @mac and report the VLAN id the entry was
+++ *	learned on through @vid.
+++ *	Returns the port device, with a reference held (dev_put() to release),
+++ *	or NULL if the address is not known.
+++ */
+++struct net_device *br_fdb_find_vid_by_mac(struct net_device *dev,
+++					  const unsigned char *mac, u16 *vid)
+++{
+++	struct net_bridge *br;
+++	struct net_bridge_fdb_entry *f;
+++	struct net_device *netdev = NULL;
+++
+++	if (!mac)
+++		return NULL;
+++
+++	if (!dev || !netif_is_bridge_master(dev))
+++		return NULL;
+++
+++	br = netdev_priv(dev);
+++	hlist_for_each_entry_rcu(f, &br->fdb_list, fdb_node) {
+++		if (ether_addr_equal(f->key.addr.addr, mac)) {
+++			*vid = f->key.vlan_id;
+++			if (f->dst) {
+++				netdev = f->dst->dev;
+++				dev_hold(netdev);
+++				break;
+++			}
+++		}
+++	}
+++
+++	return netdev;
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_find_vid_by_mac);
+++
++ /* When a static FDB entry is added, the mac address from the entry is
++  * added to the bridge private HW address list and all required ports
++  * are then updated with the new information.
++--- a/net/bridge/br_if.c
+++++ b/net/bridge/br_if.c
++@@ -779,3 +779,50 @@
++ 	return p->flags & flag;
++ }
++ EXPORT_SYMBOL_GPL(br_port_flag_is_set);
+++
+++/*
+++ * br_port_dev_get()
+++ *	Return a reference to the bridge port device that @addr is reachable
+++ *	through on @dev, or NULL if @dev is not a bridge or the address is not
+++ *	in the FDB.  The caller releases the reference with dev_put().
+++ *
+++ *	The QSDK kernel additionally lets an offload engine steer the lookup
+++ *	for a given skb through the br_port_dev_get_hook() hook.  Mainline has
+++ *	no such hook, so the FDB lookup is always used; @skb and @cookie are
+++ *	accepted for source compatibility and ignored.
+++ */
+++struct net_device *br_port_dev_get(struct net_device *dev, unsigned char *addr,
+++				   struct sk_buff *skb, unsigned int cookie)
+++{
+++	struct net_device *netdev;
+++	u16 vid;
+++
+++	if (!(dev->priv_flags & IFF_EBRIDGE))
+++		return NULL;
+++
+++	rcu_read_lock();
+++	netdev = br_fdb_find_vid_by_mac(dev, addr, &vid);
+++	rcu_read_unlock();
+++
+++	return netdev;
+++}
+++EXPORT_SYMBOL_GPL(br_port_dev_get);
+++
+++/*
+++ * br_is_hairpin_enabled()
+++ *	Report whether the bridge port @dev has hairpin mode enabled.
+++ */
+++bool br_is_hairpin_enabled(struct net_device *dev)
+++{
+++	struct net_bridge_port *port;
+++	bool enabled = false;
+++
+++	rcu_read_lock();
+++	port = br_port_get_check_rcu(dev);
+++	if (likely(port))
+++		enabled = port->flags & BR_HAIRPIN_MODE;
+++	rcu_read_unlock();
+++
+++	return enabled;
+++}
+++EXPORT_SYMBOL_GPL(br_is_hairpin_enabled);

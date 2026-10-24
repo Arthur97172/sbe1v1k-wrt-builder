@@ -1,0 +1,226 @@
+qca-nss-ae-clients: 6.12 可移植性修正
+
+主线 6.12 与 QSDK 6.6 的差异，只改调用点，不引入兼容层：
+
+1. netfilter sysctl
+   6.12 的 proc_handler 第一个参数是 const struct ctl_table *，QSDK 的
+   bridge manager 四个 handler 和 vlan manager 的 tpid handler 都没有
+   const，注册表初始化会报 -Wincompatible-pointer-types。补上 const。
+
+2. -Wmissing-prototypes
+   nss_ppe_bridge_mgr_vlan_over_bridge_notfication() 只通过函数指针注册，
+   nss_ppe_bridge_mgr_br_flood_en() 只在本文件的 ctl_table 里使用，vlan
+   manager 的 vp_src/vp_dst_exception 只在本文件注册为 PPE 回调，init/exit
+   由 module_init/module_exit 引用；全部改为 static。
+
+3. DSA 重命名（6.12）
+   dsa_slave_dev_check() -> dsa_user_dev_check()；
+   dsa_port_to_master()  -> dsa_port_to_conduit()。
+   与 ECM 的 ecm_netdev_compat.h 第 7 节同一处理。
+
+4. DSA 802.1Q 标签协议
+   DSA_TAG_8021Q_VLAN_PROTO 在 6.12 已被移除（QSDK 在
+   include/linux/dsa/8021q.h 里把它定义为 ETH_P_8021Q 的别名），
+   直接使用等价的 ETH_P_8021Q。
+
+--- a/clients/bridge/nss_ppe_bridge_mgr.c
++++ b/clients/bridge/nss_ppe_bridge_mgr.c
+@@ -211,7 +211,7 @@
+  * nss_ppe_bridge_mgr_vlan_over_bridge_notfication()
+  *	API for incrementing and decrementing the number of VLAN over bridge interfaces present in the bridge
+  */
+-bool nss_ppe_bridge_mgr_vlan_over_bridge_notfication(struct net_device *bridge_dev,
++static bool nss_ppe_bridge_mgr_vlan_over_bridge_notfication(struct net_device *bridge_dev,
+ 						     enum nss_ppe_vlan_mgr_vlan br_action)
+ {
+ 	struct nss_ppe_bridge_mgr_pvt *b_pvt;
+@@ -1070,7 +1070,7 @@
+  * nss_ppe_bridge_mgr_wan_inf_add_handler
+  *	Marks an interface as a WAN interface for special handling by bridge.
+  */
+-static int nss_ppe_bridge_mgr_wan_intf_add_handler(struct ctl_table *table,
++static int nss_ppe_bridge_mgr_wan_intf_add_handler(const struct ctl_table *table,
+ 						int write, void __user *buffer,
+ 						size_t *lenp, loff_t *ppos)
+ {
+@@ -1123,7 +1123,7 @@
+  * nss_ppe_bridge_mgr_wan_inf_del_handler
+  *	Un-marks an interface as a WAN interface.
+  */
+-static int nss_ppe_bridge_mgr_wan_intf_del_handler(struct ctl_table *table,
++static int nss_ppe_bridge_mgr_wan_intf_del_handler(const struct ctl_table *table,
+ 						int write, void __user *buffer,
+ 						size_t *lenp, loff_t *ppos)
+ {
+@@ -1182,7 +1182,7 @@
+  * nss_ppe_bridge_mgr_fdb_handler
+  *	disable/enable the PPE fdb.
+  */
+-static int nss_ppe_bridge_mgr_fdb_handler(struct ctl_table *table,
++static int nss_ppe_bridge_mgr_fdb_handler(const struct ctl_table *table,
+ 						int write, void __user *buffer,
+ 						size_t *lenp, loff_t *ppos)
+ {
+@@ -1207,7 +1207,7 @@
+  * nss_ppe_bridge_mgr_fdb_del_notify_handler
+  *	Enable/disable FDB notify registration.
+  */
+-static int nss_ppe_bridge_mgr_fdb_del_notify_handler(struct ctl_table *table,
++static int nss_ppe_bridge_mgr_fdb_del_notify_handler(const struct ctl_table *table,
+ 						int write, void __user *buffer,
+ 						size_t *lenp, loff_t *ppos)
+ {
+@@ -1233,7 +1233,7 @@
+  * nss_ppe_bridge_mgr_br_flood_en()
+  *      API to enable/disable the flood membership ovveride for UUC, UMC and BC.
+  */
+-int nss_ppe_bridge_mgr_br_flood_en(struct ctl_table *table, int write,
++static int nss_ppe_bridge_mgr_br_flood_en(const struct ctl_table *table, int write,
+                 void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+         struct net_device *net_dev = NULL;
+--- a/clients/vlan/nss_ppe_vlan_mgr.c
++++ b/clients/vlan/nss_ppe_vlan_mgr.c
+@@ -159,7 +159,7 @@
+ 	struct dsa_port *dp = NULL;
+ 
+ 	dp = dsa_port_from_netdev(dev);
+-	return dp ? dsa_port_to_master(dp) : NULL;
++	return dp ? dsa_port_to_conduit(dp) : NULL;
+ }
+ 
+ #ifdef NSS_VLAN_DSA_QINQ_SUPPORT
+@@ -173,7 +173,7 @@
+ 	struct net_device *master_dev;
+ 	struct ppe_drv_iface *master_iface;
+ 
+-	if (!dsa_dev || !dsa_slave_dev_check(dsa_dev)) {
++	if (!dsa_dev || !dsa_user_dev_check(dsa_dev)) {
+ 		return false;
+ 	}
+ 
+@@ -230,7 +230,7 @@
+ 	}
+ #endif
+ 
+-	if (!dsa_slave_dev_check(real_dev)) {
++	if (!dsa_user_dev_check(real_dev)) {
+ 		nss_ppe_vlan_mgr_trace("%s: real_dev %s is not a DSA interface (or QinQ over DSA not enabled)\n",
+ 				dev->name, real_dev ? real_dev->name : "NULL");
+ 		return false;
+@@ -262,7 +262,7 @@
+ {
+ 	struct dsa_port *dp = NULL;
+ 
+-	if (!dsa_dev || !dsa_slave_dev_check(dsa_dev)) {
++	if (!dsa_dev || !dsa_user_dev_check(dsa_dev)) {
+ 		return false;
+ 	}
+ 
+@@ -928,7 +928,7 @@
+  * nss_ppe_vlan_mgr_untag_and_send()
+  *	Untag exception packet and send it to stack.
+  */
+-bool nss_ppe_vlan_mgr_vp_src_exception(struct ppe_vp_cb_info *info, void *cb_data)
++static bool nss_ppe_vlan_mgr_vp_src_exception(struct ppe_vp_cb_info *info, void *cb_data)
+ {
+ 	struct sk_buff *skb = info->skb;
+ 	struct net_device *real_dev;
+@@ -947,7 +947,7 @@
+ 	 * Under QINQ, PPE strips the DSA tag in hardware so deliver directly to
+ 	 * the DSA slave. Without QINQ, walk up to the master to present the tag.
+ 	 */
+-	if (!real_dev && dsa_slave_dev_check(skb->dev)) {
++	if (!real_dev && dsa_user_dev_check(skb->dev)) {
+ #ifdef NSS_VLAN_DSA_QINQ_SUPPORT
+ 		if (nss_ppe_vlan_mgr_is_htt_dev(skb->dev)) {
+ 			real_dev = skb->dev;
+@@ -956,7 +956,7 @@
+ 		{
+ 			dp = dsa_port_from_netdev(skb->dev);
+ 			if (dp) {
+-				real_dev = dsa_port_to_master(dp);
++				real_dev = dsa_port_to_conduit(dp);
+ 			}
+ 		}
+ 	}
+@@ -965,14 +965,14 @@
+ 	 * VLAN over DSA interface? Walk to master unless real_dev is an
+ 	 * HTT-switch DSA slave, where PPE already stripped the tag.
+ 	 */
+-	if ((real_dev) && (dsa_slave_dev_check(real_dev)) && (real_dev != skb->dev)) {
++	if ((real_dev) && (dsa_user_dev_check(real_dev)) && (real_dev != skb->dev)) {
+ #ifdef NSS_VLAN_DSA_QINQ_SUPPORT
+ 		if (!nss_ppe_vlan_mgr_is_htt_dev(real_dev))
+ #endif
+ 		{
+ 			dp = dsa_port_from_netdev(real_dev);
+ 			if (dp) {
+-				real_dev = dsa_port_to_master(dp);
++				real_dev = dsa_port_to_conduit(dp);
+ 			}
+ 		}
+ 	}
+@@ -1004,7 +1004,7 @@
+  * nss_ppe_vlan_mgr_vp_dst_exception()
+  *	Free the exception packet received from destination VP callback.
+  */
+-bool nss_ppe_vlan_mgr_vp_dst_exception(struct ppe_vp_cb_info *info, void *cb_data)
++static bool nss_ppe_vlan_mgr_vp_dst_exception(struct ppe_vp_cb_info *info, void *cb_data)
+ {
+ 	struct sk_buff *skb = info->skb;
+ 
+@@ -1270,7 +1270,7 @@
+ 		 */
+ 		vpai.fdb_learn_enabled = vp_fdb_learn_enabled;
+ #ifdef NSS_VLAN_BASED_DSA_SUPPORT
+-		if (dsa_slave_dev_check(dev) || nss_ppe_vlan_mgr_dsa_interface_supported(dev)) {
++		if (dsa_user_dev_check(dev) || nss_ppe_vlan_mgr_dsa_interface_supported(dev)) {
+ 			vpai.fdb_learn_enabled = dsa_vp_fdb_learn_enabled;
+ 		}
+ #endif
+@@ -2178,7 +2178,7 @@
+ 
+ 	if (!is_vlan_dev(dev)) {
+ #ifdef NSS_VLAN_BASED_DSA_SUPPORT
+-		if (!dsa_slave_dev_check(dev))
++		if (!dsa_user_dev_check(dev))
+ #endif
+ 			return NULL;
+ 	}
+@@ -2855,7 +2855,7 @@
+  * nss_ppe_vlan_mgr_tpid_proc_handler()
+  *	Sets customer TPID and service TPID
+  */
+-static int nss_ppe_vlan_mgr_tpid_proc_handler(struct ctl_table *ctl,
++static int nss_ppe_vlan_mgr_tpid_proc_handler(const struct ctl_table *ctl,
+ 					  int write, void __user *buffer,
+ 					  size_t *lenp, loff_t *ppos)
+ {
+@@ -3511,7 +3511,7 @@
+ 	} else
+ #endif
+ 	{
+-		v->tpid = DSA_TAG_8021Q_VLAN_PROTO;
++		v->tpid = ETH_P_8021Q;
+ 	}
+ 	v->bond_id = -1;
+ 
+@@ -3725,7 +3725,7 @@
+  * nss_ppe_vlan_mgr_exit_module()
+  *	vlan_mgr module exit function
+  */
+-void __exit nss_ppe_vlan_mgr_exit_module(void)
++static void __exit nss_ppe_vlan_mgr_exit_module(void)
+ {
+ 	unregister_netdevice_notifier(&nss_ppe_vlan_mgr_netdevice_nb);
+ 
+@@ -3740,7 +3740,7 @@
+  * nss_ppe_vlan_mgr_init_module()
+  *	vlan_mgr module init function
+  */
+-int __init nss_ppe_vlan_mgr_init_module(void)
++static int __init nss_ppe_vlan_mgr_init_module(void)
+ {
+ 	int idx;
+ 	int len, i;

@@ -1,0 +1,95 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe-ds: replace the QSDK CPU-bound hrtimer API
+
+QSDK's kernel adds hrtimer_init_and_bind() and
+hrtimer_start_range_ns_on_cpu(), which place a hrtimer on the base of a
+specific CPU (per_cpu(hrtimer_bases, cpu) instead of the current CPU).
+Mainline 6.12 has neither helper and hrtimer_bases is private to
+kernel/time/hrtimer.c, so a driver cannot bind a timer's base to another
+CPU.
+
+The shims use hrtimer_init() (binds to the calling CPU) and
+hrtimer_start_range_ns() (starts on that base, honouring
+HRTIMER_MODE_REL_PINNED).  The callback still runs, just not pinned to
+the requested CPU.  ppe_ds_timer() only moves PPE2TCL / REO2PPE ring
+indices in memory, so this is a placement difference, not a functional
+one -- but it is a known behavioural gap of the port.
+
+
+---
+diff -ruN a/drv/ppe_ds/ppe_ds.c b/drv/ppe_ds/ppe_ds.c
+--- a/drv/ppe_ds/ppe_ds.c	2026-10-21 04:46:14.875164313 +0000
++++ b/drv/ppe_ds/ppe_ds.c	2026-10-24 09:50:47.780698570 +0000
+@@ -9,6 +9,33 @@
+ 
+ #include "ppe_vp_public.h"
+ #include "ppe_ds.h"
++
++/*
++ * QSDK's kernel adds hrtimer_init_and_bind() and
++ * hrtimer_start_range_ns_on_cpu(), which place a hrtimer on the base of a
++ * specific CPU (per_cpu(hrtimer_bases, cpu) instead of the current CPU).
++ * Mainline 6.12 has neither helper and hrtimer_bases is private to
++ * kernel/time/hrtimer.c, so a driver cannot bind a timer's base to
++ * another CPU.
++ *
++ * hrtimer_init() binds the timer to the CPU calling it and
++ * hrtimer_start_range_ns() starts it on that base, honouring
++ * HRTIMER_MODE_REL_PINNED.  The callback still runs, just not pinned to
++ * the requested CPU.  ppe_ds_timer() only moves ring indices in memory,
++ * so this is a placement difference, not a functional one.
++ */
++static inline void ppe_ds_hrtimer_init_and_bind(struct hrtimer *timer,
++		clockid_t clock_id, enum hrtimer_mode mode, int cpu)
++{
++	(void)cpu;
++	hrtimer_init(timer, clock_id, mode);
++}
++
++static inline void ppe_ds_hrtimer_start_range_ns_on_cpu(struct hrtimer *timer,
++		ktime_t tim, u64 delta_ns, enum hrtimer_mode mode)
++{
++	hrtimer_start_range_ns(timer, tim, delta_ns, mode);
++}
+ #include "ppe_ds_stats.h"
+ #include <ppe_drv.h>
+ 
+@@ -892,7 +919,7 @@
+ 		/*
+ 		 * Init high res timer.
+ 		 */
+-		hrtimer_init_and_bind(&node->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL, cpu);
++		ppe_ds_hrtimer_init_and_bind(&node->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL, cpu);
+ 		node->timer.function = ppe_ds_timer;
+ 		ppe_ds_info("For PPE-DS node iteration count: %d, cpu mask is 0x%x\n",
+ 				ppeds_node_iter_cnt, cpu);
+@@ -1416,7 +1443,7 @@
+ 
+ 	if (polling_for_idx_update) {
+ 		node->timer_enabled = true;
+-		hrtimer_start_range_ns_on_cpu(&node->timer,
++		ppe_ds_hrtimer_start_range_ns_on_cpu(&node->timer,
+ 				ns_to_ktime(IDX_MGMT_PERIOD),
+ 				0, HRTIMER_MODE_REL_PINNED);
+ 	}
+diff -ruN a/drv/ppe_ds/ppe_ds_stats.c b/drv/ppe_ds/ppe_ds_stats.c
+--- a/drv/ppe_ds/ppe_ds_stats.c	2026-10-21 04:46:14.875164313 +0000
++++ b/drv/ppe_ds/ppe_ds_stats.c	2026-10-24 09:54:34.858157050 +0000
+@@ -98,7 +98,7 @@
+  * 	Show the per node hysteresis stats of index movements
+  * 	for PPE2TCL, REO2PPE, and EDMA interrupts.
+  */
+-void ppe_ds_node_idx_hyst_show(struct seq_file *m)
++static void ppe_ds_node_idx_hyst_show(struct seq_file *m)
+ {
+ 	int i = 0, j = 0;
+ 
+@@ -134,7 +134,7 @@
+  *      Show the per node hysterisis stats of wlan interrupts
+  *      timestamp for ppe2tcl and reo2ppe rings.
+  */
+-void ppe_ds_node_ts_intr_hyst_show(struct seq_file *m)
++static void ppe_ds_node_ts_intr_hyst_show(struct seq_file *m)
+ {
+ 	int i = 0, j = 0;
+ 

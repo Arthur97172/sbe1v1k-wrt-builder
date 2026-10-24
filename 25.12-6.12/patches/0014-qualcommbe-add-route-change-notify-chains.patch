@@ -1,0 +1,207 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 恢复 QSDK 的路由表变更通知链（qca-nss-ecm 依赖）
+
+qca-nss-ecm 在 ecm_db.c 里注册 ip_rt_register_notifier() / rt6_register_notifier()，
+在路由表增删时让已加速的连接失效：v4 回调直接 defunct 全部 v4 连接，v6 回调把
+notifier 参数当作 struct fib6_config *，比对 fc_dst / fc_dst_len / fc_ifindex。
+
+主线 6.12 没有这两条链，ECM 在 modpost 阶段报四个符号 undefined。本补丁按
+codelinaro 0197 + 0182 复刻：
+
+  - IPv4：blocking notifier 链，挂在 fib_table_insert() 成功路径与
+    fib_table_delete() 释放 alias 之前，载荷是 struct fib_info；
+  - IPv6：atomic notifier 链，挂在 ipv6_route_ioctl()、inet6_rtm_newroute()、
+    inet6_rtm_delroute() 三个用户态入口成功之后，载荷是这些函数已经建好的
+    struct fib6_config。
+
+与 QSDK 的差异：0197 还在 ip6_route_add() / __ip6_del_rt() 里用 struct fib6_info *
+触发同一条链，而 ECM 回调无条件把它当 fib6_config 读；对 netlink 路径这会与 0182
+重复触发，对内核自己产生的路由则是越界读。这两处不移植。
+
+分类：必须 shim（厂商内核 ABI；主线无等价机制）。
+
+diff -ruN
+--- a/target/linux/qualcommbe/patches-6.12/0145-net-ipv4-ipv6-add-route-change-notify-chains.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.12/0145-net-ipv4-ipv6-add-route-change-notify-chains.patch	1970-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,181 @@
++net: ipv4/ipv6: add the route-change notify chains used by qca-nss-ecm
++
++qca-nss-ecm registers a notifier on the routing tables so that it can
++invalidate accelerated connections when a route is added or removed.  QSDK
++carries these chains in its own kernel tree (codelinaro patches 0197 and
++0182); mainline 6.12 has nothing with the same payload, so ECM fails to link
++against ip_rt_register_notifier(), ip_rt_unregister_notifier(),
++rt6_register_notifier() and rt6_unregister_notifier().
++
++IPv4: a blocking notifier chain, fired from fib_table_insert() on success and
++from fib_table_delete() before the alias is released.  The payload is the
++struct fib_info, which is what ECM reads.
++
++IPv6: an atomic notifier chain, fired from the user-space entry points
++ipv6_route_ioctl(), inet6_rtm_newroute() and inet6_rtm_delroute() once the
++operation succeeded.  The payload is the struct fib6_config that those
++functions already built, matching what ECM casts the pointer to.
++
++Deviation from QSDK: vendor patch 0197 also fires the IPv6 chain from
++ip6_route_add() and __ip6_del_rt() with a struct fib6_info *.  ECM's callback
++reads that pointer unconditionally as a struct fib6_config (fc_dst,
++fc_dst_len, fc_ifindex), so those two call sites are not ported -- on the
++netlink paths they would duplicate the events added by patch 0182, and for
++kernel-originated routes they would be out-of-bounds reads.  Route changes
++made by user space, which is the case ECM was written for, stay fully
++covered.
++
++Classification: required shim (vendor kernel ABI; no mainline equivalent).
++--- a/include/net/route.h
+++++ b/include/net/route.h
++@@ -246,6 +246,9 @@
++ 			    unsigned int flags, u16 type, bool noxfrm);
++ struct rtable *rt_dst_clone(struct net_device *dev, struct rtable *rt);
++ 
+++int ip_rt_register_notifier(struct notifier_block *nb);
+++int ip_rt_unregister_notifier(struct notifier_block *nb);
+++
++ struct in_ifaddr;
++ void fib_add_ifaddr(struct in_ifaddr *);
++ void fib_del_ifaddr(struct in_ifaddr *, struct in_ifaddr *);
++--- a/include/net/ip6_route.h
+++++ b/include/net/ip6_route.h
++@@ -215,6 +215,9 @@
++ void rt6_uncached_list_add(struct rt6_info *rt);
++ void rt6_uncached_list_del(struct rt6_info *rt);
++ 
+++int rt6_register_notifier(struct notifier_block *nb);
+++int rt6_unregister_notifier(struct notifier_block *nb);
+++
++ static inline const struct rt6_info *skb_rt6_info(const struct sk_buff *skb)
++ {
++ 	const struct dst_entry *dst = skb_dst(skb);
++--- a/net/ipv4/fib_trie.c
+++++ b/net/ipv4/fib_trie.c
++@@ -1196,6 +1196,9 @@
++ static void fib_remove_alias(struct trie *t, struct key_vector *tp,
++ 			     struct key_vector *l, struct fib_alias *old);
++ 
+++/* Define route change notification chain. */
+++static BLOCKING_NOTIFIER_HEAD(iproute_chain);
+++
++ /* Caller must hold RTNL. */
++ int fib_table_insert(struct net *net, struct fib_table *tb,
++ 		     struct fib_config *cfg, struct netlink_ext_ack *extack)
++@@ -1386,6 +1389,8 @@
++ 	rtmsg_fib(RTM_NEWROUTE, htonl(key), new_fa, plen, new_fa->tb_id,
++ 		  &cfg->fc_nlinfo, nlflags);
++ succeeded:
+++	blocking_notifier_call_chain(&iproute_chain,
+++				     RTM_NEWROUTE, fi);
++ 	return 0;
++ 
++ out_remove_new_fa:
++@@ -1754,6 +1759,8 @@
++ 	if (READ_ONCE(fa_to_delete->fa_state) & FA_S_ACCESSED)
++ 		rt_cache_flush(cfg->fc_nlinfo.nl_net);
++ 
+++	blocking_notifier_call_chain(&iproute_chain,
+++				     RTM_DELROUTE, fa_to_delete->fa_info);
++ 	fib_release_info(fa_to_delete->fa_info);
++ 	alias_free_mem_rcu(fa_to_delete);
++ 	return 0;
++@@ -2391,6 +2398,18 @@
++ 					   0, SLAB_PANIC | SLAB_ACCOUNT, NULL);
++ }
++ 
+++int ip_rt_register_notifier(struct notifier_block *nb)
+++{
+++	return blocking_notifier_chain_register(&iproute_chain, nb);
+++}
+++EXPORT_SYMBOL(ip_rt_register_notifier);
+++
+++int ip_rt_unregister_notifier(struct notifier_block *nb)
+++{
+++	return blocking_notifier_chain_unregister(&iproute_chain, nb);
+++}
+++EXPORT_SYMBOL(ip_rt_unregister_notifier);
+++
++ struct fib_table *fib_trie_table(u32 id, struct fib_table *alias)
++ {
++ 	struct fib_table *tb;
++--- a/net/ipv6/route.c
+++++ b/net/ipv6/route.c
++@@ -197,6 +197,9 @@
++ 	}
++ }
++ 
+++/* Define route change notification chain. */
+++static ATOMIC_NOTIFIER_HEAD(ip6route_chain);
+++
++ static inline const void *choose_neigh_daddr(const struct in6_addr *p,
++ 					     struct sk_buff *skb,
++ 					     const void *daddr)
++@@ -4569,6 +4572,10 @@
++ 		break;
++ 	}
++ 	rtnl_unlock();
+++	if (!err)
+++		atomic_notifier_call_chain(&ip6route_chain,
+++					   (cmd == SIOCADDRT) ? RTM_NEWROUTE : RTM_DELROUTE,
+++					   &cfg);
++ 	return err;
++ }
++ 
++@@ -5596,11 +5603,17 @@
++ 	}
++ 
++ 	if (cfg.fc_mp)
++-		return ip6_route_multipath_del(&cfg, extack);
+++		err = ip6_route_multipath_del(&cfg, extack);
++ 	else {
++ 		cfg.fc_delete_all_nh = 1;
++-		return ip6_route_del(&cfg, extack);
+++		err = ip6_route_del(&cfg, extack);
++ 	}
+++
+++	if (!err)
+++		atomic_notifier_call_chain(&ip6route_chain,
+++					   RTM_DELROUTE, &cfg);
+++
+++	return err;
++ }
++ 
++ static int inet6_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh,
++@@ -5617,9 +5630,15 @@
++ 		cfg.fc_metric = IP6_RT_PRIO_USER;
++ 
++ 	if (cfg.fc_mp)
++-		return ip6_route_multipath_add(&cfg, extack);
+++		err = ip6_route_multipath_add(&cfg, extack);
++ 	else
++-		return ip6_route_add(&cfg, GFP_KERNEL, extack);
+++		err = ip6_route_add(&cfg, GFP_KERNEL, extack);
+++
+++	if (!err)
+++		atomic_notifier_call_chain(&ip6route_chain,
+++					   RTM_NEWROUTE, &cfg);
+++
+++	return err;
++ }
++ 
++ /* add the overhead of this fib6_nh to nexthop_len */
++@@ -6438,6 +6457,18 @@
++ 	return NOTIFY_OK;
++ }
++ 
+++int rt6_register_notifier(struct notifier_block *nb)
+++{
+++	return atomic_notifier_chain_register(&ip6route_chain, nb);
+++}
+++EXPORT_SYMBOL(rt6_register_notifier);
+++
+++int rt6_unregister_notifier(struct notifier_block *nb)
+++{
+++	return atomic_notifier_chain_unregister(&ip6route_chain, nb);
+++}
+++EXPORT_SYMBOL(rt6_unregister_notifier);
+++
++ /*
++  *	/proc
++  */

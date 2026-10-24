@@ -19,6 +19,24 @@ CONFIG_TARGET_ROOTFS_SQUASHFS=y
 # takes CONFIG_QCOM_PPE out of the kernel config.
 # CONFIG_PACKAGE_kmod-qcom-ppe is not set
 
+# W1 — QSDK NSS PPE 数据通路（与 24.10-6.6 同一组件集，暂不含 Wi-Fi 卸载）。
+#
+# kmod-qca-nss-ppe 的可见性由补丁 0010 的 DEVICE_PACKAGES 提供；下面这些
+# 子包是可选件，不写进 seed 就不会进镜像。ecm-standard 是 24.10-6.6 用的
+# 变体。ppe-ath-clients 只是把 ath 客户端注册给 PPE 的通用模块（源码里没有
+# ath12k 符号），真正的 Wi-Fi 卸载插件属于 W2/W3，本轮不接。
+CONFIG_PACKAGE_kmod-qca-nss-ppe-vp=y
+CONFIG_PACKAGE_kmod-qca-nss-ppe-rule=y
+CONFIG_PACKAGE_kmod-qca-nss-ppe-ds=y
+CONFIG_PACKAGE_kmod-qca-nss-ppe-bridge-mgr=y
+CONFIG_PACKAGE_kmod-qca-nss-ppe-vlan-mgr=y
+CONFIG_PACKAGE_kmod-qca-nss-ppe-ath-clients=y
+# ecm 在 ipq95xx 上总是带 SFE 前端（Makefile 用 CONFIG_TARGET_qualcommbe_ipq95xx
+# 打开 ECM_FRONT_END_SFE_ENABLE），sfe_* 符号来自 qca-nss-sfe；24.10-6.6 的
+# 镜像同样带 kmod-qca-nss-sfe。
+CONFIG_PACKAGE_kmod-qca-nss-sfe=y
+CONFIG_PACKAGE_kmod-qca-nss-ecm-standard=y
+
 # Version string: left at the upstream defaults — VERSIONOPT is off, so
 # VERSION_NUMBER resolves to 25.12-SNAPSHOT (branch default) and VERSION_CODE
 # to the tree's `version` file (sbe1v1k-25.12-stage1-<sha8>).  The banner

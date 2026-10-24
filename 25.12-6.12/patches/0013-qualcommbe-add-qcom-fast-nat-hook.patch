@@ -1,0 +1,131 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 恢复 QSDK 的 fast-NAT 收包钩子（qca-nss-sfe 依赖）
+
+qca-nss-sfe 不注册 packet_type，也不挂 netfilter：它把 sfe_recv() 写进
+QSDK 内核 net/core/dev.c 里的函数指针，由 __netif_receive_skb_core() 在
+协议分发之前对每个入站 skb 调用：
+
+  int (*athrs_fast_nat_recv)(struct sk_buff *skb) __rcu __read_mostly;
+  bool fast_tc_filter;
+
+主线 6.12 两者都没有，于是 qca-nss-sfe 在 modpost 阶段报
+"athrs_fast_nat_recv" undefined；即使能链接，也收不到任何报文。
+
+本补丁按 QSDK 6.6 的布局恢复两个符号和两处调用点：
+
+  - fast_tc_filter == false（默认）：钩子位于 generic-XDP 之后、VLAN
+    解封装和 TC 分类之前；
+  - fast_tc_filter == true：钩子移到 VLAN/TC 处理之后、rx_handler 之前，
+    并先把报文交给抓包 tap。
+
+没有模块注册钩子时，代价是每个入站报文一次 RCU 解引用，与 QSDK 相同。
+对 W1 的意义：ipq9574 上 ECM 优先选 PPE、SFE 仅作回退，本补丁让这条
+回退路径真正可用（否则 SFE 加速永远为空）。
+
+分类：必须 shim（厂商内核 ABI；主线无等价钩子）。
+
+--- a/target/linux/qualcommbe/patches-6.12/0144-net-core-add-qcom-fast-nat-receive-hook.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.12/0144-net-core-add-qcom-fast-nat-receive-hook.patch	1970-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,102 @@
++net/core: add the QSDK fast-NAT receive hook used by qca-nss-sfe
++
++qca-nss-sfe does not register a packet_type or a netfilter hook: it
++publishes its receive function through a function pointer that the QSDK
++kernel keeps in net/core/dev.c and calls from __netif_receive_skb_core()
++for every ingress skb, before protocol dispatch:
++
++  int (*athrs_fast_nat_recv)(struct sk_buff *skb) __rcu __read_mostly;
++  bool fast_tc_filter;
++
++Mainline 6.12 has neither, so qca-nss-sfe fails to link
++("modpost: \"athrs_fast_nat_recv\" ... undefined") and, more importantly,
++would have no way to see ingress packets even if it did.
++
++This patch restores both symbols and the two call sites, matching the
++QSDK 6.6 layout:
++
++  - fast_tc_filter == false (default): the handler runs early, right
++    after the generic-XDP block, before VLAN untagging and the TC
++    classifier.
++  - fast_tc_filter == true: the handler runs after VLAN/TC processing,
++    immediately before rx_handler, and the packet taps are served first.
++
++The cost when no module registers a handler is one RCU dereference per
++ingress packet, exactly as in QSDK. Consequence for W1: qca-nss-sfe's
++sfe_recv() can intercept and accelerate flows again; on ipq9574 ECM
++selects the PPE engine first and uses SFE only as fallback, so this patch
++is what makes that fallback functional.
++
++Classification: required shim (vendor kernel ABI; no mainline equivalent).
++
++--- a/net/core/dev.c
+++++ b/net/core/dev.c
++@@ -5553,6 +5553,23 @@
++ EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
++ 
++ /*
+++ * QSDK fast-NAT receive hook (SBE1V1K W1).
+++ *
+++ * qca-nss-sfe registers sfe_recv() here; the receive path below offers every
+++ * ingress skb to it before the protocol stack and consumes the skb when the
+++ * handler returns non-zero.  The pointer is NULL unless that module is loaded,
+++ * so this costs one RCU dereference per packet and nothing else.
+++ *
+++ * fast_tc_filter disables the early hook above the TC classifier and moves it
+++ * after VLAN/TC processing, matching QSDK's sysfs knob of the same name.
+++ */
+++bool fast_tc_filter;
+++EXPORT_SYMBOL_GPL(fast_tc_filter);
+++
+++int (*athrs_fast_nat_recv)(struct sk_buff *skb) __rcu __read_mostly;
+++EXPORT_SYMBOL_GPL(athrs_fast_nat_recv);
+++
+++/*
++  * Limit the use of PFMEMALLOC reserves to those protocols that implement
++  * the special handling of PFMEMALLOC skbs.
++  */
++@@ -5599,6 +5616,7 @@
++ 	bool deliver_exact = false;
++ 	int ret = NET_RX_DROP;
++ 	__be16 type;
+++	int (*fast_recv)(struct sk_buff *skb);
++ 
++ 	net_timestamp_check(!READ_ONCE(net_hotdata.tstamp_prequeue), skb);
++ 
++@@ -5632,6 +5650,14 @@
++ 		}
++ 	}
++ 
+++	if (likely(!fast_tc_filter)) {
+++		fast_recv = rcu_dereference(athrs_fast_nat_recv);
+++		if (fast_recv && fast_recv(skb)) {
+++			ret = NET_RX_SUCCESS;
+++			goto out;
+++		}
+++	}
+++
++ 	if (eth_type_vlan(skb->protocol)) {
++ 		skb = skb_vlan_untag(skb);
++ 		if (unlikely(!skb))
++@@ -5690,6 +5716,21 @@
++ 			goto out;
++ 	}
++ 
+++	if (unlikely(fast_tc_filter)) {
+++		fast_recv = rcu_dereference(athrs_fast_nat_recv);
+++		if (fast_recv) {
+++			if (pt_prev) {
+++				ret = deliver_skb(skb, pt_prev, orig_dev);
+++				pt_prev = NULL;
+++			}
+++
+++			if (fast_recv(skb)) {
+++				ret = NET_RX_SUCCESS;
+++				goto out;
+++			}
+++		}
+++	}
+++
++ 	rx_handler = rcu_dereference(skb->dev->rx_handler);
++ 	if (rx_handler) {
++ 		if (pt_prev) {

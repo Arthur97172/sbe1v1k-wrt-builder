@@ -1,0 +1,223 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 恢复 QSDK 的 bridge FDB 通知链
+
+QSDK 6.6 的 bridge 导出了四个 FDB 通知注册函数和
+br_fdb_bridge_dev_get_and_hold()，NSS PPE 的 bridge/vlan manager 与
+ECM 用它们跟踪 FDB 的新增、删除、老化与 MAC 迁移。主线 6.12 没有这些
+接口，qca-nss-ae-clients 因此编译失败：
+
+  error: invalid use of undefined type 'struct br_fdb_event'
+  error: implicit declaration of function 'br_fdb_update_register_notify'
+
+本补丁按 QSDK 原样移植：if_bridge.h 增加事件结构，br_fdb.c 增加两个
+atomic notifier 链，并在 fdb_notify()、br_fdb_cleanup() 与
+br_fdb_update() 的 MAC 迁移分支里发出事件。没有监听者时数据面行为不变。
+
+分类：必须 shim（厂商内核 ABI）；QSDK 实现移植到主线 6.12。
+
+--- a/target/linux/qualcommbe/patches-6.12/0377-net-bridge-restore-qcom-fdb-notify.patch
++++ b/target/linux/qualcommbe/patches-6.12/0377-net-bridge-restore-qcom-fdb-notify.patch
+@@ -0,0 +1,203 @@
++net: bridge: restore QSDK's FDB notify chains and bridge dev helper
++
++QSDK's 6.6 kernel exports four bridge FDB notifier entry points plus
++br_fdb_bridge_dev_get_and_hold(), which the NSS PPE bridge/vlan managers
++and ECM use to follow FDB activity:
++
++  br_fdb_register_notify() / br_fdb_unregister_notify()
++	BR_FDB_EVENT_ADD / BR_FDB_EVENT_DEL for entries learned or deleted
++	on a bridge port;
++
++  br_fdb_update_register_notify() / br_fdb_update_unregister_notify()
++	aged-out entries and MAC moves between ports;
++
++  br_fdb_bridge_dev_get_and_hold()
++	return br->dev with a reference held for the caller.
++
++Mainline 6.12 has none of them.  Port QSDK's implementation in the same
++places: declare the event structure in if_bridge.h, keep two atomic
++notifier heads in br_fdb.c, and call them from fdb_notify(),
++br_fdb_cleanup() and the MAC-move path of br_fdb_update().
++
++No datapath behaviour changes while no listener is registered; the
++additions only make the offload engines able to observe FDB activity.
++
++--- a/include/linux/if_bridge.h
+++++ b/include/linux/if_bridge.h
++@@ -179,6 +179,17 @@
++ }
++ #endif
++ 
+++struct br_fdb_event {
+++	unsigned char addr[6];
+++	unsigned char is_local;
+++	struct net_device *dev;
+++	struct net_bridge *br;
+++	struct net_device *orig_dev;
+++};
+++
+++#define BR_FDB_EVENT_ADD	0x01
+++#define BR_FDB_EVENT_DEL	0x02
+++
++ struct net_bridge_fdb_entry;
++ 
++ #if IS_ENABLED(CONFIG_BRIDGE)
++@@ -202,6 +213,11 @@
++ struct net_bridge_fdb_entry *br_fdb_has_entry(struct net_device *dev,
++ 					      const unsigned char *addr,
++ 					      u16 vid);
+++void br_fdb_update_register_notify(struct notifier_block *nb);
+++void br_fdb_update_unregister_notify(struct notifier_block *nb);
+++void br_fdb_register_notify(struct notifier_block *nb);
+++void br_fdb_unregister_notify(struct notifier_block *nb);
+++struct net_device *br_fdb_bridge_dev_get_and_hold(struct net_bridge *br);
++ #else
++ static inline struct net_device *
++ br_fdb_find_port(const struct net_device *br_dev,
++@@ -256,6 +272,28 @@
++ {
++ 	return NULL;
++ }
+++
+++static inline void br_fdb_update_register_notify(struct notifier_block *nb)
+++{
+++}
+++
+++static inline void br_fdb_update_unregister_notify(struct notifier_block *nb)
+++{
+++}
+++
+++static inline void br_fdb_register_notify(struct notifier_block *nb)
+++{
+++}
+++
+++static inline void br_fdb_unregister_notify(struct notifier_block *nb)
+++{
+++}
+++
+++static inline struct net_device *
+++br_fdb_bridge_dev_get_and_hold(struct net_bridge *br)
+++{
+++	return NULL;
+++}
++ 
++ static inline u8 br_port_get_stp_state(const struct net_device *dev)
++ {
++--- a/net/bridge/br_fdb.c
+++++ b/net/bridge/br_fdb.c
++@@ -181,6 +181,33 @@
++ 		+ nla_total_size(sizeof(u8)); /* NFEA_ACTIVITY_NOTIFY */
++ }
++ 
+++ATOMIC_NOTIFIER_HEAD(br_fdb_notifier_list);
+++ATOMIC_NOTIFIER_HEAD(br_fdb_update_notifier_list);
+++
+++void br_fdb_register_notify(struct notifier_block *nb)
+++{
+++	atomic_notifier_chain_register(&br_fdb_notifier_list, nb);
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_register_notify);
+++
+++void br_fdb_unregister_notify(struct notifier_block *nb)
+++{
+++	atomic_notifier_chain_unregister(&br_fdb_notifier_list, nb);
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_unregister_notify);
+++
+++void br_fdb_update_register_notify(struct notifier_block *nb)
+++{
+++	atomic_notifier_chain_register(&br_fdb_update_notifier_list, nb);
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_update_register_notify);
+++
+++void br_fdb_update_unregister_notify(struct notifier_block *nb)
+++{
+++	atomic_notifier_chain_unregister(&br_fdb_update_notifier_list, nb);
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_update_unregister_notify);
+++
++ static void fdb_notify(struct net_bridge *br,
++ 		       const struct net_bridge_fdb_entry *fdb, int type,
++ 		       bool swdev_notify)
++@@ -192,6 +219,21 @@
++ 	if (swdev_notify)
++ 		br_switchdev_fdb_notify(br, fdb, type);
++ 
+++	if (fdb->dst) {
+++		struct br_fdb_event fdb_event;
+++		int event;
+++
+++		event = (type == RTM_NEWNEIGH) ? BR_FDB_EVENT_ADD :
+++						 BR_FDB_EVENT_DEL;
+++		fdb_event.dev = fdb->dst->dev;
+++		fdb_event.br = br;
+++		fdb_event.orig_dev = NULL;
+++		ether_addr_copy(fdb_event.addr, fdb->key.addr.addr);
+++		fdb_event.is_local = test_bit(BR_FDB_LOCAL, &fdb->flags);
+++		atomic_notifier_call_chain(&br_fdb_notifier_list, event,
+++					   &fdb_event);
+++	}
+++
++ 	skb = nlmsg_new(fdb_nlmsg_size(), GFP_ATOMIC);
++ 	if (skb == NULL)
++ 		goto errout;
++@@ -665,8 +707,17 @@
++ 			work_delay = min(work_delay, this_timer - now);
++ 		} else {
++ 			spin_lock_bh(&br->hash_lock);
++-			if (!hlist_unhashed(&f->fdb_node))
+++			if (!hlist_unhashed(&f->fdb_node)) {
+++				struct br_fdb_event fdb_event;
+++
+++				memset(&fdb_event, 0, sizeof(fdb_event));
+++				ether_addr_copy(fdb_event.addr,
+++						f->key.addr.addr);
++ 				fdb_delete(br, f, true);
+++				atomic_notifier_call_chain(
+++					&br_fdb_update_notifier_list, 0,
+++					(void *)&fdb_event);
+++			}
++ 			spin_unlock_bh(&br->hash_lock);
++ 		}
++ 	}
++@@ -987,6 +1038,14 @@
++ 		  test_and_clear_bit(BR_FDB_NOTIFY_INACTIVE, &fdb->flags));
++ }
++ 
+++/* Get the bridge device, with a reference held for the caller. */
+++struct net_device *br_fdb_bridge_dev_get_and_hold(struct net_bridge *br)
+++{
+++	dev_hold(br->dev);
+++	return br->dev;
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_bridge_dev_get_and_hold);
+++
++ void br_fdb_update(struct net_bridge *br, struct net_bridge_port *source,
++ 		   const unsigned char *addr, u16 vid, unsigned long flags)
++ {
++@@ -1015,7 +1074,14 @@
++ 			/* fastpath: update of existing entry */
++ 			if (unlikely(source != READ_ONCE(fdb->dst) &&
++ 				     !test_bit(BR_FDB_STICKY, &fdb->flags))) {
+++				struct br_fdb_event fdb_event;
+++
++ 				br_switchdev_fdb_notify(br, fdb, RTM_DELNEIGH);
+++				memset(&fdb_event, 0, sizeof(fdb_event));
+++				ether_addr_copy(fdb_event.addr, addr);
+++				fdb_event.br = br;
+++				fdb_event.orig_dev = fdb->dst->dev;
+++				fdb_event.dev = source->dev;
++ 				WRITE_ONCE(fdb->dst, source);
++ 				fdb_modified = true;
++ 				/* Take over HW learned entry */
++@@ -1028,6 +1094,10 @@
++ 				 */
++ 				if (unlikely(test_bit(BR_FDB_LOCKED, &fdb->flags)))
++ 					clear_bit(BR_FDB_LOCKED, &fdb->flags);
+++
+++				atomic_notifier_call_chain(
+++					&br_fdb_update_notifier_list, 0,
+++					(void *)&fdb_event);
++ 			}
++ 
++ 			if (unlikely(test_bit(BR_FDB_ADDED_BY_USER, &flags))) {

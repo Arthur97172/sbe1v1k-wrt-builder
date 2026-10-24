@@ -1,0 +1,36 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 导出 ndisc_send_ns 供 qca-nss-ecm 使用
+
+ecm.ko 的 ecm_interface_send_neighbour_solicitation()（ecm_interface.c）
+在连接受理过程中需要主动发一个 NS 来刷新邻居表项。QSDK 内核导出了
+ndisc_send_ns()，主线 6.12 有这个函数但没有 EXPORT_SYMBOL，于是
+modpost 报 "ndisc_send_ns undefined"。
+
+本补丁只在函数末尾加一行 EXPORT_SYMBOL(ndisc_send_ns)，实现仍是主线
+自己的实现，行为不变。
+
+分类：必须 shim（厂商内核 ABI）；导出主线既有实现。
+--- a/target/linux/qualcommbe/patches-6.12/0374-net-ipv6-export-ndisc-send-ns.patch
++++ b/target/linux/qualcommbe/patches-6.12/0374-net-ipv6-export-ndisc-send-ns.patch
+@@ -0,0 +1,21 @@
++net: ipv6: export ndisc_send_ns
++
++QSDK's kernel exports ndisc_send_ns() so that qca-nss-ecm can prompt
++neighbour discovery while it builds the interface hierarchy for a flow
++(ecm_interface.c, ecm_interface_send_neighbour_solicitation()).  Mainline
++6.12 carries the function but does not export it, so ecm.ko fails at
++modpost with "ndisc_send_ns undefined".
++
++Classification: must-shim (vendor kernel ABI); the exported symbol is
++mainline's own implementation, unchanged.
++
++--- a/net/ipv6/ndisc.c
+++++ b/net/ipv6/ndisc.c
++@@ -672,6 +672,7 @@
++ 	if (skb)
++ 		ndisc_send_skb(skb, daddr, saddr);
++ }
+++EXPORT_SYMBOL(ndisc_send_ns);
++ 
++ void ndisc_send_rs(struct net_device *dev, const struct in6_addr *saddr,
++ 		   const struct in6_addr *daddr)

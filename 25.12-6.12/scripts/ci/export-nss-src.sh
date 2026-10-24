@@ -8,7 +8,12 @@
 # 镜像。因此把四个包的源码单独发布，CI 在 prepare-tree.sh 里下载。
 #
 # 只打包源码，不含任何二进制固件：
-#   qca-ssdk  qca-nss-phy  qca-nss-dp  qca-nss-ppe
+#   base/     qca-ssdk  qca-nss-phy  qca-nss-dp  qca-nss-ppe
+#   clients/  qca-nss-ecm  qca-nss-ae-clients
+#
+# clients/ 的两个包是 W1（PPE 数据通路）才接入的：ecm 是连接管理器，
+# ae-clients 的 Makefile 定义了 bridge-mgr / vlan-mgr / ath-clients 等子包。
+# 它们只在 ipq95xx 上被选中，不改变既有四个包的内容。
 #
 # 授权：四个包内的 .c/.h/Makefile 全部是 ISC（部分文件带 SPDX 行，其余在
 # 文件头写明同样的 ISC 许可文本）。脚本最后会复核一次，并生成
@@ -30,7 +35,8 @@ ROOT=$(CDPATH= cd -- "$PROJ/.." && pwd)
 REPO=Arthur97172/sbe1v1k
 TAG=nss-src-v1
 NAME=nss-src-v1
-PKGS="qca-ssdk qca-nss-phy qca-nss-dp qca-nss-ppe"
+PKGS_BASE="qca-ssdk qca-nss-phy qca-nss-dp qca-nss-ppe"
+PKGS_CLIENTS="qca-nss-ecm qca-nss-ae-clients"
 
 UPLOAD=0
 if [ "${1:-}" = "--upload" ]; then
@@ -40,21 +46,29 @@ fi
 OUT=${1:-/var/tmp/sbe-nss}
 
 SRC_BASE=${SBE_NSS_SRC_BASE:-$ROOT/sources/buildroot/qca/src/nss/base}
+SRC_CLIENTS=${SBE_NSS_SRC_CLIENTS:-$ROOT/sources/buildroot/qca/src/nss/clients}
 [ -d "$SRC_BASE" ] || { echo "缺少 NSS 源码目录：$SRC_BASE" >&2; exit 1; }
+[ -d "$SRC_CLIENTS" ] || { echo "缺少 NSS 源码目录：$SRC_CLIENTS" >&2; exit 1; }
 
-for p in $PKGS; do
-	[ -d "$SRC_BASE/$p" ] || { echo "缺少源码目录：$SRC_BASE/$p" >&2; exit 1; }
+# 打平成一层：install.sh 按 LOCAL_SRC 的 basename 去 $SBE_NSS_BASE 下找。
+PKG_PATHS=
+for p in $PKGS_BASE; do PKG_PATHS="$PKG_PATHS $SRC_BASE/$p"; done
+for p in $PKGS_CLIENTS; do PKG_PATHS="$PKG_PATHS $SRC_CLIENTS/$p"; done
+
+for d in $PKG_PATHS; do
+	[ -d "$d" ] || { echo "缺少源码目录：$d" >&2; exit 1; }
 done
 
 # ---- 授权复核 ---------------------------------------------------------------
 bad=0
-for p in $PKGS; do
+for d in $PKG_PATHS; do
+	p=$(basename "$d")
 	# 每个包里必须能找到 ISC 声明；出现 GPL/Apache/机密字样则停下人工复核。
 	if ! grep -rqE 'SPDX-License-Identifier: ISC|Permission to use, copy, modify, and/or distribute' \
-	     "$SRC_BASE/$p" --include='*.c' --include='*.h' --include='Makefile' --include='*.mk'; then
+	     "$d" --include='*.c' --include='*.h' --include='Makefile' --include='*.mk'; then
 		echo "授权复核：$p 里找不到 ISC 声明" >&2; bad=1
 	fi
-	hits=$(grep -rliE 'GNU General Public|Apache License|Confidential' "$SRC_BASE/$p" 2>/dev/null || true)
+	hits=$(grep -rliE 'GNU General Public|Apache License|Confidential' "$d" 2>/dev/null || true)
 	if [ -n "$hits" ]; then
 		echo "授权复核：$p 里出现需人工确认的许可字样：" >&2
 		printf '%s\n' "$hits" | sed 's/^/  /' >&2
@@ -64,7 +78,7 @@ done
 [ "$bad" = 0 ] || { echo "授权复核未通过，拒绝打包" >&2; exit 1; }
 
 # 源码目录里不允许混入二进制（避免把固件/预编译产物发出去）。
-blobs=$(find $(for p in $PKGS; do printf '%s ' "$SRC_BASE/$p"; done) \
+blobs=$(find $PKG_PATHS \
 	\( -name '*.bin' -o -name '*.fw' -o -name '*.o' -o -name '*.ko' \
 	   -o -name '*.a' -o -name '*.so*' -o -name '*.apk' \) 2>/dev/null || true)
 if [ -n "$blobs" ]; then
@@ -76,16 +90,17 @@ fi
 # ---- 组装 -------------------------------------------------------------------
 rm -rf "$OUT/$NAME"
 mkdir -p "$OUT/$NAME"
-for p in $PKGS; do
-	cp -a "$SRC_BASE/$p" "$OUT/$NAME/$p"
+for d in $PKG_PATHS; do
+	cp -a "$d" "$OUT/$NAME/$(basename "$d")"
 done
 
 cat > "$OUT/$NAME/NOTICE-ISC.txt" <<'EOF'
 NSS source bundle (nss-src-v1)
 ==============================
 
-Contents: qca-ssdk, qca-nss-phy, qca-nss-dp, qca-nss-ppe, taken verbatim from
-the QSDK 14.x vendor tree.
+Contents: qca-ssdk, qca-nss-phy, qca-nss-dp, qca-nss-ppe (from
+qca/src/nss/base) and qca-nss-ecm, qca-nss-ae-clients (from
+qca/src/nss/clients), taken verbatim from the QSDK 14.x vendor tree.
 
 License: ISC, as stated in every source file (either as an SPDX line or as the
 full ISC permission text in the file header). Copyright remains with The Linux
@@ -131,7 +146,8 @@ if [ "$UPLOAD" = 1 ]; then
 			--title "NSS 源码包（QSDK 14.x，ISC）" \
 			--notes "供 25.12-6.12 CI 构建使用的 NSS 源码（ISC）。
 
-内容：qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe，逐字取自 QSDK 14.x 厂商树；
+内容：qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe（base/）与
+qca-nss-ecm、qca-nss-ae-clients（clients/），逐字取自 QSDK 14.x 厂商树；
 仅源码，不含任何二进制固件。CI 在 prepare-tree.sh 里按
 25.12-6.12/nss/nss-src.tar.gz.sha256 校验后解包。
 "

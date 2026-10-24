@@ -1,0 +1,128 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 恢复 QSDK 的 nf_conntrack_tcp_no_window_check
+
+QSDK 6.6 内核在 struct nf_tcp_net 里有 tcp_no_window_check，并注册成
+每 netns 的 sysctl nf_conntrack_tcp_no_window_check（默认 0）。PPE 引擎
+不做 TCP 窗口跟踪，所以 ecm_ppe_feature_check() 只有在它被置 1 时才允许
+TCP 流卸载；SFE/NSS 前端也用它决定规则是否带 NO_SEQ_CHECK。主线 6.12
+从来没有这个开关，于是 ecm_sfe_ported_ipv4.c 直接编译失败：
+
+  error: 'struct nf_tcp_net' has no member named 'tcp_no_window_check'
+
+本补丁按 QSDK 的原样补三处：结构体成员（默认 0）、sysctl 注册，以及
+tcp_in_window() 提前返回和重传超时判断这两处数据面用法。默认值 0 时
+数据面行为与主线完全一致，只是多了一个可写的 sysctl。
+
+分类：必须 shim（厂商内核 ABI）；QSDK 实现移植到主线 6.12，默认行为不变。
+
+--- a/target/linux/qualcommbe/patches-6.12/0376-netfilter-conntrack-tcp-no-window-check.patch
++++ b/target/linux/qualcommbe/patches-6.12/0376-netfilter-conntrack-tcp-no-window-check.patch
+@@ -0,0 +1,108 @@
++netfilter: conntrack: restore QSDK's tcp_no_window_check sysctl
++
++QSDK's 6.6 kernel carries a per-netns "nf_conntrack_tcp_no_window_check"
++switch that lets a hardware offload engine skip conntrack's TCP window
++tracking, which the PPE engine cannot perform.  Mainline never had the
++knob, so qca-nss-ecm does not build against 6.12:
++
++  frontends/sfe/ecm_sfe_ported_ipv4.c:1939:58: error:
++        'struct nf_tcp_net' has no member named 'tcp_no_window_check'
++
++Restore the same three pieces QSDK has, in the same places:
++  - the u8 member in struct nf_tcp_net, initialised to 0 like QSDK;
++  - the per-netns sysctl entry, nf_conntrack_tcp_no_window_check;
++  - the two datapath uses: an immediate NFCT_TCP_ACCEPT at the top of
++    tcp_in_window(), and the shortened retransmission timeout when the
++    switch is off.
++
++With the default of 0 the packet path is unchanged - both uses reduce to
++what mainline 6.12 already does - so the only new behaviour is that the
++sysctl exists and can be set to 1, which is what ECM's PPE front-end
++requires before it will accelerate TCP flows.
++
++Classification: must-shim (vendor kernel ABI); QSDK implementation ported
++onto mainline 6.12 with unchanged defaults.
++
++---
++--- a/include/net/netns/conntrack.h
+++++ b/include/net/netns/conntrack.h
++@@ -26,6 +26,7 @@
++ 	unsigned int timeouts[TCP_CONNTRACK_TIMEOUT_MAX];
++ 	u8 tcp_loose;
++ 	u8 tcp_be_liberal;
+++	u8 tcp_no_window_check;
++ 	u8 tcp_max_retrans;
++ 	u8 tcp_ignore_invalid_rst;
++ #if IS_ENABLED(CONFIG_NF_FLOW_TABLE)
++--- a/net/netfilter/nf_conntrack_proto_tcp.c
+++++ b/net/netfilter/nf_conntrack_proto_tcp.c
++@@ -557,6 +557,7 @@
++ 	      struct nf_tcp_invalid_log *log)
++ {
++ 	struct ip_ct_tcp *state = &ct->proto.tcp;
+++	const struct nf_tcp_net *tn = nf_tcp_pernet(nf_ct_net(ct));
++ 	struct ip_ct_tcp_state *sender = &state->seen[dir];
++ 	struct ip_ct_tcp_state *receiver = &state->seen[!dir];
++ 	__u32 seq, ack, sack, end, win, swin;
++@@ -564,6 +565,9 @@
++ 	s32 receiver_offset;
++ 	u16 win_raw;
++ 
+++	if (tn->tcp_no_window_check)
+++		return NFCT_TCP_ACCEPT;
+++
++ 	/*
++ 	 * Get the required data from the packet.
++ 	 */
++@@ -1331,7 +1335,7 @@
++ 		 IP_CT_TCP_FLAG_DATA_UNACKNOWLEDGED &&
++ 		 timeouts[new_state] > timeouts[TCP_CONNTRACK_UNACK])
++ 		timeout = timeouts[TCP_CONNTRACK_UNACK];
++-	else if (ct->proto.tcp.last_win == 0 &&
+++	else if (!tn->tcp_no_window_check && ct->proto.tcp.last_win == 0 &&
++ 		 timeouts[new_state] > timeouts[TCP_CONNTRACK_RETRANS])
++ 		timeout = timeouts[TCP_CONNTRACK_RETRANS];
++ 	else
++@@ -1643,6 +1647,9 @@
++ 	 */
++ 	tn->tcp_be_liberal = 0;
++ 
+++	/* Skip Windows Check */
+++	tn->tcp_no_window_check = 0;
+++
++ 	/* If it's non-zero, we turn off RST sequence number check */
++ 	tn->tcp_ignore_invalid_rst = 0;
++ 
++--- a/net/netfilter/nf_conntrack_standalone.c
+++++ b/net/netfilter/nf_conntrack_standalone.c
++@@ -630,6 +630,7 @@
++ #endif
++ 	NF_SYSCTL_CT_PROTO_TCP_LOOSE,
++ 	NF_SYSCTL_CT_PROTO_TCP_LIBERAL,
+++	NF_SYSCTL_CT_PROTO_TCP_NO_WINDOW_CHECK,
++ 	NF_SYSCTL_CT_PROTO_TCP_IGNORE_INVALID_RST,
++ 	NF_SYSCTL_CT_PROTO_TCP_MAX_RETRANS,
++ 	NF_SYSCTL_CT_PROTO_TIMEOUT_UDP,
++@@ -836,6 +837,14 @@
++ 		.extra1 	= SYSCTL_ZERO,
++ 		.extra2 	= SYSCTL_ONE,
++ 	},
+++	[NF_SYSCTL_CT_PROTO_TCP_NO_WINDOW_CHECK] = {
+++		.procname	= "nf_conntrack_tcp_no_window_check",
+++		.maxlen		= sizeof(u8),
+++		.mode		= 0644,
+++		.proc_handler	= proc_dou8vec_minmax,
+++		.extra1 	= SYSCTL_ZERO,
+++		.extra2 	= SYSCTL_ONE,
+++	},
++ 	[NF_SYSCTL_CT_PROTO_TCP_IGNORE_INVALID_RST] = {
++ 		.procname	= "nf_conntrack_tcp_ignore_invalid_rst",
++ 		.maxlen		= sizeof(u8),
++@@ -1037,6 +1046,7 @@
++ 
++ 	XASSIGN(LOOSE, &tn->tcp_loose);
++ 	XASSIGN(LIBERAL, &tn->tcp_be_liberal);
+++	XASSIGN(NO_WINDOW_CHECK, &tn->tcp_no_window_check);
++ 	XASSIGN(MAX_RETRANS, &tn->tcp_max_retrans);
++ 	XASSIGN(IGNORE_INVALID_RST, &tn->tcp_ignore_invalid_rst);
++ #undef XASSIGN
