@@ -24,10 +24,12 @@
 /24.10-6.6/build/host-bin/
 /25.12-6.12/build/host-bin/
 
-# Stage 2.5：厂商专有 Wi-Fi 固件 blob 不进 git（LICENSE_REVIEW_REQUIRED，N-3）。
-# 由私有 Release `fw-v1` 分发，scripts/ci/fetch-wifi-blobs.sh 取回并校验；
-# Makefile / FILES-SHA256 / LICENSE-STATUS 仍然入库。
-/25.12-6.12/build/local-packages/sbe-wifi-firmware/files/**/*.bin
+# Stage 2.5：厂商 Wi-Fi 固件 blob **入库**（2026-10-24 决定）。
+# 授权状态仍是 LICENSE_REVIEW_REQUIRED；用户明确接受公开分发风险，
+# 目的是让公开 CI 产出带无线固件的镜像。Makefile / FILES-SHA256 /
+# LICENSE-STATUS 与 blob 一并入库，构建时由 Build/Prepare 校验哈希。
+# 若要回到“不入库”，恢复下面一行即可（CI 随后会因缺 blob 失败）：
+# /25.12-6.12/build/local-packages/sbe-wifi-firmware/files/**/*.bin
 
 # 签名材料与备份
 key-build

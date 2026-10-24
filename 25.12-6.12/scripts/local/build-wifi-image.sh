@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 构建“带厂商 Wi-Fi 固件”的本机自用镜像。
+# 构建“带厂商 Wi-Fi 固件”的镜像。
 #
 # 这个镜像会把这 6 个专有 blob 打进 rootfs（LICENSE_REVIEW_REQUIRED，项目决策
-# N-3），**只能在本机自用，不得上传**：公开仓库的 CI 走的是另一个分支
-# （workflow 里关掉 sbe-wifi-firmware，并用 SBE_PUBLIC_IMAGE=1 校验）。
+# N-3）。2026-10-24 起 CI 构建同样带这些 blob，本脚本只是本地便利入口：
+# 先校验 blob 哈希，再构建并跑 verify-image.sh（同一判据）。
 #
 # 启动后的自动流程（无需人工干预）：
 #   S09sbe-wifi-cal  → 从本机 eMMC 0:ART 生成 cal-pci-*.bin
@@ -19,12 +19,6 @@ PROJ=$(CDPATH= cd -- "$SELF/../.." && pwd)          # <repo>/25.12-6.12
 ROOT=$(CDPATH= cd -- "$PROJ/.." && pwd)
 FW="$PROJ/build/local-packages/sbe-wifi-firmware/files"
 TARGET=${1:-world}
-
-# 绝不在 CI 里跑：那里没有 blob，跑出来的是无固件镜像，而且上传即违规。
-if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-	echo "拒绝在 GitHub Actions 中运行：本脚本会产出含专有固件的镜像。" >&2
-	exit 1
-fi
 
 [ -f "$FW/FILES-SHA256" ] || { echo "缺少 $FW/FILES-SHA256" >&2; exit 1; }
 if ! ( cd "$FW" && sha256sum -c FILES-SHA256 ); then

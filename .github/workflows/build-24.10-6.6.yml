@@ -113,6 +113,9 @@ jobs:
 
       - name: Verify image (static)
         if: success()
+        env:
+          # CI 镜像必须带厂商 Wi-Fi 固件（LICENSE_REVIEW_REQUIRED，已获准公开分发）。
+          SBE_EXPECT_WIFI_FIRMWARE: '1'
         run: ./24.10-6.6/scripts/ci/verify-image.sh "$GITHUB_WORKSPACE"
 
       - name: Collect release assets

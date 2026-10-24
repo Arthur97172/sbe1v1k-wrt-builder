@@ -8,7 +8,7 @@
 # cal-pci-<domain:bus:dev.fn>.bin。
 #
 # 这里只读本机分区、只写本机 /lib/firmware，不涉及任何分发；
-# 公开镜像不含厂商 blob，所以没有固件时直接跳过。
+# 没有安装固件时直接跳过（例如手工去掉 sbe-wifi-firmware 的构建）。
 #
 # 可用环境变量覆盖（仅供本地测试）：SBE_ART_DEV、SBE_FW_DIR。
 

@@ -15,7 +15,9 @@
 #   5. 关键二进制/配置存在；本次明确不打包的 geoview、v2ray-plugin 缺席；
 #      /etc/config/passwall 由上游 uci-defaults 在首启时从 0_default_config 生成，
 #      故检查来源文件而非该运行期文件；
-#   6. opkg 状态文件里的包数量。
+#   6. opkg 状态文件里的包数量；
+#   7. 设置了 SBE_EXPECT_WIFI_FIRMWARE=1 时（CI 使用）：sbe-wifi-firmware
+#      已安装，且 6 个厂商固件/BDF 与装配树里的包逐字节一致。
 #
 # 任何一项失败即以非零退出，CI 记为失败，不做静默降级。
 #
@@ -205,6 +207,35 @@ $("$PROJ/scripts/custom-packages.sh" --list-enabled)
 EOF
 else
 	bad "缺少 opkg status"
+fi
+
+# ---- 无线固件（CI 断言）------------------------------------------------------
+# 2026-10-24 决定：公开 CI 镜像也带厂商 Wi-Fi 固件（LICENSE_REVIEW_REQUIRED）。
+# 设 SBE_EXPECT_WIFI_FIRMWARE=1 时，镜像必须装 sbe-wifi-firmware，且 6 个文件
+# 与装配树里的固件包逐字节一致；不设时跳过这项检查（本机自由构建）。
+if [ "${SBE_EXPECT_WIFI_FIRMWARE:-0}" = 1 ]; then
+	FW="$BR/package/sbe-wifi-firmware/files"
+	if grep -qx 'Package: sbe-wifi-firmware' "$ROOTFS/usr/lib/opkg/status" 2>/dev/null; then
+		ok "包 sbe-wifi-firmware 已安装"
+	else
+		bad "包 sbe-wifi-firmware 未安装（CI 镜像必须带无线固件）"
+	fi
+	for f in lib/firmware/ath12k/QCN92XX/hw1.0/firmware-2.bin \
+	         lib/firmware/ath12k/QCN92XX/hw1.0/board-2.bin \
+	         lib/firmware/ath12k/QCN92XX/hw1.0/regdb.bin \
+	         usr/share/sbe-wifi/bdf41/b1.bin \
+	         usr/share/sbe-wifi/bdf41/b2.bin \
+	         usr/share/sbe-wifi/bdf41/b4.bin; do
+		if [ ! -f "$ROOTFS/$f" ]; then
+			bad "镜像缺少 /$f"
+		elif [ ! -f "$FW/$f" ]; then
+			bad "固件包缺少 $f（无法比对）"
+		elif cmp -s "$FW/$f" "$ROOTFS/$f"; then
+			ok "/$f 与固件包一致"
+		else
+			bad "/$f 哈希不一致"
+		fi
+	done
 fi
 
 exit "$fail"

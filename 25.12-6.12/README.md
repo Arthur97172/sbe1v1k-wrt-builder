@@ -9,8 +9,8 @@ OpenWrt 25.12（`openwrt-25.12`）+ 主线 Linux 6.12，目标板 `spectrum_sbe1
 驱动用上游 backports 6.18.55，固件/板级数据来自厂商 QSDK 14 镜像
 （`sbe-wifi-firmware` 本地包）；NSS Wi-Fi offload 仍未接入。**Stage 2.6**
 补上每台设备各自的校准数据：镜像内 `sbe-wifi-cal` 在 ath12k 加载前从本机
-eMMC `0:ART` 生成 `cal-pci-*.bin`。公开仓库的 CI 产物不含厂商固件，
-按 README 的“启用无线”步骤在本机投递后即可工作；全部真机行为仍为
+eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固件
+（2026-10-24 决定，见下文“固件 blob 与公开仓库”）；全部真机行为仍为
 `NOT TESTED` / `UNVERIFIED`。
 
 与 `24.10-6.6/` 不同，本目录不需要源码包：上游源码 + 官方 feeds + 本项目补丁
@@ -27,7 +27,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。公开仓库的 CI 产物不含厂商固�
 │   ├── config-seed/          defconfig 种子
 │   └── local-packages/       项目自带软件包
 │       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭）
-│       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（私有 blob）
+│       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
@@ -302,45 +302,43 @@ ath12k 的私有模块参数（`mlo_capable`、`cold_boot_cal`、`ppe_ds_enable`
 完全相同；`verify-image.sh` 全 PASS）。真机驱动加载/校准 `NOT TESTED`，
 校准数据来源 `BLOCKED`，NSS Wi-Fi offload `NOT SUPPORTED`。
 
-blob 授权 `LICENSE_REVIEW_REQUIRED`（项目决策 N-3）：复核完成前不得推送
-含这些文件的镜像或 Release。详见 `docs/S25_WIFI_ATH12K_REPORT.md`。
+blob 授权状态仍为 `LICENSE_REVIEW_REQUIRED`（项目决策 N-3）：权利复核尚未
+完成，但用户已于 2026-10-24 明确接受公开分发风险。详见
+`docs/S25_WIFI_ATH12K_REPORT.md`。
 
 ### 固件 blob 与公开仓库（2026-10-24 决定）
 
-本仓库是**公开**的，而这 6 个文件是厂商专有二进制
-（`LICENSE_REVIEW_REQUIRED`，项目决策 N-3）。因此：
+本仓库是**公开**的，6 个 Wi-Fi 固件文件是厂商专有二进制
+（`LICENSE_REVIEW_REQUIRED`）。2026-10-24 的决定是：**公开 CI 镜像也带
+这些 blob**。因此：
 
-- 6 个 blob 不进 git：`.gitignore` 覆盖
-  `build/local-packages/sbe-wifi-firmware/files/**/*.bin`，仓库只保留
-  `Makefile`、`files/FILES-SHA256`、`LICENSE-STATUS`。它们只存在于本机。
-- **CI 构建的镜像故意不含无线固件**：workflow 在 Configure 步骤把
-  `CONFIG_PACKAGE_sbe-wifi-firmware` 显式关掉，并用
-  `SBE_PUBLIC_IMAGE=1` 运行 `verify-image.sh`，断言镜像里没有任何厂商
-  blob、也没有装该包。CI 产物有 ath12k 驱动与 hostapd/wifi-scripts，
-  但 `ath12k` probe 会因缺固件失败——无线不可用。
-- 本机自用构建（种子默认 `CONFIG_PACKAGE_sbe-wifi-firmware=y`）仍带完整
-  固件；这种镜像**不要上传**，也不要在公开 Release 里分发。
+- 6 个 blob **入库**：`.gitignore` 不再排除
+  `build/local-packages/sbe-wifi-firmware/files/**/*.bin`；`Makefile`、
+  `files/FILES-SHA256`、`LICENSE-STATUS` 与 blob 一起提交。
+- **CI 构建的镜像带无线固件**：workflow 在 Configure 步骤断言种子里的
+  `CONFIG_PACKAGE_sbe-wifi-firmware=y` 在 `defconfig` 之后仍然生效，并在
+  构建前用 `sha256sum -c FILES-SHA256` 校验 blob；`verify-image.sh` 再断言
+  镜像内 6 个文件与仓库逐字节一致、`sbe-wifi-firmware` 已安装。
+- 权利状态没有因为分发而改变：仍是 `LICENSE_REVIEW_REQUIRED`。若将来要求
+  撤回公开分发，恢复 `.gitignore` 里注释掉的那一行，并把 workflow 的
+  Configure 步骤改回“关闭 + 双重断言”。
 
-真正要把带无线的镜像也交给 CI，需要先把仓库改为私有并完成固件授权复核；
-在此之前 `.github/workflows/build-25.12-6.12.yml` 只发布无固件镜像。
+CI 镜像与本地镜像的差别只剩来源（CI 从提交内容构建），无线能力一致。
 
-### 启用无线：公开镜像 + 本机投递固件（Stage 2.6）
+### 启用无线（Stage 2.6）
 
-CI 镜像里已有 ath12k 驱动、hostapd/wifi-scripts 和校准生成器，只缺 6 个
-厂商文件。把文件放到设备的 `/lib/firmware/ath12k/QCN9274/hw2.0/` 后重启，
-`S09sbe-wifi-cal` 会在 `S10boot` 调用 `/sbin/kmodloader` 之前从 ART 生成
-三份 `cal-pci-*.bin`，ath12k 即可 probe：
+CI 与本机构建的镜像都带 ath12k 驱动、hostapd/wifi-scripts、6 个厂商固件
+文件和校准生成器，刷机后无需手工投递。开机时 `S09sbe-wifi-cal` 会在
+`S10boot` 调用 `/sbin/kmodloader` 之前从 ART 生成三份 `cal-pci-*.bin`，
+ath12k 即可 probe。
+
+如果用的是旧的无固件镜像，或只想临时补文件，可以手工投递：
 
 ```sh
-# 1) 在设备上建目录（overlay 可写，文件会持久保存）
 ssh root@<router-ip> 'mkdir -p /lib/firmware/ath12k/QCN9274/hw2.0'
-
-# 2) 从本机的固件包目录投递 6 个文件（只上传到自己的设备）
 cd build/local-packages/sbe-wifi-firmware/files
 scp lib/firmware/ath12k/QCN9274/hw2.0/{firmware-2,board-2,regdb}.bin \
     root@<router-ip>:/lib/firmware/ath12k/QCN9274/hw2.0/
-
-# 3) 重启后校准由 S09 生成，ath12k 在 S10 加载
 ssh root@<router-ip> reboot
 ```
 
@@ -352,10 +350,8 @@ ssh root@<router-ip> reboot
 - 校准是每台设备自己的数据，从本机 `mmcblk0p20`（`PARTNAME=0:ART`）读取；
   校验规则与厂商一致：读 360 个扇区、前 `bdf_size` 字节 XOR16 == 0xFFFF、
   其后填充只能是 `0x00`/`0xFF`。任何一张卡不通过就整体失败，不会写入坏数据。
-- 首次开机时如果固件还没放好，S09 会直接跳过（镜像里没有
-  `firmware-2.bin` 时视为公开镜像）；放好文件后重启再生成即可。
-- 本机自用构建（种子 `CONFIG_PACKAGE_sbe-wifi-firmware=y`）本来就带这 6 个
-  文件，刷机后无需手工投递。
+- 首次开机时如果固件不在（例如旧镜像），S09 会直接跳过；放好文件后重启
+  再生成即可。
 
 ## Stage 1 已知限制（未在真机验证，状态 `UNVERIFIED`）
 
@@ -384,14 +380,15 @@ cp 25.12-6.12/build/config-seed/ipq95xx-spectrum-sbe1v1k.seed \
 ./25.12-6.12/scripts/ci/verify-image.sh
 ```
 
-带厂商无线固件的本机自用镜像用下面这条（固件已在种子里打开；脚本会先校验
+本地构建（与 CI 相同判据）用下面这条（固件已在种子里打开；脚本会先校验
 6 个 blob，再构建并跑 verify，末尾打印三个产物的 sha256）：
 
 ```sh
 ./25.12-6.12/scripts/local/build-wifi-image.sh
 ```
 
-**该镜像含专有固件（`LICENSE_REVIEW_REQUIRED`，项目决策 N-3），不得上传。**
+镜像含专有固件（`LICENSE_REVIEW_REQUIRED`，项目决策 N-3）；按 2026-10-24
+的决定随构建产物公开分发。
 
 NSS 源码：本机若已有厂商树 `sources/buildroot/qca/src/nss/base`，`nss/install.sh`
 直接用它；CI 没有厂商树，改用 Release 资产 `nss-src-v1`（见下）。

@@ -11,11 +11,10 @@
 #   2. /etc/banner 与渲染后 overlay 逐字节一致、无占位符、版本行是 25.12；
 #   3. 无线默认值三件套哈希/权限一致，/etc/rc.d/S95wireless-defaults 存在；
 #   4. LuCI 基础文件存在（与 24.10-6.6 镜像保持一致的选择）；
-#   5. Stage 2.5：ath12k.ko 与 kmod-ath12k / wifi-scripts / wpad-mesh-mbedtls 存在。
-#      SBE_PUBLIC_IMAGE=0（默认，本机自用）：固件/BDF 落在 QCN9274/hw2.0 与
-#      /usr/share/sbe-wifi/bdf41，内容与 build/local-packages 逐字节一致；
-#      SBE_PUBLIC_IMAGE=1（CI 公开发布）：镜像不含任何厂商 blob，且未装
-#      sbe-wifi-firmware 包；
+#   5. Stage 2.5：ath12k.ko 与 kmod-ath12k / wifi-scripts / wpad-mesh-mbedtls 存在；
+#      厂商固件/BDF 落在 QCN9274/hw2.0 与 /usr/share/sbe-wifi/bdf41，
+#      内容与 build/local-packages 逐字节一致，且 sbe-wifi-firmware 已安装。
+#      （本机与 CI 用同一判据：2026-10-24 决定 CI 镜像也带 blob。）
 #   6. apk/opkg 包数据库存在并打印包数量。
 #
 # 用法：scripts/ci/verify-image.sh [工作区根目录]
@@ -168,13 +167,11 @@ else
 fi
 
 # ---- Stage 2.5：ath12k 固件与板级 BDF ---------------------------------------
-# 两种构建模式：
-#   SBE_PUBLIC_IMAGE=0（默认，本机自用）：镜像必须带厂商固件/BDF，且与本地包逐字节相同。
-#   SBE_PUBLIC_IMAGE=1（CI 公开发布）：镜像必须 **不含** 任何厂商 blob——仓库是公开的，
-#   这些文件是专有固件（LICENSE_REVIEW_REQUIRED，N-3），不能随 Release 分发。
-# 源文件在 build/local-packages/sbe-wifi-firmware/files/ 下；镜像里必须逐字节相同
-# （只有目录名从厂商的 QCN92XX/hw1.0 换成上游 hw 表的 QCN9274/hw2.0）。
-PUBLIC_IMAGE=${SBE_PUBLIC_IMAGE:-0}
+# 本机与 CI 使用同一判据（2026-10-24 决定）：镜像必须带厂商固件/BDF，且与
+# 仓库内 build/local-packages/sbe-wifi-firmware/files/ 逐字节相同。这些文件是
+# 专有固件，授权状态 LICENSE_REVIEW_REQUIRED（N-3），随镜像公开分发是用户的
+# 明确决定；这里不再区分“公开/本机”两种模式。
+# 只有目录名从厂商的 QCN92XX/hw1.0 换成上游 hw 表的 QCN9274/hw2.0。
 WIFIPKG="$PROJ/build/local-packages/sbe-wifi-firmware/files"
 check_fw() {
 	local rel=$1 src="$WIFIPKG/$1"
@@ -186,32 +183,18 @@ check_fw() {
 	if [ "$a" = "$b" ]; then ok "/$rel 与本地固件包一致 ($a)"; else bad "/$rel 哈希不一致"; fi
 }
 
-if [ "$PUBLIC_IMAGE" = 0 ]; then
-	for f in firmware-2.bin board-2.bin regdb.bin; do
-		check_fw "lib/firmware/ath12k/QCN9274/hw2.0/$f"
-	done
-	for f in b1.bin b2.bin b4.bin; do
-		check_fw "usr/share/sbe-wifi/bdf41/$f"
-	done
-	# 包内附带的校验清单来自 files/FILES-SHA256（安装成 /usr/share/sbe-wifi-firmware/）。
-	if [ -f "$ROOTFS/usr/share/sbe-wifi-firmware/FILES-SHA256" ] \
-	   && cmp -s "$WIFIPKG/FILES-SHA256" "$ROOTFS/usr/share/sbe-wifi-firmware/FILES-SHA256"; then
-		ok "/usr/share/sbe-wifi-firmware/FILES-SHA256 与本地固件包一致"
-	else
-		bad "/usr/share/sbe-wifi-firmware/FILES-SHA256 缺失或与本地固件包不一致"
-	fi
+for f in firmware-2.bin board-2.bin regdb.bin; do
+	check_fw "lib/firmware/ath12k/QCN9274/hw2.0/$f"
+done
+for f in b1.bin b2.bin b4.bin; do
+	check_fw "usr/share/sbe-wifi/bdf41/$f"
+done
+# 包内附带的校验清单来自 files/FILES-SHA256（安装成 /usr/share/sbe-wifi-firmware/）。
+if [ -f "$ROOTFS/usr/share/sbe-wifi-firmware/FILES-SHA256" ] \
+   && cmp -s "$WIFIPKG/FILES-SHA256" "$ROOTFS/usr/share/sbe-wifi-firmware/FILES-SHA256"; then
+	ok "/usr/share/sbe-wifi-firmware/FILES-SHA256 与本地固件包一致"
 else
-	# 公开构建：任何一个厂商 blob 出现在镜像里都算失败（会被 Release 分发）。
-	leak=0
-	for rel in lib/firmware/ath12k/QCN9274/hw2.0/firmware-2.bin \
-	           lib/firmware/ath12k/QCN9274/hw2.0/board-2.bin \
-	           lib/firmware/ath12k/QCN9274/hw2.0/regdb.bin \
-	           usr/share/sbe-wifi/bdf41/b1.bin \
-	           usr/share/sbe-wifi/bdf41/b2.bin \
-	           usr/share/sbe-wifi/bdf41/b4.bin; do
-		if [ -e "$ROOTFS/$rel" ]; then bad "公开构建混入了厂商固件 /$rel"; leak=1; fi
-	done
-	[ "$leak" = 0 ] && ok "公开构建镜像不含任何厂商 Wi-Fi 固件 blob"
+	bad "/usr/share/sbe-wifi-firmware/FILES-SHA256 缺失或与本地固件包不一致"
 fi
 
 # 厂商镜像里的 cal-*.bin 是进 /tmp/sbe-caldata 的悬空链接，由 init 从 eMMC ART
@@ -270,14 +253,8 @@ fi
 for p in kmod-mac80211 kmod-ath12k wifi-scripts wpad-mesh-mbedtls; do
 	has_pkg "$p" && ok "包 $p 已安装" || bad "包 $p 未安装"
 done
-if [ "$PUBLIC_IMAGE" = 0 ]; then
-	has_pkg sbe-wifi-firmware && ok "包 sbe-wifi-firmware 已安装" \
-		|| bad "包 sbe-wifi-firmware 未安装"
-else
-	# 公开构建必须排除固件包（否则镜像会把专有 blob 带进 Release）。
-	has_pkg sbe-wifi-firmware && bad "公开构建不应安装 sbe-wifi-firmware" \
-		|| ok "公开构建未安装 sbe-wifi-firmware（预期）"
-fi
+has_pkg sbe-wifi-firmware && ok "包 sbe-wifi-firmware 已安装" \
+	|| bad "包 sbe-wifi-firmware 未安装"
 # NSS Wi-Fi offload 不在本阶段范围内；出现即说明装配树被污染。
 for p in qca-nss-wifi-plugins qca-wifi-nss-plugins; do
 	if has_pkg "$p"; then bad "包 $p 不应出现在 S2.5 镜像中"; else ok "包 $p 未安装（S2.5 预期）"; fi

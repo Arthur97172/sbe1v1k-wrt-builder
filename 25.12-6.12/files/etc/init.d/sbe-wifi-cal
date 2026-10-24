@@ -3,7 +3,7 @@
 #
 # /etc/init.d/boot（START=10）会调用 /sbin/kmodloader，而 kmod-ath12k 在
 # /etc/modules.d/ath12k 里；本脚本 START=09，确保 cal-pci-*.bin 先就位。
-# 没有安装固件时脚本自身会立即返回（公开镜像就属于这种情况）。
+# 没有安装固件时脚本自身会立即返回（例如手工去掉 sbe-wifi-firmware 的构建）。
 
 START=09
 STOP=90
