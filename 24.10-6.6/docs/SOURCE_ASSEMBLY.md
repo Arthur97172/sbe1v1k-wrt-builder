@@ -227,7 +227,7 @@ CI 上的等价流程见 `docs/CI_BUILD.md` 与两个 workflow 文件。
 | 改内核配置 | `build/target-feed-fixes/0001-config-6.6-enable-rtl8261n.patch` | 同上 |
 | 加/去掉软件包 | `build/config-frozen/.config` + `scripts/custom-packages.sh` | `check-config.sh` 必须 PASS |
 | 升上游组件 | `build/upstream-pins.conf` 的 commit 列 | 装配后与基线比对，差异必须能用已知原因解释 |
-| 加第三方包 | `build/thirdparty-feeds.conf`（+ `build/feeds-links.conf`） | `thirdparty-feeds.sh check` PASS |
+| 加第三方包 | `build/thirdparty-feeds.conf` + `build/feeds-links.conf`（+ `custom-packages.conf`、`config-frozen/.config`、`known-delta.conf`、装配步的软链条数断言；逐步操作见 `README.md`「新增第三方 LuCI 插件」） | `thirdparty-feeds.sh check` PASS、`FINGERPRINT_MATCH`、`check-config.sh` PASS |
 | 调 passwall 选包 | `build/passwall-selected.conf` | 重跑装配 |
 | 改指纹排除 | `build/fingerprint-exclude.conf` | 必须 `--check-exclusions` 无 `EXCLUSION_TOO_BROAD` |
 

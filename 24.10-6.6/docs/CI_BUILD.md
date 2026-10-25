@@ -3,8 +3,8 @@
 本文件说明 GitHub Actions 上的两个 workflow 各自做什么、用什么证明“编译的就是已审计的源码”，
 以及出问题时应先看哪一道门禁。装配配方本身见 [SOURCE_ASSEMBLY.md](SOURCE_ASSEMBLY.md)。
 
-> 状态：两个 workflow 都**尚未在 GitHub Actions 上实际运行过**（`NOT TESTED`）。
-> 本地已完成的验证见文末“已验证 / 未验证”。
+> 状态：装配 workflow 已在 Actions 上跑通并发布 `sources-v2`（PASS）；构建 workflow **尚未**
+> 完整跑过（`NOT TESTED`）。本地已完成的验证见文末“已验证 / 未验证”。
 
 ## 1. 为什么是两个 workflow
 
@@ -144,9 +144,15 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | `export-sources.sh` 两次导出字节相同、< 1.9 GB、恰好 3 资产 | PASS（`sha256=d39a67a2…b4cc`，228,502,877 B） |
 | 消费者侧：解包 → 指纹 `--compare` → recipe-hash → overlay+check-config → thirdparty check | PASS（`deltas=0`，`recipe=eb8c4f93…b2fc`） |
 | `make download` 预检（`download-preflight.sh`） | NOT TESTED（本机 `github.com:443` 不可达，不能代表 runner） |
-| 两个 workflow 在 GitHub Actions 上的实际运行 | NOT TESTED |
+| 🧱 Assemble 在 Actions 上运行（push 触发） | PASS（run `40171593200`，21m24s，11 步全过，含 `mmc.sh` 权限 744 断言） |
+| 🧱 Assemble 发布 `sources-v2`（dispatch，`publish=true`） | PASS（run `40174587694`；恰好 3 资产；`TREE-FINGERPRINT.json` 的 `entries=156058`、`aggregate=a6a662dd…deb91`、`recipe=b935371c…45f6` 与本地验证值一致） |
+| 📦 Build 在 Actions 上运行 | NOT TESTED（最近一次 `40171593136` 停在 `Resolve source tag`：当时还没有 `sources-v2`） |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
+
+发布包由 runner 产出，`sbe1v1k-sources-24.10-6.6.tar.zst` 为 228,711,892 B；本地两次导出的
+是 228,502,877 B。两者**条目级指纹完全一致**（上面的 `entries`/`aggregate`/`recipe` 三项相同），
+字节差来自打包时的 zstd 版本差异，不是内容差异——这也是为什么门禁比对的是指纹而不是包哈希。
 
 本地装配时 `github.com:443` 不可达，`luci` 的 `03c6023b` 是用 codeload 官方 tarball 重建的本地 Git
 镜像提供的（重建树 `ea1ee2f1…` 与原 commit 相同，`hash-object` 复现出原 SHA）。这只是本机传输路径，

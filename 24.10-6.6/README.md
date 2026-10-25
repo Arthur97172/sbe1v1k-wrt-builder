@@ -20,6 +20,9 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 │   ├── custom-packages.conf          文件 B：应用开关清单（改这个）
 │   ├── custom-packages-options.conf  技术性固定选项（每轮重放，勿随意删）
 │   ├── thirdparty-feeds.conf         文件 A：第三方源地址与固定提交
+│   ├── feeds-links.conf              package/feeds/<feed>/<名字> 软链清单（增删插件要同步）
+│   ├── config-frozen/.config         冻结配置：镜像里有哪些包（增删插件要重新生成）
+│   ├── known-delta.conf              与审计基线的允许差异（新增源码路径要登记）
 │   ├── build-fixes/  openwrt-patches/  local-packages/  p-b/   装配期改动与本地软件包
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
@@ -147,13 +150,225 @@ local <feed-name> <path>
 1. 改文件 A 的 `commit`（必要时改 `url`）；
 2. `scripts/thirdparty-feeds.sh fetch` 拉取；
 3. `build/sbe1v1k-build.sh defconfig`，确认 `.config` 没有意外变化；
-4. 更新 `sources/PROVENANCE.md` §2.9 的 pin 与许可证记录；
+4. 更新 `24.10-6.6/docs/package/PROVENANCE.md` §2.9 的 pin 与许可证记录；
 5. 提交并 push；等 `sources-24.10-6.6.yml` 验证通过后手动 `publish=true` 发新的
    `sources-vN`，构建 workflow 的 `source_tag=auto` 会自动用最新的一版。
+
+**升级同样要过指纹门禁**：上游内容变了，装配第 16 步会以 `changed`/`fresh-only`/
+`audited-only` 差异把与审计基线的偏离全部列出来。少量、可解释的改动按
+`known-delta.conf` 的规矩逐条登记（reason 写清原因，并在装配脚本里有对应断言）；
+差异成规模时（等于换了上游版本）就不该用白名单糊过去，而应重新审计、出新基线——
+那是审计动作，需要单独批准。
 
 第 5 步不能省：**CI 编译用的是源码包，不是本地 `sources/`**，只改文件 A
 不会影响 CI。装配输入（`build/**`、四个装配脚本、25.12 的 Wi-Fi blob）一有 push，
 装配 workflow 就会重新验证并比对新指纹。
+
+### 新增第三方 LuCI 插件
+
+分三种来源，要改的输入不同：
+
+| 来源 | 要改的地方 |
+|---|---|
+| 新仓库（别人的插件） | 文件 A 加 `repo` + `link`；`feeds-links.conf`；文件 B；冻结配置；`known-delta.conf` |
+| 已钉定仓库里的另一个包（同一 repo 下的第二个 `luci-app-*`） | 文件 A 只加 `link`；`feeds-links.conf`；文件 B；冻结配置 |
+| 自己维护的目录（不在任何仓库里） | 文件 A 用 `local`，或源码放 `build/local-relayout/` 后由 `feeds-links.conf` 指向它 |
+
+**源码进 feed、开关打开、冻结配置跟上，三件事都要做。** 少做任何一件的后果是确定的，
+不会"碰巧还能用"：
+
+| 少做了 | 结果 |
+|---|---|
+| 没有 `thirdparty-feed/<名字>` 软链 | 包不在 feed 里，`feeds-links.conf` 的目标悬空 → 装配第 13 步 `die 4` |
+| 有软链但没加 `feeds-links.conf` 行 | OpenWrt 看不到这个包，`.config` 里的 `=y` 被 defconfig **静默丢弃** |
+| 文件 B 加了、冻结配置没加 | `check-config.sh` 看不出来（它在文件 B 生效之前跑），但镜像会比门禁验证过的多一个包 |
+| 冻结配置加了、文件 B 没加 | 镜像里有，但 `verify-image.sh` 不会检查它（它只核对文件 B 启用的包） |
+| 忘了改装配脚本里的软链条数 | 装配直接失败在 feeds 接线步（安全失败，不会产出半成品包） |
+
+#### 1. 先确认插件信息
+
+```sh
+git ls-remote <url> refs/heads/main          # 取 40 位 commit；禁止用分支/标签/漂移
+```
+
+要确认四件事：**包目录名**（= feeds 里的名字 = `.config` 里的 `CONFIG_PACKAGE_<名字>`）、
+目录里有 `Makefile`、许可证（记进 `PROVENANCE.md` §2.9）、以及它是否依赖同仓库的其它包
+（例如 `luci-app-bandix-plus` 要配后端 `bandix-plus`，两个都要接）。
+
+#### 2. 文件 A：`build/thirdparty-feeds.conf`
+
+```
+repo <key> <url> <branch> <commit> <vendor-dir> <mode>
+link <feed-name> <repo-key> <subdir>
+```
+
+以仓库根目录即包目录的 `luci-app-foo` 为例：
+
+```
+repo foo               https://github.com/someone/luci-app-foo.git  -  <40 位 commit>  thirdparty/luci-app-foo  git
+link luci-app-foo      foo        .
+```
+
+- `vendor-dir` 相对 `sources/`，惯例是 `thirdparty/<仓库名>`；
+- `mode=git`：要求工作区干净，`fetch` 可自动对齐 pin；人工剪裁或带补丁的用 `manual`
+  （脚本只校验 HEAD、不改写）。注意装配第 12c 步的补丁应用目前是**为 wifihistory
+  硬编码**的；新仓库要带补丁，得在那一步照葫芦画瓢加一段，否则补丁不会生效；
+- `<feed-name>` 必须等于包目录名；`<subdir>` 是包在仓库里的相对路径，在仓库根就写 `.`；
+- 同一仓库的第二个包只加 `link`，不要再写一条 `repo`。
+
+#### 3. `build/feeds-links.conf`：让 OpenWrt 看见它
+
+一条 `link` 对应这里一行（`package/feeds/<feed>/<名字>` 软链）：
+
+```
+buildroot/package/feeds/thirdparty/luci-app-foo	thirdparty/luci-app-foo
+```
+
+- 两列都相对 `sources/`；第二列写**解析后的目标**（文件 A 的 `vendor-dir` + `subdir`），
+  不要照抄软链文本；
+- 按链接路径排序插入 `thirdparty/` 段；
+- 同仓库带出来的依赖包（如 `luci-app-bandix-plus` 对应的 `bandix-plus`）各自一行。
+
+#### 4. 改装配脚本里的条数断言
+
+`scripts/ci/assemble-sources.sh` 的 feeds 接线步：
+
+```sh
+[ "$nl" = 156 ] || die 4 "package/feeds 软链应有 156 条，实际 $nl"
+```
+
+加一行就改成 157，并同步改该步上方的注释、`docs/SOURCE_ASSEMBLY.md`（第 64 行的 156）
+与 `docs/CI_BUILD.md` 里出现的条数。如果新增了新的 `src-link` 源，还要改
+`feeds.conf.in` 和同一步的 `[ "$nf" = 10 ]`。
+
+#### 5. 文件 B：`build/custom-packages.conf`
+
+```sh
+CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-foo"
+# 中文界面：包目录里必须有 po/zh_Hans，否则不存在这个 i18n 包
+CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-i18n-foo-zh-cn"
+```
+
+- 只写**应用层**开关，依赖库交给 defconfig 解析；
+- 关闭某个包不要删行，注释掉整行，保留上下文：
+
+  ```sh
+  # CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-samba4"      # 关闭
+  ```
+
+- 文件 B 是"进不进镜像"的唯一开关源：`verify-image.sh` 会逐条断言这里启用的包真的
+  出现在 rootfs 的 `/usr/lib/opkg/status` 里；
+- 技术性固定选项（父应用关闭时会被 defconfig 丢掉的那些）放
+  `build/custom-packages-options.conf`。
+
+#### 6. 冻结配置：`build/config-frozen/.config`
+
+不要手写符号值，必须由 defconfig 求解后落盘，否则依赖链和行序会和真实求解结果不一致：
+
+```sh
+./24.10-6.6/build/sbe1v1k-build.sh defconfig      # 应用文件 B → make defconfig → 逐包反查
+cp sources/buildroot/.config 24.10-6.6/build/config-frozen/.config
+./24.10-6.6/scripts/ci/check-config.sh            # 必须 PASS；失败看 config-diff.txt
+```
+
+- defconfig 会连带写入这个包的依赖（`kmod-*`、`lib*` 等），**保留它们**；
+- `check-config.sh` 跑之前要先 `./24.10-6.6/scripts/render-overlay.sh`，否则 overlay 里的
+  配置片段缺失会造成假差异（CI 顺序就是 render-overlay → check-config）；
+- 冻结文件一改，就必须重发 `sources-vN`：`check-config.sh` 的前置断言要求源码包里的
+  `.config` 与冻结文件**逐字节相同**，旧包会被点名"包与配方不同步"。
+
+#### 7. 指纹白名单：`build/known-delta.conf`
+
+装配第 16 步拿结果与审计基线 `build/fingerprint/audited-24.10-6.6.tsv.zst` 逐文件比对，
+**新增路径一律算 `fresh-only` 差异，没登记就是 `FINGERPRINT_MISMATCH`（rc=5）**。
+一个插件通常产生三类新路径：
+
+```
+thirdparty/luci-app-foo/*	fresh-only	新增第三方仓库 <url> @ <commit>（<许可证>）；pin 由文件 A 与 recipe_sha256 钉住
+thirdparty-feed/luci-app-foo	fresh-only	相对软链，由 thirdparty-feeds.sh check 校验
+buildroot/package/feeds/thirdparty/luci-app-foo	fresh-only	目标存在且含 Makefile，装配第 13 步断言
+```
+
+`known-delta.conf` 头部写明了两条规矩，必须遵守：reason 写清"为什么这不是问题"，
+并且**装配脚本里要有对应的可执行断言**——不能只靠白名单把差异盖掉。上面三条对应的
+断言分别是文件 A 的 pin 校验、`thirdparty-feeds.sh check`、feeds-links 的目标/Makefile 校验。
+
+> 另一条路是重新生成审计基线。那会更换"重建的树 == 已审计的树"这条证据的基准，
+> 属于审计动作，**需要单独批准**；不要为了让门禁变绿顺手做。
+
+#### 8. 本地验证（顺序不要换）
+
+```sh
+./24.10-6.6/scripts/thirdparty-feeds.sh fetch     # 新 repo 按 pin 浅克隆；已在 pin 时不联网
+./24.10-6.6/scripts/thirdparty-feeds.sh check     # HEAD / 工作区 / 软链
+./24.10-6.6/scripts/ci/recipe-hash.sh             # 记新值：feeds-links.conf 变了，哈希必然变
+./24.10-6.6/scripts/ci/assemble-sources.sh --stage /var/tmp/stage-foo --force
+./24.10-6.6/scripts/ci/check-config.sh
+```
+
+日志里要看到：第 12 步 `TP_OK`、第 13 步 `package-links=<新总数>`、第 16 步
+`FINGERPRINT_MATCH`。任何一步不过就停下来查，不要改判据。
+
+> `recipe_sha256` 的输入清单里**没有** `thirdparty-feeds.conf` 和 `custom-packages.conf`
+> （见 `scripts/ci/recipe-hash.sh`）。只改文件 A 的 pin 时配方哈希不变，这个改动由树指纹
+> 以 `changed` 差异负责暴露；改 `feeds-links.conf` 或 `config-frozen/` 才会改配方哈希。
+
+#### 9. 提交、发布、构建
+
+```sh
+git add 24.10-6.6/build/thirdparty-feeds.conf \
+        24.10-6.6/build/feeds-links.conf \
+        24.10-6.6/build/custom-packages.conf \
+        24.10-6.6/build/config-frozen/.config \
+        24.10-6.6/build/known-delta.conf \
+        24.10-6.6/scripts/ci/assemble-sources.sh \
+        24.10-6.6/docs/package/PROVENANCE.md \
+        24.10-6.6/docs/SOURCE_ASSEMBLY.md
+```
+
+push 后 `sources-24.10-6.6.yml` 自动以 `publish=false` 验证；通过后手动
+`publish=true` 发新的 `sources-vN`；`build-24.10-6.6.yml` 用 `source_tag=auto` 编译。
+**只改文件不发布，CI 看不到**——它编译的是源码包。
+
+### 删除第三方 LuCI 插件
+
+反向操作，顺序不能反（先关开关，再拆接线）：
+
+1. **文件 B**：注释掉那一行（连同 `luci-i18n-*`），保留原文便于回滚；
+2. **冻结配置**：按上一节第 6 步重新生成并 `check-config.sh` PASS。确认
+   `CONFIG_PACKAGE_<名字>=y` 消失；依赖库不一定跟着消失（仍被其它包引用时会保留），
+   要清掉得单独处理；
+3. **文件 A**：删对应 `link` 行；确认该仓库已不被任何 `link`/`local` 引用，再删 `repo` 行；
+4. **`feeds-links.conf`**：删对应行（含同仓库带出来的依赖包行），并把装配脚本里的
+   条数断言改回去；
+5. **`known-delta.conf`**：删掉当初为它登记的白名单条目。删掉后这些路径根本不存在，
+   比对不会报错，但留着条目会让同名路径在将来被无声放过；
+6. **手工清理本地源码树**（脚本只建不删）：
+
+   ```sh
+   rm -f  sources/thirdparty-feed/<名字>
+   rm -rf sources/thirdparty/<vendor-dir>      # 仅当整个仓库不再使用
+   ```
+
+7. 重跑第 8 节的本地验证，然后按第 9 节发布新 `sources-vN`。
+
+**顺序为什么不能反**：先拆源码（文件 A / `feeds-links.conf`）、后改文件 B 的话，
+包已经不在 feed 里，而文件 B 仍要求它 `=y`；构建走到「Apply custom packages」时
+逐包反查会失败并指名——是安全失败，不会产出缺包镜像，但白费一次待验证的装配。
+按上面 1→2 先把开关和冻结配置清干净（此时包还在树里，一切自洽），再拆接线，
+每一步都能单独验证通过。
+
+### 增删插件：改动文件速查
+
+| 文件 | 新增 | 删除 |
+|---|---|---|
+| `build/thirdparty-feeds.conf` | 新仓库加 `repo`+`link`；旧仓库只加 `link` | 删 `link`；仓库不再被引用时删 `repo` |
+| `build/feeds-links.conf` | 加 `package/feeds/thirdparty/<名字>` 行（含依赖包） | 删对应行 |
+| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 156 ]` 改成新总数 | 改回去 |
+| `build/custom-packages.conf` | 加 `CUSTOM_PACKAGES="$CUSTOM_PACKAGES <名字>"` | 注释掉整行 |
+| `build/config-frozen/.config` | `make defconfig` 后整体替换 | 同左 |
+| `build/known-delta.conf` | 加 `fresh-only` 条目（新路径） | 删掉对应条目 |
+| `docs/package/PROVENANCE.md` §2.9 | 记 pin、许可证、文件数 | 删除对应记录 |
 
 ### 检查与升级内核
 
