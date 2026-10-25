@@ -1,0 +1,366 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ssdk_plat: implement switch MDIO register access locally
+
+qca-ssdk reaches switch registers through two QSDK-only kernel hooks:
+mdiobb_ctrl::sw_read/sw_write and qca_mdio_data::sw_read/sw_write, both
+populated by QSDK's drivers/net/mdio/mdio-ipq4019.c.  Mainline 6.12.112
+has neither member, and its bus->priv is struct ipq4019_mdio_data
+(membase, eth_ldo_rdy, mdio_clk, mdc_rate), not struct qca_mdio_data, so
+both the bitbang helpers and the mdio_priv->sw_read/sw_write calls below
+were compile errors:
+
+  src/init/ssdk_plat.c:290:28: error: 'struct mdiobb_ctrl' has no
+    member named 'sw_read' [-Werror]
+  ... same at 291, 306, 307, 322, 325, 328 (sw_read/sw_write)
+
+Silencing them by casting would leave a call through an unrelated struct
+layout, i.e. garbage function pointers at run time.  Instead port the
+register access itself: split-address helpers plus qca8386/qca8337/
+qca81xx read/write, taken verbatim from QSDK mdio-ipq4019.c (pseudo phy
+0x18/0x10, switch default page 0x200), driven only by mii_bus->read/write.
+Mainline's ipq4019_mdio_read_c22/write_c22 pass mii_id through without a
+range check, so these pseudo addresses reach the same MDIO frames QSDK
+sends.  The QCE2204 path is untouched.
+
+qca_mii_raw_update() now does the read-modify-write with the local
+helpers, and qca_bitbang_* have no other referencing site (verified with
+grep over src/ and include/).
+
+Not changed here: ssdk_miibus_freq_get/set still read/write
+qca_mdio_data::clk_div through bus->priv.  Their only caller is
+qca_mht_sku_check() in the CHIP_MHT (QCA8084) fuse-read path, which this
+target does not instantiate; see 25.12-6.12/docs/CI_BUILD.md.
+
+--- a/src/init/ssdk_plat.c
++++ b/src/init/ssdk_plat.c
+@@ -278,61 +278,196 @@
+ 	return SW_OK;
+ }
+ 
+-#if IS_ENABLED(CONFIG_MDIO_BITBANG)
+-static sw_error_t qca_bitbang_mii_raw_read_try(struct mii_bus *bus,
+-				     a_uint32_t reg, a_uint32_t *val)
++/*
++ * Switch register access over the host MDIO bus.
++ *
++ * QSDK 6.6 keeps this in drivers/net/mdio/mdio-ipq4019.c and publishes it to
++ * ssdk through QSDK-only hooks: mdiobb_ctrl::sw_read/sw_write and
++ * qca_mdio_data::sw_read/sw_write. Mainline 6.12 has neither, and its
++ * ipq4019_mdio_data has a different layout, so casting bus->priv to
++ * struct qca_mdio_data and calling through sw_read/sw_write would call a
++ * garbage pointer. Port the same register access here, using only the public
++ * mii_bus read/write callbacks, which mainline's ipq4019_mdio_read_c22/
++ * write_c22 forward without an address range check.
++ */
++#define QCA_SSDK_MDIO_HIGH_ADDR_PREFIX		0x18
++#define QCA_SSDK_MDIO_LOW_ADDR_PREFIX		0x10
++#define QCA_SSDK_MDIO_SWITCH_HIGH_ADDR_DFLT	0x200
++
++static inline void qca_ssdk_qca8337_split_addr(u32 regaddr, u16 *r1, u16 *r2,
++					       u16 *page)
+ {
+-	struct mdiobb_ctrl *gpio_priv = bus->priv;
++	regaddr >>= 1;
++	*r1 = regaddr & 0x1e;
+ 
+-	if (strncmp(bus->id, "gpio", strlen("gpio")))
+-		return SW_NOT_FOUND;
++	regaddr >>= 5;
++	*r2 = regaddr & 0x7;
+ 
+-	if (gpio_priv && gpio_priv->sw_read) {
+-		*val = gpio_priv->sw_read(bus, reg);
+-		return SW_OK;
+-	}
++	regaddr >>= 3;
++	*page = regaddr & 0x3ff;
++}
++
++static u32 qca_ssdk_qca8337_read(struct mii_bus *bus, u32 reg)
++{
++	u16 r1, r2, page;
++	u16 lo, hi;
+ 
+-	return SW_FAIL;
++	qca_ssdk_qca8337_split_addr(reg, &r1, &r2, &page);
++	bus->write(bus, QCA_SSDK_MDIO_HIGH_ADDR_PREFIX, 0, page);
++	udelay(100);
++
++	lo = bus->read(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1);
++	hi = bus->read(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1 + 1);
++
++	bus->write(bus, QCA_SSDK_MDIO_HIGH_ADDR_PREFIX, 0,
++		   QCA_SSDK_MDIO_SWITCH_HIGH_ADDR_DFLT);
++
++	return (hi << 16) | lo;
+ }
+ 
+-static sw_error_t qca_bitbang_mii_raw_write_try(struct mii_bus *bus,
+-					a_uint32_t reg, a_uint32_t val)
++static void qca_ssdk_qca8337_write(struct mii_bus *bus, u32 reg, u32 val)
+ {
+-	struct mdiobb_ctrl *gpio_priv = bus->priv;
++	u16 r1, r2, page;
+ 
+-	if (strncmp(bus->id, "gpio", strlen("gpio")))
+-		return SW_NOT_FOUND;
++	qca_ssdk_qca8337_split_addr(reg, &r1, &r2, &page);
++	bus->write(bus, QCA_SSDK_MDIO_HIGH_ADDR_PREFIX, 0, page);
++	udelay(100);
+ 
+-	if (gpio_priv && gpio_priv->sw_write) {
+-		gpio_priv->sw_write(bus, reg, val);
+-		return SW_OK;
+-	}
++	bus->write(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1, val & 0xffff);
++	bus->write(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1 + 1,
++		   (u16)(val >> 16));
+ 
+-	return SW_FAIL;
++	bus->write(bus, QCA_SSDK_MDIO_HIGH_ADDR_PREFIX, 0,
++		   QCA_SSDK_MDIO_SWITCH_HIGH_ADDR_DFLT);
+ }
+ 
+-static sw_error_t qca_bitbang_mii_raw_update_try(struct mii_bus *bus, a_uint32_t reg,
+-					  a_uint32_t clear, a_uint32_t set)
++static inline void qca_ssdk_qca8386_split_addr(u32 regaddr, u16 *r1, u16 *r2,
++					       u16 *page, u16 *sw_addr)
+ {
+-	struct mdiobb_ctrl *gpio_priv = bus->priv;
++	*r1 = regaddr & 0x1c;
+ 
+-	if (strncmp(bus->id, "gpio", strlen("gpio")))
+-		return SW_NOT_FOUND;
++	regaddr >>= 5;
++	*r2 = regaddr & 0x7;
+ 
+-	if (gpio_priv && gpio_priv->sw_read && gpio_priv->sw_write) {
+-		a_uint32_t val;
++	regaddr >>= 3;
++	*page = regaddr & 0xffff;
+ 
+-		val = gpio_priv->sw_read(bus, reg);
+-		val &= ~clear;
+-		val |= set;
+-		gpio_priv->sw_write(bus, reg, val);
++	regaddr >>= 16;
++	*sw_addr = regaddr & 0xff;
++}
++
++static u32 qca_ssdk_qca8386_read(struct mii_bus *bus, u32 reg)
++{
++	u16 r1, r2, page, sw_addr;
++	u16 lo, hi;
++
++	qca_ssdk_qca8386_split_addr(reg, &r1, &r2, &page, &sw_addr);
++
++	/* No locking needed: called before the bus is registered. */
++	bus->write(bus, QCA_SSDK_MDIO_HIGH_ADDR_PREFIX | (sw_addr >> 5),
++		   sw_addr & 0x1f, page);
++
++	lo = bus->read(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1);
++	hi = bus->read(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1 | BIT(1));
++
++	return (hi << 16) | lo;
++}
+ 
+-		return SW_OK;
++static void qca_ssdk_qca8386_write(struct mii_bus *bus, u32 reg, u32 val)
++{
++	u16 r1, r2, page, sw_addr;
++	u16 lo = val & 0xffff;
++	u16 hi = (u16)(val >> 16);
++
++	qca_ssdk_qca8386_split_addr(reg, &r1, &r2, &page, &sw_addr);
++
++	/* No locking needed: called before the bus is registered. */
++	bus->write(bus, QCA_SSDK_MDIO_HIGH_ADDR_PREFIX | (sw_addr >> 5),
++		   sw_addr & 0x1f, page);
++
++	bus->write(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1, lo);
++	bus->write(bus, QCA_SSDK_MDIO_LOW_ADDR_PREFIX | r2, r1 | BIT(1), hi);
++}
++
++static inline void qca_ssdk_qca81xx_split_addr(u32 regaddr, u16 *reg_low,
++					       u16 *reg_mid, u16 *reg_high)
++{
++	*reg_low = (regaddr & 0xc) << 1;
++
++	*reg_mid = regaddr >> 4 & 0xffff;
++
++	*reg_high = ((regaddr >> 20 & 0xf) << 1) | BIT(0);
++}
++
++static u32 qca_ssdk_qca81xx_read(struct mii_bus *bus, u32 reg)
++{
++	u16 reg_low, reg_mid, reg_high;
++	u16 lo, hi;
++	u32 addr;
++
++	addr = FIELD_GET(GENMASK(28, 24), reg);
++	qca_ssdk_qca81xx_split_addr(reg, &reg_low, &reg_mid, &reg_high);
++	/* write ahb address bit4~bit23 */
++	__mdiobus_write(bus, addr, reg_high & 0x1f, reg_mid);
++	udelay(100);
++	/* write ahb address bit0~bit3 and read low 16 bit data */
++	lo = __mdiobus_read(bus, addr, reg_low);
++	/* write ahb address bit0~bit3 and read high 16 bit data */
++	hi = __mdiobus_read(bus, addr, reg_low + 4);
++
++	return (hi << 16) | lo;
++}
++
++static void qca_ssdk_qca81xx_write(struct mii_bus *bus, u32 reg, u32 val)
++{
++	u16 reg_low, reg_mid, reg_high;
++	u16 lo = val & 0xffff;
++	u16 hi = (u16)(val >> 16);
++	u32 addr;
++
++	addr = FIELD_GET(GENMASK(28, 24), reg);
++
++	qca_ssdk_qca81xx_split_addr(reg, &reg_low, &reg_mid, &reg_high);
++
++	/* write ahb address bit4~bit23 */
++	__mdiobus_write(bus, addr, reg_high & 0x1f, reg_mid);
++	udelay(100);
++	/* write ahb address bit0~bit3 and write low 16 bit data */
++	__mdiobus_write(bus, addr, reg_low, lo);
++	/* write ahb address bit0~bit3 and write high 16 bit data */
++	__mdiobus_write(bus, addr, reg_low + 4, hi);
++}
++
++static a_uint32_t qca_ssdk_switch_reg_read(struct mii_bus *bus, a_uint32_t reg,
++					   int chip_type)
++{
++	switch (chip_type) {
++	case SSDK_SWITCH_REG_IS_QCA81XX:
++		return qca_ssdk_qca81xx_read(bus, reg);
++	case SSDK_SWITCH_REG_IS_QCA8337:
++		return qca_ssdk_qca8337_read(bus, reg);
++	case SSDK_SWITCH_REG_IS_QCA8386:
++	default:
++		return qca_ssdk_qca8386_read(bus, reg);
+ 	}
++}
+ 
+-	return SW_FAIL;
++static void qca_ssdk_switch_reg_write(struct mii_bus *bus, a_uint32_t reg,
++				      a_uint32_t val, int chip_type)
++{
++	switch (chip_type) {
++	case SSDK_SWITCH_REG_IS_QCA81XX:
++		qca_ssdk_qca81xx_write(bus, reg, val);
++		break;
++	case SSDK_SWITCH_REG_IS_QCA8337:
++		qca_ssdk_qca8337_write(bus, reg, val);
++		break;
++	case SSDK_SWITCH_REG_IS_QCA8386:
++	default:
++		qca_ssdk_qca8386_write(bus, reg, val);
++		break;
++	}
+ }
+-#endif
+ 
+ /* QCE2204 MDIO access functions - reuse from DSA driver pattern */
+ static inline void qce2204_split_addr(u32 regaddr, u16 *reg_low, u16 *reg_mid,
+@@ -438,7 +573,6 @@
+ 
+ sw_error_t qca_mii_raw_read(struct mii_bus *bus, a_uint32_t reg, a_uint32_t *val)
+ {
+-	struct qca_mdio_data *mdio_priv = bus->priv;
+ 	int chip_type = FIELD_GET(SSDK_SWITCH_REG_TYPE_MASK, reg);
+ 
+ 	if (chip_type == SSDK_SWITCH_REG_IS_QCE2204) {
+@@ -447,25 +581,13 @@
+ 		return _qce2204_ahb_read(bus, addr, reg, val);
+ 	}
+ 
+-#if IS_ENABLED(CONFIG_MDIO_BITBANG)
+-	sw_error_t rv = SW_OK;
+-
+-	rv = qca_bitbang_mii_raw_read_try(bus, reg, val);
+-	if (rv == SW_OK)
+-		return rv;
+-#endif
+-
+-	if (mdio_priv && mdio_priv->sw_read) {
+-		*val = mdio_priv->sw_read(bus, reg);
+-		return SW_OK;
+-	}
++	*val = qca_ssdk_switch_reg_read(bus, reg, chip_type);
+ 
+-	return SW_FAIL;
++	return SW_OK;
+ }
+ 
+ sw_error_t qca_mii_raw_write(struct mii_bus *bus, a_uint32_t reg, a_uint32_t val)
+ {
+-	struct qca_mdio_data *mdio_priv = bus->priv;
+ 	int chip_type = FIELD_GET(SSDK_SWITCH_REG_TYPE_MASK, reg);
+ 
+ 	if (chip_type == SSDK_SWITCH_REG_IS_QCE2204) {
+@@ -474,27 +596,16 @@
+ 		return _qce2204_ahb_write(bus, addr, reg, val);
+ 	}
+ 
+-#if IS_ENABLED(CONFIG_MDIO_BITBANG)
+-	sw_error_t rv = SW_OK;
+-
+-	rv = qca_bitbang_mii_raw_write_try(bus, reg, val);
+-	if (rv == SW_OK)
+-		return rv;
+-#endif
+-
+-	if (mdio_priv && mdio_priv->sw_write) {
+-		mdio_priv->sw_write(bus, reg, val);
+-		return SW_OK;
+-	}
++	qca_ssdk_switch_reg_write(bus, reg, val, chip_type);
+ 
+-	return SW_FAIL;
++	return SW_OK;
+ }
+ 
+ sw_error_t qca_mii_raw_update(struct mii_bus *bus, a_uint32_t reg,
+ 			      a_uint32_t clear, a_uint32_t set)
+ {
+-	struct qca_mdio_data *mdio_priv = bus->priv;
+ 	int chip_type = FIELD_GET(SSDK_SWITCH_REG_TYPE_MASK, reg);
++	a_uint32_t val;
+ 
+ 	if (chip_type == SSDK_SWITCH_REG_IS_QCE2204) {
+ 		int addr = FIELD_GET(SSDK_SWITCH_REG_MDIO_ADDR_MASK, reg);
+@@ -502,26 +613,12 @@
+ 		return _qce2204_ahb_update(bus, addr, reg, clear, set);
+ 	}
+ 
+-#if IS_ENABLED(CONFIG_MDIO_BITBANG)
+-	sw_error_t rv = SW_OK;
+-
+-	rv = qca_bitbang_mii_raw_update_try(bus, reg, clear, set);
+-	if (rv == SW_OK)
+-		return rv;
+-#endif
+-
+-	if (mdio_priv && mdio_priv->sw_read && mdio_priv->sw_write) {
+-		a_uint32_t val;
++	val = qca_ssdk_switch_reg_read(bus, reg, chip_type);
++	val &= ~clear;
++	val |= set;
++	qca_ssdk_switch_reg_write(bus, reg, val, chip_type);
+ 
+-		val = mdio_priv->sw_read(bus, reg);
+-		val &= ~clear;
+-		val |= set;
+-		mdio_priv->sw_write(bus, reg, val);
+-
+-		return SW_OK;
+-	}
+-
+-	return SW_FAIL;
++	return SW_OK;
+ }
+ 
+ a_uint32_t __qca_mii_read(a_uint32_t dev_id, a_uint32_t reg)

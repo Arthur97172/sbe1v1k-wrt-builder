@@ -530,6 +530,60 @@ workflow 不引用它。`export-nss-src.sh --upload` 仍保留，仅用于手工
 
 本机已有厂商树时不需要自产；也可以用 `SBE_NSS_BASE=<已解包的 7 包目录>` 直接指定。
 
+### 2026-10-25：`qca-ssdk` 编译失败（run `40177614372`）与 MDIO 寄存器访问移植
+
+CI 在包阶段失败，只有 `qca-ssdk`（变体 `nohnat`）：
+
+```
+src/init/ssdk_plat.c:290:28: error: 'struct mdiobb_ctrl' has no member named 'sw_read'
+src/init/ssdk_plat.c:291:...        （另见 306/307/322/325/328，sw_read/sw_write）
+ERROR: package/feeds/nss/qca-ssdk failed to build (build variant: nohnat).
+```
+
+**根因**：QSDK 6.6 的 `drivers/net/mdio/mdio-ipq4019.c` 把交换芯片寄存器的
+读/写实现挂在两个内核私有钩子上——`mdiobb_ctrl::sw_read/sw_write`（QSDK 给
+`include/linux/mdio-bitbang.h` 加的字段）和 `ipq4019_mdio_data::sw_read/sw_write`
+（ssdk 侧镜像为 `struct qca_mdio_data`）。主线 6.12.112 两处都没有；而且主线的
+`bus->priv` 是 `struct ipq4019_mdio_data { membase; eth_ldo_rdy; mdio_clk; mdc_rate; }`，
+与 `struct qca_mdio_data` 的布局完全不同。
+
+**为什么不能只是加个强转**：`qca_mii_raw_read/write/update` 里的
+`mdio_priv->sw_read(bus, reg)` 在主线内核上会从 `ipq4019_mdio_data` 尾部之外读
+一个函数指针再调用——编译能过，运行时是野指针跳转。所以修法是把寄存器访问本身
+搬进 ssdk，而不是骗过编译器。
+
+**改动**：`nss/patches/qca-ssdk/0013-6.12-mdio-switch-reg-access.patch`
+
+- 按 QSDK `mdio-ipq4019.c` 原样移植 `qca8337`/`qca8386`/`qca81xx` 的
+  split-addr + read/write（伪 PHY 地址 `0x18`/`0x10`，默认页 `0x200`），只用
+  `mii_bus->read/write` 与 `__mdiobus_read/write`；主线
+  `ipq4019_mdio_read_c22/write_c22` 直接 `writel((mii_id << 8) | regnum, …)`，
+  不做地址范围校验（`linux-6.12.112/drivers/net/mdio/mdio-ipq4019.c:110,183`），
+  所以这些伪地址照旧能到总线上；
+- 删掉 `qca_bitbang_mii_raw_{read,write,update}_try`（`src/`、`include/` 里没有
+  其它引用）；
+- `qca_mii_raw_update` 用本地 helper 做 read-modify-write；QCE2204 分支不动；
+- `mdiobb_ctrl::preinit` 的唯一使用点在 `adpt_hppe_uniphy.c` 的 `#if 0` 里，
+  不需要移植。
+
+**已知限制（`NOT SUPPORTED`，未在真机验证）**：`ssdk_miibus_freq_get/set` 仍然把
+`bus->priv` 当 `struct qca_mdio_data` 读写 `clk_div`，在主线内核上同样是越界读。
+它唯一的调用者是 `qca_mht_sku_check()`（CHIP_MHT / QCA8084 的 fuse 读取路径），
+本目标不实例化这条路径；真要支持 MHT 平台需要另做，不能沿用这个结构体。
+
+**验证**：
+
+| 检查点 | 状态 |
+|---|---|
+| 本机 `package/qca-ssdk/clean` 后干净重编（GCC 14.3、`-Werror`） | PASS（`compile#205.33#21.13#227.39`，0 error/warning；`ssdk_plat.o` 含 `qca_ssdk_switch_reg_read/write`；产出 `kmod-qca-ssdk-nohnat-6.12.112-r1.apk` 633.2 KB） |
+| 补丁在 12 个既有补丁之后按序应用、结果与手工编辑树逐字节相同 | PASS（`diff -r` 无差异） |
+| CI（`make world` 全量） | NOT TESTED |
+| 模块加载与交换芯片寄存器实际读写 | NOT TESTED |
+| 真机启动/以太网/升级 | NOT TESTED |
+
+注意：只跑 `package/qca-ssdk/compile` 而不先 `clean`，会复用 `build_dir` 里的旧
+`ssdk_plat.o`，看起来“编译通过”其实没编到新代码——本地验证必须先 `clean`。
+
 ## 注意
 
 - `files/` 由 `include/image.mk` 原样复制进 rootfs，**不经过** `VERSION_SED_SCRIPT`，
