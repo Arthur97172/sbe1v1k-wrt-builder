@@ -341,11 +341,6 @@ while IFS=$'\t' read -r op src dest note; do
 		[ -f "$REPO/$src" ] || die 4 "映射源文件不存在：$src"
 		mkdir -p "$(dirname -- "$SRC/$dest")"
 		cp -p "$REPO/$src" "$SRC/$dest"
-		# git 只记录 644/755 两种权限，检出时 744 会变成 755。审计树里
-		# mmc.sh 是 744，而指纹逐位比较权限，所以按审计值恢复。
-		case "$dest" in
-		*/lib/upgrade/mmc.sh) chmod 0744 "$SRC/$dest" ;;
-		esac
 		;;
 	*)
 		die 4 "未知映射操作：$op"
@@ -361,6 +356,9 @@ grep -q 'model = "Spectrum SBE1V1K"' "$_dts" || die 4 "DTS 的 model 不符"
 grep -q 'sdhc_1' "$_dts" || die 4 "DTS 缺少 sdhc_1（eMMC）"
 _mmc="$SRC/buildroot/target/linux/feeds/ipq95xx/base-files/lib/upgrade/mmc.sh"
 [ -f "$_mmc" ] || die 4 "mmc.sh 缺失"
+# 审计树里 mmc.sh 是 744（组可执行），但 git 只记录 644/755，检出后再经
+# rsync -a 复制就变成 755。指纹逐位比较权限，所以在这里按审计值恢复。
+chmod 0744 "$_mmc"
 [ "$(stat -c '%a' "$_mmc")" = 744 ] || die 4 "mmc.sh 权限应为 744，实际 $(stat -c '%a' "$_mmc")"
 [ "$(sha256sum "$_mmc" | cut -d' ' -f1)" = \
   "44e461792b8969d655970a4cc054e4ad3a6d083828eed5578906be38139c7898" ] \
