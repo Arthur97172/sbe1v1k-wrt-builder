@@ -96,7 +96,37 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          ./25.12-6.12/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee build.log
+          if ./25.12-6.12/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee build.log; then
+            exit 0
+          fi
+          # 非 verbose 的 world 用 `make -s` 跑每个包，包内部的编译错误被丢弃
+          # （include/subdir.mk 的 log_make 只在 CONFIG_BUILD_LOG=y 时才把输出 tee
+          # 到 logs/，本配置没开）。于是 build.log 只剩一行
+          # "ERROR: package/X failed to build"，看不出真正原因。
+          # 这里只重编失败的包并开 V=s：错误进 job 日志，完整输出进 build.log 附件。
+          pkg=$(sed -n 's/.*ERROR: package\/\([^ ]*\) failed to build.*/\1/p' build.log | head -n1)
+          {
+            echo "===== 构建失败：${pkg:-未能从 build.log 识别失败的包} ====="
+            df -h /
+            free -h
+          } 2>&1 | tee -a build.log
+          if [ -n "$pkg" ]; then
+            rerun="$RUNNER_TEMP/rerun-${GITHUB_RUN_NUMBER}.log"
+            if ./25.12-6.12/build/sbe1v1k-build.sh "package/$pkg/compile" V=s -j1 >"$rerun" 2>&1; then
+              # 串行重编却通过：失败要么与并发时序有关，要么是包外的因素（磁盘、
+              # 被 OOM 杀掉的 cc1 等）。把这些也留进日志。
+              echo "===== $pkg 以 V=s -j1 重编通过，未复现 ====="
+              sudo dmesg --ctime 2>/dev/null | tail -n 30 || true
+            else
+              cat "$rerun" >> build.log
+              echo "===== error 摘要（前 8 处） ====="
+              grep -n -m 8 -E 'error:|Error [0-9]+$|No such file or directory|undefined reference' "$rerun" \
+                || echo "（未匹配到常见错误模式，见下方尾部）"
+              echo "===== $pkg 重建日志尾部 200 行 ====="
+              tail -n 200 "$rerun"
+            fi
+          fi
+          exit 1
 
       - name: Verify image (static)
         if: success()
