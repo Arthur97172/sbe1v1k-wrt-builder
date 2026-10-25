@@ -297,4 +297,41 @@ if [ "${SBE_EXPECT_WIFI_FIRMWARE:-0}" = 1 ]; then
 	done
 fi
 
+# ---- 无线加密模式（0018 回移）------------------------------------------------
+# WPA2-PSK/WPA3-SAE Compatibility Mode 是审计之后补的功能，源码侧由
+# build-fixes/0018 + luci-patches/0001 交付。镜像里复查同一组标记，确认补丁
+# 真的落进了固件而不是只落在源码树里。三个标记缺任一即失败：
+#   netifd 认 sae-compat、hostapd.sh 会发 RSN Override、LuCI 有该选项。
+if [ -f "$ROOTFS/lib/netifd/netifd-wireless.sh" ]; then
+	grep -q 'auth_type=psk-sae-compat' "$ROOTFS/lib/netifd/netifd-wireless.sh" \
+		&& ok "netifd 接受 sae-compat" \
+		|| bad "netifd 缺 sae-compat 映射（0018 未进镜像）"
+	grep -q 'psk-sae-compat)' "$ROOTFS/lib/netifd/hostapd.sh" \
+		&& ok "hostapd.sh 处理 psk-sae-compat" \
+		|| bad "hostapd.sh 缺 psk-sae-compat（0018 未进镜像）"
+	# override 元素的 key_mgmt 必须先赋值再发出，否则镜像里看着有分支、
+	# 实际 beacon 里没有 RSN Override，兼容模式退化成纯 WPA2-PSK。
+	_n1=$(grep -n 'rsn_override_key_mgmt="SAE"$' "$ROOTFS/lib/netifd/hostapd.sh" \
+		| head -n1 | cut -d: -f1 || true)
+	_n2=$(grep -n 'append bss_conf "rsn_override_key_mgmt=' "$ROOTFS/lib/netifd/hostapd.sh" \
+		| head -n1 | cut -d: -f1 || true)
+	[ -n "$_n1" ] && [ -n "$_n2" ] && [ "$_n1" -lt "$_n2" ] \
+		&& ok "RSN Override 的 key_mgmt 在发出前已赋值" \
+		|| bad "rsn_override_key_mgmt 赋值晚于发出（行 ${_n1:-无} vs ${_n2:-无}）"
+	# 没有这条，/sbin/wifi 的 uci 迁移会在每次 reload 时把 sae-compat 改写成 sae，
+	# 配置看着还在、实际已降级成 WPA3-Personal。
+	grep -q 'return "sae-compat"' "$ROOTFS/lib/wifi/mac80211.uc" \
+		&& ok "wifi 迁移脚本保留 sae-compat" \
+		|| bad "mac80211.uc 会把 sae-compat 改写成 sae（0018 未进镜像）"
+	if [ -f "$ROOTFS/www/luci-static/resources/view/network/wireless.js" ]; then
+		grep -q 'sae-compat' "$ROOTFS/www/luci-static/resources/view/network/wireless.js" \
+			&& ok "LuCI 提供 Compatibility Mode 选项（minify 后）" \
+			|| bad "LuCI 缺 sae-compat 选项（luci 补丁未进镜像）"
+	else
+		bad "镜像缺少 LuCI wireless.js"
+	fi
+else
+	bad "镜像缺少 /lib/netifd/netifd-wireless.sh"
+fi
+
 exit "$fail"

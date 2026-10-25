@@ -36,3 +36,4 @@
 0015-ubus-relative-libubus-symlink.patch	tree	buildroot	libubus.so.20231128 改相对软链
 0016-uci-relative-libuci-symlink.patch	tree	buildroot	libuci.so 改相对软链
 0017-openwrt-patches-busybox-drop-config-override.patch	tree	buildroot	去掉 QSDK busybox 配置覆盖（审计时从未生效）
+0018-wifi-scripts-sae-compat.patch	tree	buildroot	补上 WPA2-PSK/WPA3-SAE Compatibility Mode（WPA3 §13）

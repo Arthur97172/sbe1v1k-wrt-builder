@@ -237,7 +237,7 @@ for t in git rsync patch python3 sha256sum tar awk sort find zstd; do need "$t";
 [ -f "$BUILD/feeds.conf.in" ] || die 4 "缺少 build/feeds.conf.in"
 [ -f "$BUILD/feeds-links.conf" ] || die 4 "缺少 build/feeds-links.conf"
 [ -f "$BUILD/fingerprint-exclude.conf" ] || die 4 "缺少 build/fingerprint-exclude.conf"
-for f in build-fixes/SERIES p-b/SERIES target-feed-fixes/SERIES; do
+for f in build-fixes/SERIES p-b/SERIES target-feed-fixes/SERIES luci-patches/SERIES; do
 	[ -f "$BUILD/$f" ] || die 4 "缺少 $BUILD/$f"
 done
 [ -f "$BUILD/config-frozen/.config" ] || die 4 "缺少 config-frozen/.config"
@@ -414,6 +414,41 @@ grep -q 'get_max_running_tasks' "$_procd" || die 4 "openwrt-patches 的 procd 00
 grep -q '^diff --git a/rcS.c' "$_procd" || die 4 "procd 0002 不是针对 rcS.c 的补丁"
 [ ! -d "$SRC/buildroot/package/system/procd/patches" ] \
 	|| die 4 "package/system/procd/patches/ 不应存在（会与 openwrt-patches 的 0002 重复应用）"
+
+# 0018 补上 sae-compat（Compatibility Mode）。补丁应用成功不等于内容正确，
+# 这里逐个文件断言关键改动，并单独断言 override 赋值的先后顺序，失败即停
+# ——不靠 known-delta 白名单盖差异。
+_ws="$SRC/buildroot/qca/feeds/wlan-open/mac80211/wifi-scripts/files"
+grep -q 'auth_type=psk-sae-compat' "$_ws/lib/netifd/netifd-wireless.sh" \
+	|| die 4 "0018 未生效：netifd-wireless.sh 缺 sae-compat → auth_type 映射"
+grep -q '^		psk-sae-compat)$' "$_ws/lib/netifd/hostapd.sh" \
+	|| die 4 "0018 未生效：hostapd.sh 缺 psk-sae-compat 的 key_mgmt 分支"
+grep -q 'rsn_override_key_mgmt\$rsn_override_key_mgmt_2' "$_ws/lib/netifd/hostapd.sh" \
+	|| die 4 "0018 未生效：hostapd.sh 的 rsn_override_omit_rsnxe 未与主 override 共用"
+# rsn_override_key_mgmt 必须在 override 元素发出前就赋值：hostapd_set_bss_options
+# 里 case 默认值（先）与 rsn_override 块（后）顺序固定，赋值若落在后面的
+# hostapd_append_wpa_key_mgmt 里就永远不会被发出。这里连同顺序一起断言。
+_n1=$(grep -n 'rsn_override_key_mgmt="SAE"$' "$_ws/lib/netifd/hostapd.sh" | head -n1 | cut -d: -f1 || true)
+_n2=$(grep -n 'append bss_conf "rsn_override_key_mgmt=' "$_ws/lib/netifd/hostapd.sh" | head -n1 | cut -d: -f1 || true)
+[ -n "$_n1" ] && [ -n "$_n2" ] && [ "$_n1" -lt "$_n2" ] \
+	|| die 4 "0018 顺序错误：psk-sae-compat 的 rsn_override_key_mgmt 赋值（行 ${_n1:-无}）必须早于 override 元素发出（行 ${_n2:-无}）"
+grep -q '^	if (match(enc_lower, /\^sae-compat/, "s"))$' "$_ws/lib/wifi/mac80211.uc" \
+	|| die 4 "0018 未生效：mac80211.uc 会把 sae-compat 改写成 sae"
+logmsg "  SAE_COMPAT_OK wifi-scripts（netifd + hostapd + uci 迁移）"
+
+# =============================================================== 11b. luci
+step "LuCI 补丁（build/luci-patches/SERIES）"
+apply_series "$BUILD/luci-patches/SERIES"
+_ljs="$SRC/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js"
+grep -q "crypto_modes.push(\['sae-compat', 'WPA2-PSK/WPA3-SAE Compatibility Mode', 30\])" "$_ljs" \
+	|| die 4 "LuCI 补丁未生效：wireless.js 缺 sae-compat 加密选项"
+grep -q "'sae-compat': has_ap_sae" "$_ljs" \
+	|| die 4 "LuCI 补丁未生效：wireless.js 的 crypto_support 缺 sae-compat"
+grep -q "o.depends('encryption', 'sae-compat')" "$_ljs" \
+	|| die 4 "LuCI 补丁未生效：wireless.js 的 Key 字段未随 sae-compat 显示"
+grep -q "'sae-mixed', 'sae-compat'\] });" "$_ljs" \
+	|| die 4 "LuCI 补丁未生效：802.11r 快速漫游开关未覆盖 sae-compat"
+logmsg "  SAE_COMPAT_OK luci wireless.js"
 
 # =============================================================== 12. 第三方
 step "第三方树"

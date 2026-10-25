@@ -23,7 +23,8 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 │   ├── feeds-links.conf              package/feeds/<feed>/<名字> 软链清单（增删插件要同步）
 │   ├── config-frozen/.config         冻结配置：镜像里有哪些包（增删插件要重新生成）
 │   ├── known-delta.conf              与审计基线的允许差异（新增源码路径要登记）
-│   ├── build-fixes/  openwrt-patches/  local-packages/  p-b/   装配期改动与本地软件包
+│   ├── build-fixes/  luci-patches/  openwrt-patches/  local-packages/  p-b/   装配期改动与本地软件包
+│   │                       └─ luci-patches：LuCI 树补丁（`tree` 目标是 sources/luci，装不进 build-fixes）
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
@@ -77,6 +78,31 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
   - 代理后端（`sources/passwall-selected`）：`chinadns-ng`、`dns2socks`、`ipt2socks`、
     `microsocks`、`shadowsocksr-libev`、`simple-obfs`、`tcping`；另有 `xray`、`sing-box`、
     `mihomo`、`ruby` 等运行依赖，均不带 LuCI 界面包之外的额外前端。
+
+## 无线加密模式
+
+AP（`wpad` = hostapd 2025.11.11，带 SAE / 802.11w / OWE / FILS / DPP）支持：
+
+| LuCI 中的模式 | `encryption` 前缀 | 说明 |
+| --- | --- | --- |
+| WPA2-PSK | `psk2` | |
+| WPA-PSK/WPA2-PSK Mixed | `psk-mixed` | |
+| WPA2-EAP | `wpa2` | 需 RADIUS（`auth_server`）或内置 `eap_server` |
+| WPA-EAP | `wpa` | 同上，WPA1 企业级 |
+| WPA3-SAE | `sae` | 6 GHz 上强制 PMF |
+| WPA2-PSK/WPA3-SAE Mixed | `sae-mixed` | 主 RSNE 同时通告 WPA2-PSK 与 SAE |
+| WPA2-PSK/WPA3-SAE Compatibility | `sae-compat` | 见下 |
+
+**Compatibility Mode**（WPA3 规范 v3.5 §13）由 `build/build-fixes/0018` 与
+`build/luci-patches/0001` 补进 24.10：主 RSNE 只通告 WPA2-PSK（老客户端照常关联），
+SAE 走单独的 RSN Override 元素（`rsn_override_key_mgmt=SAE`、`rsn_override_mfp=2`、
+`rsn_override_omit_rsnxe=1`）；6 GHz 上 WPA2-PSK 不允许，自动退回主 RSNE 发 SAE
++ PMF 强制。缺的从来不是编译能力——`wpad` 二进制本来就实现了 `rsn_override_*`，
+缺的是 netifd/LuCI 的入口，所以只改脚本与前端，不动任何包和 hostapd 源码。
+
+该模式仅 AP 侧可选（客户端不支持以 Compatibility Mode 关联，会走 Mixed 或纯 SAE）。
+`assemble-sources.sh` 与 `verify-image.sh` 会对补丁的关键行和
+“`rsn_override_key_mgmt` 赋值早于 override 元素发出”这条顺序各做断言。
 
 ## 本机构建
 

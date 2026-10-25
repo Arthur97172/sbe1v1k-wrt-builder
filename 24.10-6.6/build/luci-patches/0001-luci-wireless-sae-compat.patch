@@ -1,0 +1,56 @@
+Subject: [PATCH] luci-mod-network: offer WPA2-PSK/WPA3-SAE Compatibility Mode
+
+Wireless → Encryption gains the third WPA3-Personal mode, value
+'sae-compat', next to WPA3-SAE and the transition mode.  The mode relies
+on RSN overriding, which hostapd only implements for AP operation, so the
+option and its support annotation are AP-only.
+
+This is the UI half of the backport; the netifd/ucode half (auth_type
+psk-sae-compat, key-mgmt and RSNE handling) is in the buildroot tree, see
+build/build-fixes/0018-wifi-scripts-sae-compat.patch.
+
+802.11r is offered for the new mode because hostapd.sh emits FT-PSK in the
+main RSNE and FT-SAE in the override when ieee80211r is set.  802.11w is
+deliberately not offered: PMF is what the mode negotiates through the
+override element (mfp=2), and exposing the flag would let the main RSNE
+demand PMF from legacy clients that cannot provide it.
+
+---
+--- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
++++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
+@@ -1363,6 +1363,10 @@
+ 						crypto_modes.push(['sae-mixed', 'WPA2-PSK/WPA3-SAE Mixed Mode', 30]);
+ 					}
+ 
++					// WPA3-Personal Compatibility Mode uses RSN overriding, which is an AP-only feature
++					if (has_ap_sae)
++						crypto_modes.push(['sae-compat', 'WPA2-PSK/WPA3-SAE Compatibility Mode', 30]);
++
+ 					if (has_ap_wep || has_sta_wep) {
+ 						crypto_modes.push(['wep-open',   _('WEP Open System'), 11]);
+ 						crypto_modes.push(['wep-shared', _('WEP Shared Key'),  10]);
+@@ -1392,6 +1396,7 @@
+ 							'psk-mixed': has_hostapd || _('Requires hostapd'),
+ 							'sae': has_ap_sae || _('Requires hostapd with SAE support'),
+ 							'sae-mixed': has_ap_sae || _('Requires hostapd with SAE support'),
++							'sae-compat': has_ap_sae || _('Requires hostapd with SAE support'),
+ 							'wpa': has_ap_eap || _('Requires hostapd with EAP support'),
+ 							'wpa2': has_ap_eap || _('Requires hostapd with EAP support'),
+ 							'wpa3': has_ap_eap192 || _('Requires hostapd with EAP Suite-B support'),
+@@ -1602,6 +1607,7 @@
+ 				add_dependency_permutations(o, { mode: ['sta', 'adhoc', 'mesh', 'sta-wds'], encryption: ['psk', 'psk2', 'psk+psk2', 'psk-mixed'] });
+ 				o.depends('encryption', 'sae');
+ 				o.depends('encryption', 'sae-mixed');
++				o.depends('encryption', 'sae-compat');
+ 				o.datatype = 'wpakey';
+ 				o.rmempty = true;
+ 				o.password = true;
+@@ -1660,7 +1666,7 @@
+ 					o = ss.taboption('roaming', form.Flag, 'ieee80211r', _('802.11r Fast Transition'), _('Enables fast roaming among access points that belong to the same Mobility Domain'));
+ 					add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa2', 'wpa3', 'wpa3-mixed', , 'wpa3-192'] });
+ 					if (has_80211r)
+-						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk2', 'psk-mixed', 'sae', 'sae-mixed'] });
++						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk2', 'psk-mixed', 'sae', 'sae-mixed', 'sae-compat'] });
+ 					o.rmempty = true;
+ 
+ 					o = ss.taboption('roaming', form.Value, 'nasid', _('NAS ID'), _('Used for two different purposes: RADIUS NAS ID and 802.11r R0KH-ID. Not needed with normal WPA(2)-PSK.'));

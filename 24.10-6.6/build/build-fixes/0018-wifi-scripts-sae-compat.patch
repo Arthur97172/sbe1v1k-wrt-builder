@@ -1,0 +1,128 @@
+Subject: [PATCH] wifi-scripts: add WPA2-PSK/WPA3-SAE Compatibility Mode (sae-compat)
+
+OpenWrt 25.12 exposes a third WPA3-Personal mode besides WPA3-SAE and the
+transition (mixed) mode: Compatibility Mode per WPA3 Specification v3.5 §13.
+The AP advertises plain WPA2-PSK in the RSNE, so clients that know nothing
+about WPA3 associate normally, while SAE is carried in a separate RSN
+Override element that legacy clients ignore.
+
+The wpad binary in this tree already implements the mechanism (hostapd
+2025.11.11 with rsn_override_*); what is missing is the netifd/LuCI wiring:
+
+  * netifd-wireless.sh  - accept encryption 'sae-compat', map it to a new
+                          auth_type before the generic 'sae*' catch-all
+                          (which would otherwise turn it into plain SAE);
+  * hostapd.sh          - emit wpa_key_mgmt/rsn_override_key_mgmt for the
+                          new auth_type and set ieee80211w=0, mfp=2 and
+                          rsn_override_omit_rsnxe=1 off 6 GHz;
+  * mac80211.uc         - keep 'sae-compat' through the uci migration pass
+                          in /sbin/wifi, which otherwise rewrites any
+                          sae-prefixed value to 'sae' on every reload.
+
+The LuCI half of the feature lives in the luci tree; see
+build/luci-patches/0001-luci-wireless-sae-compat.patch.
+
+Verified locally by applying to the audit tree and diffing the result
+against the hand-edited copies; the assembled sources are gated by the
+tree fingerprint and by verify-image.sh's sae-compat assertions.
+
+---
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh
+@@ -102,6 +102,20 @@
+ 			append wpa_key_mgmt "SAE"
+ 			[ "${ieee80211r:-0}" -gt 0 ] && append wpa_key_mgmt "FT-SAE"
+ 		;;
++		psk-sae-compat)
++			# WPA3 Spec v3.5 §13 Compatibility Mode: the RSNE carries
++			# WPA2-PSK only (so pre-WPA3 clients associate), while SAE is
++			# advertised in the RSN Override element.  On 6 GHz WPA2-PSK is
++			# not allowed, so the main RSNE carries SAE with PMF required.
++			if [ "${band:-}" = "6g" ]; then
++				append wpa_key_mgmt "SAE"
++				[ "${ieee80211r:-0}" -gt 0 ] && append wpa_key_mgmt "FT-SAE"
++			else
++				append wpa_key_mgmt "WPA-PSK"
++				[ "${ieee80211r:-0}" -gt 0 ] && append wpa_key_mgmt "FT-PSK"
++				[ "${ieee80211w:-0}" -gt 0 ] && append wpa_key_mgmt "WPA-PSK-SHA256"
++			fi
++		;;
+ 		psk-sae-sae-ext-key)
+ 			append wpa_key_mgmt "WPA-PSK SAE SAE-EXT-KEY"
+ 			[ "${ieee80211r:-0}" -gt 0 ] && append wpa_key_mgmt "FT-PSK FT-SAE FT-SAE-EXT-KEY"
+@@ -949,6 +963,31 @@
+ 			set_default sae_require_mfp 1
+ 			set_default sae_pwe 2
+ 		;;
++		psk-sae-compat)
++			# ieee80211r is parsed further down (just before the key-mgmt
++			# call), but the RSN Override element is emitted before that,
++			# so read it here as well.  This is the same uci value.
++			json_get_vars ieee80211r
++			set_default ieee80211r 0
++			if [ "${band:-}" = "6g" ]; then
++				set_default ieee80211w 2
++				set_default sae_pwe 1
++			else
++				# The main RSNE advertises WPA2-PSK without PMF so legacy
++				# clients still associate; PMF is then required through the
++				# RSN Override element (mfp=2) and the RSNXE is omitted so
++				# the beacon stays parseable for WPA2-only stations.
++				set_default ieee80211w 0
++				set_default rsn_override_mfp 2
++				set_default rsn_override_omit_rsnxe 1
++				set_default sae_pwe 2
++				# SAE is advertised in the override element only; it must
++				# be set before the override block below emits bss_conf.
++				rsn_override_key_mgmt="SAE"
++				[ "$ieee80211r" -gt 0 ] && rsn_override_key_mgmt="SAE FT-SAE"
++			fi
++			set_default sae_require_mfp 1
++		;;
+ 		ft-sae-ext-key|sae-ext-key|sae-sae-ext-key)
+ 			set_default ieee80211w 2
+ 			if [ "$band" = "6g" ]; then
+@@ -980,9 +1019,16 @@
+ 		append bss_conf "rsn_override_pairwise_2=$rsn_override_pairwise_2" "$N"
+ 		append bss_conf "rsn_override_mfp_2=$rsn_override_mfp_2" "$N"
+ 		[ -n "$rsn_override_mlo_compat" ] && append bss_conf "rsn_override_mlo_compat=$rsn_override_mlo_compat" "$N"
+-		[ -n "$rsn_override_omit_rsnxe" ] && append bss_conf "rsn_override_omit_rsnxe=$rsn_override_omit_rsnxe" "$N"
+ 	}
+ 
++	# rsn_override_omit_rsnxe is a single hostapd option that applies to
++	# whichever override element is emitted, so it belongs to neither block
++	# specifically.  Compatibility mode (psk-sae-compat) sets it on the main
++	# override; SAE-EXT-KEY sets it on the second one.
++	[ -n "$rsn_override_key_mgmt$rsn_override_key_mgmt_2" ] && \
++		[ -n "$rsn_override_omit_rsnxe" ] && \
++		append bss_conf "rsn_override_omit_rsnxe=$rsn_override_omit_rsnxe" "$N"
++
+ 	[ -n "$assoc_frame_encryption" ] && append bss_conf "assoc_frame_encryption=$assoc_frame_encryption" "$N"
+ 	[ -n "$pmksa_caching_privacy" ] && append bss_conf "pmksa_caching_privacy=$pmksa_caching_privacy" "$N"
+ 	[ -n "$eap_using_authentication_frames" ] && append bss_conf "eap_using_authentication_frames=$eap_using_authentication_frames" "$N"
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/netifd-wireless.sh
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/netifd-wireless.sh
+@@ -291,6 +291,12 @@
+ 		psk3-mixed*|sae-mixed*)
+ 			auth_type=psk-sae
+ 		;;
++		sae-compat*)
++			# WPA2-PSK/WPA3-SAE Compatibility Mode (WPA3 Spec v3.5 §13):
++			# the RSNE stays WPA2-PSK so legacy clients keep working, SAE
++			# travels in the RSN Override element.
++			auth_type=psk-sae-compat
++		;;
+ 		sae-sae-ext-key)
+ 			auth_type=sae-sae-ext-key
+ 		;;
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/wifi/mac80211.uc
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/wifi/mac80211.uc
+@@ -201,6 +201,8 @@
+ 	}
+ 
+ 	/* WPA3 SAE variants */
++	if (match(enc_lower, /^sae-compat/, "s"))
++		return "sae-compat";  /* WPA2-PSK/WPA3-SAE Compatibility Mode */
+ 	if (match(enc_lower, /^sae-mixed/, "s"))
+ 		return "sae-mixed";  /* WPA2-PSK + WPA3-SAE */
+ 	if (match(enc_lower, /^sae/, "s"))

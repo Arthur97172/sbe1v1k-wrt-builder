@@ -1,0 +1,13 @@
+# LuCI 树（sources/luci）的装配期补丁序列，语法与 build-fixes/SERIES 相同：
+#   <patch 文件><TAB><模式><TAB><目标><TAB><说明>
+# 由 assemble-sources.sh 在「LuCI 补丁」步骤调用 apply_series：
+#   tree 模式：patch -p1 -d sources/<目标>，先 --dry-run，禁止 fuzz、禁止 .rej。
+#
+# 为什么单独一个目录：sources/luci 由 upstream-pins.conf 的 luci 行整树钉定后
+# 替换，既不属于 buildroot，也不属于第三方树，build-fixes/ 的 tree 模式
+# （目标恒为 buildroot）够不到它。
+#
+# 改动会体现在树指纹上，因此 24.10-6.6/build/known-delta.conf 里登记了同一个
+# 文件，装配脚本另有断言确认补丁确实落盘（不能只靠白名单盖掉差异）。
+
+0001-luci-wireless-sae-compat.patch	tree	luci	LuCI 增加 WPA2-PSK/WPA3-SAE Compatibility Mode 选项

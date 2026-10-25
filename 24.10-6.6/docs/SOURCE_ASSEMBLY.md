@@ -26,6 +26,7 @@
 | 9 | Wi-Fi blob | `sbe-wifi-firmware/files/FILES-SHA256` | `sha256sum -c` 6/6；许可仍是 `LICENSE_REVIEW_REQUIRED` |
 | 10 | 就地叠加 | `files-6.6/.` → `qca/src/linux-6.6/`；`bootloader/files/.` → `qca/src/u-boot-2025/` | 与两个包 Makefile 在解析期的 `cp` 一致；DTS 与 rtl8261n 落地；u-boot 叠加后恰好多出 381 个文件且无覆盖，`tools/sysupgrade.c` 在位 |
 | 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 全部 `tree` 模式；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
+| 11b | LuCI 补丁 | `build/luci-patches/SERIES` | `tree` 模式，目标是 `sources/luci`（第 5 步整树替换之后）；`0018` 五条、`luci-patches/0001` 四条 grep 断言，其中一条断言 `rsn_override_key_mgmt` 的赋值行号早于 override 元素的发出行号 |
 | 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` + `thirdparty-patches/` | passwall-selected 7 个包；wifihistory 稀疏检出 43 文件 + 一处补丁；`thirdparty-feed` 无悬空链接 |
 | 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 10 条 `src-link`、156 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
 | 14 | 冻结配置 | `build/config-frozen/` | `.config` 哈希；8 个 `CONFIG_FEED_*=y`；无 `uboot-2025`；`version.date=1792557977`；**选中包用到的 `qca/src` 本地树都在**（`MISSING_IMPLICIT`/`MISSING_EXPLICIT` 必须为 0） |
@@ -47,6 +48,8 @@
 2. **内核叠加层要在 files-6.6 装完之后**——叠加源就是装好的 files-6.6。
 3. **第三方树要在 feeds 接线之前**——`feeds.conf` 的 `src-link thirdparty`、
    `passwall_selected` 与 17 条 `package/feeds` 链接的目标都在第三方位里。
+4. **LuCI 补丁要在第 5 步整树替换之后**——`sources/luci` 由 pin 的 `replace`
+   行整个覆盖，补丁打早了会被覆盖掉，且 `--dry-run` 不会报错（它打的是旧树）。
 
 ---
 
@@ -59,7 +62,8 @@
 | `build/assembly-map.conf` | 仓库内文件/目录 → 装配树位置 | rtl8261n、SBE DTS、base-files、本地包、6 个 blob、bandix-plus |
 | `build/p-b/SERIES` | 板级补丁（镜像定义、DTS 注册、pwm） | 3 条，`tree` |
 | `build/target-feed-fixes/SERIES` | `config-6.6`、`target.mk` 修正 | 2 条，`tree` |
-| `build/build-fixes/SERIES` | 构建系统补丁 | 15 条，全部 `tree`（0004、0007 空号，见文件头） |
+| `build/build-fixes/SERIES` | 构建系统补丁 | 16 条，全部 `tree`（0004、0007 空号，见文件头） |
+| `build/luci-patches/SERIES` | LuCI 树补丁（`sources/luci`） | 1 条，`tree`；`build-fixes` 的 `tree` 目标是 `buildroot`，够不到 luci |
 | `build/openwrt-patches/package/system/procd/patches/0002-*.patch` | 替换上游同名补丁（rcS 上下文重排） | 1 个文件，由 `assembly-map.conf` 整文件覆盖 |
 | `build/feeds.conf.in` | 10 条相对 `src-link` | 不含宿主路径 |
 | `build/feeds-links.conf` | 156 条 `package/feeds/<feed>/<名字>` 软链 | 记**解析后**的目标，不记链接文本 |
