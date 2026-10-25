@@ -147,6 +147,18 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 节点，镜像里若没有 NSS kmod 配套会完全没有以太网，所以 DTS 切换与
 `DEVICE_PACKAGES` 打包必须同批完成。
 
+### 板级 DTS 的 eMMC 控制器
+
+`patches/0021` 给 `ipq9574-sbe1v1k.dts` 加 `&sdhc_1` 块（引用文件里已有但一直
+没人用的 `sdc_default_state` 引脚配置，属性与 `ipq9574-rdp418.dts` 和厂商 DTB
+相同）。上游 `ipq9574.dtsi` 里 `sdhc_1` 是 `disabled`，不启用时内核没有
+`/dev/mmcblk0`，U-Boot 注入的 `root=PARTUUID=<uuid>` 无法解析，真机刷入后无法
+启动。`scripts/ci/verify-image.sh` 会反编译编出的 DTB 断言 `mmc@7804000` 为
+`okay`，并确认该 DTB 逐字节存在于两个交付 FIT 中。注意 eMMC 能起来不等于能
+启动：本目标的 sysupgrade 仍走 `default_do_upgrade` → `mtd write - firmware`，
+而板子上没有名为 `firmware` 的 MTD 分区；写入目标（`0:HLOS`/`rootfs` 及 A/B
+槽位）尚未改动，**刷写前不要依赖本镜像完成升级**。
+
 ### Stage 2.3：设备定义切到 NSS 设备树
 
 `patches/0010` 把 `Device/spectrum_sbe1v1k` 一并改成：

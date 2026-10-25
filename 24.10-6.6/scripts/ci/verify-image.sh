@@ -17,7 +17,9 @@
 #      故检查来源文件而非该运行期文件；
 #   6. opkg 状态文件里的包数量；
 #   7. 设置了 SBE_EXPECT_WIFI_FIRMWARE=1 时（CI 使用）：sbe-wifi-firmware
-#      已安装，且 6 个厂商固件/BDF 与装配树里的包逐字节一致。
+#      已安装，且 6 个厂商固件/BDF 与装配树里的包逐字节一致；
+#   8. 设备树里 mmc@7804000（eMMC）为 okay，且该 DTB 逐字节存在于两个 FIT 中
+#      （板子从 eMMC 启动，控制器关闭时真机无法启动）。
 #
 # 任何一项失败即以非零退出，CI 记为失败，不做静默降级。
 #
@@ -76,10 +78,48 @@ else
 	bad "sysupgrade 镜像超过 96 MiB"
 fi
 
-# ---- 从最终镜像里解出 squashfs 根文件系统 ----------------------------------
 TMPBASE=${SBE_TMPDIR:-/var/tmp}
 TMP=$(mktemp -d "$TMPBASE/sbe-verify.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
+
+# ---- 设备树：eMMC 控制器必须启用 --------------------------------------------
+# 本机从 eMMC 启动：U-Boot 按 bootconfig 选槽后注入 root=PARTUUID=<uuid>，
+# 内核必须先有 mmcblk0 才能挂根。ipq9574.dtsi 把 sdhc_1 设成 disabled，必须由
+# 设备 DTS 显式启用；不启用时的表现是真机一抹黑（已复现“刷入后无法启动”）。
+# 这里检查编进 FIT 的 DTB 本身：DTS 写对了却没编进去，同样算失败。
+DTB=$(ls "$BR"/build_dir/target-*/linux-ipq95xx_generic/linux-*/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dtb \
+         "$BR"/bin/targets/ipq95xx/generic/dtbs/ipq9574-sbe1v1k.dtb 2>/dev/null | head -n1 || true)
+if [ -n "$DTB" ] && [ -f "$DTB" ]; then
+	ok "编译出的 DTB：${DTB#$BR/}"
+	DTBDEC="$TMP/dtb.dts"
+	if dtc -I dtb -O dts -o "$DTBDEC" "$DTB" 2>/dev/null; then
+		NODE=$(awk '/mmc@7804000/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		case "$NODE" in
+		*'mmc@7804000 {'*)
+			printf '%s\n' "$NODE" | grep -q 'status = "okay"' \
+				&& ok "DTB 中 mmc@7804000（eMMC）status = okay" \
+				|| bad "DTB 中 mmc@7804000 未启用：内核拿不到 mmcblk0，根文件系统无法挂载" ;;
+		*) bad "DTB 中找不到 mmc@7804000 节点" ;;
+		esac
+	else
+		bad "无法反编译 DTB：$DTB"
+	fi
+	# 两个交付 FIT 都是 MultiDTBFIT，fdt 不压缩，可直接按字节子串判断。
+	for f in "$FIT" "$INITRAMFS"; do
+		[ -s "$f" ] || continue
+		if python3 -c 'import sys
+a = open(sys.argv[1], "rb").read(); b = open(sys.argv[2], "rb").read()
+sys.exit(0 if b in a else 1)' "$f" "$DTB"; then
+			ok "$(basename "$f") 内含这个 DTB"
+		else
+			bad "$(basename "$f") 里找不到编出的 DTB（FIT 与 DTB 不同源）"
+		fi
+	done
+else
+	bad "找不到编译出的 DTB（build_dir/target-*/linux-ipq95xx_generic/linux-*/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dtb）"
+fi
+
+# ---- 从最终镜像里解出 squashfs 根文件系统 ----------------------------------
 
 say "[verify] 从 sysupgrade 镜像提取 squashfs"
 tar -xf "$IMG" -C "$TMP" sysupgrade-spectrum_sbe1v1k/root

@@ -1,0 +1,44 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: enable the eMMC controller on spectrum_sbe1v1k
+
+SBE1V1K 从 eMMC 启动。上游 ipq9574.dtsi 把 sdhc_1 保持为 disabled，
+补丁 0009 新建的 DTS 虽然照抄了厂商的 sdc_default_state 引脚配置，却
+没有引用它，所以镜像里 mmc@7804000 仍是 disabled：
+
+  - 内核没有 /dev/mmcblk0；
+  - U-Boot 注入的 root=PARTUUID=<uuid> 无法解析，根文件系统挂载失败，
+    内核 panic（真机反馈“刷入后无法启动”，症状一致）。
+
+本补丁加 &sdhc_1 块：引用已有 sdc_default_state，并写入与 rdp437.dts
+和厂商 DTB 相同的 8 位、DDR/HS200/HS400(enhanced strobe)、
+max-frequency 384 MHz 属性。
+
+分类：设备定义修正；不涉及内核代码。
+
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -258,6 +258,24 @@
+ };
+
+ /*
++ * eMMC: this board boots from it, so the controller must be enabled.  Without
++ * it there is no /dev/mmcblk0, U-Boot's root=PARTUUID= cannot resolve and the
++ * kernel panics.  Properties mirror rdp437.dts and the vendor DTB; the pin
++ * state above is the vendor's sdc-default-state.
++ */
++&sdhc_1 {
++	pinctrl-0 = <&sdc_default_state>;
++	pinctrl-names = "default";
++	mmc-ddr-1_8v;
++	mmc-hs200-1_8v;
++	mmc-hs400-1_8v;
++	mmc-hs400-enhanced-strobe;
++	max-frequency = <384000000>;
++	bus-width = <8>;
++	status = "okay";
++};
++
++/*
+  * Switch side of the data path, values from S2.
+  *
+  * qca-ssdk finds its MDIO bus in ssdk_dt_parse_mdio_node() by trying the

@@ -15,7 +15,7 @@
 
 | 路径 | 性质 | 状态 |
 |---|---|---|
-| `files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts` | 新设备树（748 行） | 已用 `cpp` + `dtc` 离线校验：**0 error**，113 条警告全部来自既有 dtsi（2026-10-21 修正注释后复验，结果不变） |
+| `files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts` | 新设备树（801 行，2026-10-25 加入 eMMC：`sdc_default_state` + `&sdhc_1`） | 已用 `cpp` + `dtc` 离线校验：**0 error**（2026-10-25 复验，反编译 DTB 确认 `mmc@7804000` 为 `okay`） |
 | `files/base-files/etc/board.d/01_network` | target feed 文件 + `spectrum,sbe1v1k` 分支 | 以 feed 版本为基线 |
 | `files/base-files/etc/board.d/02_ipq_board` | target feed 文件 + `spectrum,sbe1v1k` | 以 feed 版本为基线 |
 | `files/base-files/etc/init.d/eth0-lan-attach` | 厂商脚本，逐字照抄 | LICENSE_REVIEW_REQUIRED |
@@ -46,6 +46,10 @@
 | `patches/0001-*.patch` | 从 `target/linux/feeds/` 用 `patch -p1` 应用（补丁路径是 `a/ipq95xx/…`） | 同上 |
 | `patches/0003-*.patch` | 从 `target/linux/feeds/` 用 `patch -p1` 应用（同上） | 同上 |
 | `patches/0002-*.patch` | 从 `target/linux/feeds/files-6.6/` 用 `patch -p1` 应用（补丁路径是 `a/arch/arm64/…`） | `oss-kernel-linux-ipq-files` |
+
+CI 使用的是固定 Release 资产 `sources-v1`，其中的 DTS 不会随仓库更新；因此
+`24.10-6.6/scripts/ci/prepare-tree.sh` 自 2026-10-25 起每次构建都用本目录的
+`files/arch/.../ipq9574-sbe1v1k.dts` 覆盖装配树里的副本（并断言 `&sdhc_1` 存在）。
 
 依据：`target/linux/feeds/ipq95xx/Makefile`（`LINUX_IS_FLATTENED_TREE` 分支）在解析时执行
 `cp -fpR -u $(TOPDIR)/target/linux/feeds/files-$(LINUX_SRC_VERSION)/* $(CONFIG_EXTERNAL_KERNEL_TREE)`，

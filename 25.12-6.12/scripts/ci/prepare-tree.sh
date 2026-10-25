@@ -105,6 +105,12 @@ done
 grep -q '^TARGET_DEVICES += spectrum_sbe1v1k$' \
 	"$BR/target/linux/qualcommbe/image/ipq95xx.mk" \
 	|| { echo "补丁应用不完整：ipq95xx.mk 缺少 spectrum_sbe1v1k 设备" >&2; exit 1; }
+# 同一类断言针对 eMMC：设备树没有 &sdhc_1 时，镜像装到真机上必然起不来
+# （sdhc_1 在 ipq9574.dtsi 里是 disabled，U-Boot 注入的 root=PARTUUID=
+# 解析不到 mmcblk0）。让它在编译前就失败，而不是等 3 小时后再看镜像。
+grep -q '^&sdhc_1 {' \
+	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
+	|| { echo "补丁应用不完整：设备树没有启用 eMMC 的 &sdhc_1 块" >&2; exit 1; }
 
 echo "[prepare] 安装项目自带软件包"
 for d in "$PROJ"/build/local-packages/*/; do

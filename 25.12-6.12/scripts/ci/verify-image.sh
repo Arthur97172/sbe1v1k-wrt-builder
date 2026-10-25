@@ -15,7 +15,9 @@
 #      厂商固件/BDF 落在 QCN9274/hw2.0 与 /usr/share/sbe-wifi/bdf41，
 #      内容与 build/local-packages 逐字节一致，且 sbe-wifi-firmware 已安装。
 #      （本机与 CI 用同一判据：2026-10-24 决定 CI 镜像也带 blob。）
-#   6. apk/opkg 包数据库存在并打印包数量。
+#   6. apk/opkg 包数据库存在并打印包数量；
+#   7. 设备树里 mmc@7804000（eMMC）为 okay，且该 DTB 逐字节存在于两个 FIT 中
+#      （板子从 eMMC 启动，控制器关闭时真机无法启动）。
 #
 # 用法：scripts/ci/verify-image.sh [工作区根目录]
 
@@ -63,10 +65,50 @@ for f in "$IMG" "$FIT" "$INITRAMFS"; do
 done
 [ -s "$IMG" ] || exit 1
 
-# ---- 定位 squashfs 并解包 ---------------------------------------------------
 TMPBASE=${SBE_TMPDIR:-/var/tmp}
 TMP=$(mktemp -d "$TMPBASE/sbe-verify.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
+
+# ---- 设备树：eMMC 控制器必须启用 --------------------------------------------
+# 本机从 eMMC 启动：U-Boot 按 bootconfig 选槽后注入 root=PARTUUID=<uuid>，
+# 内核必须先有 mmcblk0 才能挂根。ipq9574.dtsi 把 sdhc_1 设成 disabled，必须由
+# 设备 DTS 显式启用；不启用时的表现是真机一抹黑（已复现“刷入后无法启动”）。
+# 这里检查编进 FIT 的 DTB 本身：DTS 写对了却没编进去，同样算失败。
+DTB=$(ls "$BR"/build_dir/target-*/linux-qualcommbe_ipq95xx/image-ipq9574-sbe1v1k.dtb \
+         "$BR"/build_dir/target-*/linux-qualcommbe_ipq95xx/linux-*/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dtb \
+         2>/dev/null | head -n1 || true)
+if [ -n "$DTB" ] && [ -f "$DTB" ]; then
+	ok "编译出的 DTB：${DTB#$BR/}"
+	DTBDEC="$TMP/dtb.dts"
+	if dtc -I dtb -O dts -o "$DTBDEC" "$DTB" 2>/dev/null; then
+		NODE=$(awk '/mmc@7804000/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		case "$NODE" in
+		*'mmc@7804000 {'*)
+			printf '%s\n' "$NODE" | grep -q 'status = "okay"' \
+				&& ok "DTB 中 mmc@7804000（eMMC）status = okay" \
+				|| bad "DTB 中 mmc@7804000 未启用：内核拿不到 mmcblk0，根文件系统无法挂载" ;;
+		*) bad "DTB 中找不到 mmc@7804000 节点" ;;
+		esac
+	else
+		bad "无法反编译 DTB：$DTB"
+	fi
+	# 交付的两个 FIT 都必须真的含这个 DTB（kernel 为 gzip、fdt 为 none，
+	# 所以可以直接按字节子串判断，不需要解析 FIT 结构）。
+	for f in "$FIT" "$INITRAMFS"; do
+		[ -s "$f" ] || continue
+		if python3 -c 'import sys
+a = open(sys.argv[1], "rb").read(); b = open(sys.argv[2], "rb").read()
+sys.exit(0 if b in a else 1)' "$f" "$DTB"; then
+			ok "$(basename "$f") 内含这个 DTB"
+		else
+			bad "$(basename "$f") 里找不到编出的 DTB（FIT 与 DTB 不同源）"
+		fi
+	done
+else
+	bad "找不到编译出的 DTB（build_dir/target-*/linux-qualcommbe_ipq95xx/{image-*,linux-*/arch/arm64/boot/dts/qcom/}ipq9574-sbe1v1k.dtb）"
+fi
+
+# ---- 定位 squashfs 并解包 ---------------------------------------------------
 
 UNSQ="$BR/staging_dir/host/bin/unsquashfs4"
 [ -x "$UNSQ" ] || UNSQ=$(command -v unsquashfs || true)

@@ -50,6 +50,22 @@ while IFS= read -r f; do
 	sed -i "s|$OLD|$ROOT|g" "$f"
 done < <(grep -rl "$OLD" "$BR/feeds" 2>/dev/null || true)
 
+# 源码包 sources-v1 是固定 Release 资产，里面的 DTS 是 2026-10-21 的版本。
+# 设备树属于本仓库维护的输入（build/p-b/files 是暂存区，这里是它的 CI 副本），
+# 每次构建都用仓库里的版本覆盖装配树里的旧副本；否则改了 DTS 也不会进镜像。
+# 落点与 docs/PB_DEVICE_DEFINITION.md 一致：target/linux/feeds/files-6.6 会在
+# target feed 解析时被拷进内核树。
+echo "[prepare] 用仓库版本覆盖设备树"
+DTS=arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+SRC_DTS="$PROJ/build/p-b/files/$DTS"
+DST_DTS="$BR/target/linux/feeds/files-6.6/$DTS"
+[ -f "$SRC_DTS" ] || { echo "[prepare] 缺少 $SRC_DTS" >&2; exit 1; }
+[ -f "$DST_DTS" ] || { echo "[prepare] 装配树缺少 $DST_DTS" >&2; exit 1; }
+cp -f "$SRC_DTS" "$DST_DTS"
+cmp -s "$SRC_DTS" "$DST_DTS" || { echo "[prepare] 设备树覆盖失败" >&2; exit 1; }
+grep -q '&sdhc_1 {' "$DST_DTS" \
+	|| { echo "[prepare] 设备树没有启用 eMMC 的 &sdhc_1 块" >&2; exit 1; }
+
 echo "[prepare] 重建 host-bin（Ubuntu runner 无 gnu* 前缀）"
 rm -rf "$PROJ/build/host-bin"
 mkdir -p "$PROJ/build/host-bin"
