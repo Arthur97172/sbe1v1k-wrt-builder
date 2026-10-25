@@ -1,11 +1,11 @@
 {
-  "aggregate_sha256": "2c8982d86c957780bcbfc1c40620f60b784016517dc211849fefe14e87b5250e",
+  "aggregate_sha256": "6273a00015badc0ccd35dde4138d6c4b35682779ebd00bfc96042cee40f6c224",
   "canonicalized_count": 1,
   "canonicalized_files": [
     "buildroot/feeds.conf"
   ],
-  "dir_count": 19654,
-  "entry_count": 156058,
+  "dir_count": 22495,
+  "entry_count": 194808,
   "errors": [],
   "excluded": [
     {
@@ -102,11 +102,6 @@
       "kind": "glob",
       "matches": 9,
       "pattern": "thirdparty/*/.git"
-    },
-    {
-      "kind": "dir",
-      "matches": 1,
-      "pattern": "buildroot/qca/src/u-boot-2025/"
     },
     {
       "kind": "dir",
@@ -564,8 +559,8 @@
       "pattern": "buildroot/qca/feeds/nss/clients/qca-nss-ecm/Makefile.orig"
     }
   ],
-  "file_count": 136103,
-  "link_count": 301,
+  "file_count": 171955,
+  "link_count": 358,
   "profile": "audited",
   "recipe_sha256": "-",
   "root_subtrees": [
@@ -595,8 +590,8 @@
       "sha256": "20b15c58ca234ee18124bebbf29c065afcd43f02db490fdb2eaa5c1383d73f21"
     },
     "buildroot": {
-      "entries": 142257,
-      "sha256": "4d367902935f007e56c53ad159f8a5a3dc098d5de9008b1c159bb85125ac19dc"
+      "entries": 181007,
+      "sha256": "9e1dd336d82d96a045f4de88a5ae72fd5e57f5906a98a954a5777f5fa2177ef7"
     },
     "local-relayout": {
       "entries": 9,

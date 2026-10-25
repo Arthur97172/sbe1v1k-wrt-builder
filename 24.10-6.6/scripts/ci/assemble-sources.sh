@@ -16,11 +16,13 @@
 #   --no-compare 不比对（只生成指纹）。
 #   --print-plan 只打印步骤顺序，不执行。
 #
-# 顺序不是随便排的，两处有硬依赖：
+# 顺序不是随便排的，三处有硬依赖：
 #   - target/linux/feeds 整仓库替换要早于 files-6.6 / patches-6.6：rsync --delete
 #     会删掉替换目标里“上游没有的子目录”，反过来会把刚铺好的 files-6.6 删掉。
 #   - 内核叠加层（cp files-6.6/. → linux-6.6/）必须在 files-6.6 装完之后：
 #     ipq95xx/Makefile:29 在解析期就是这么拷的，源码树里已经是叠加后的状态。
+#   - u-boot-2025 叠加层（bootloader/files/. → qca/src/u-boot-2025/）依赖基座先铺好，
+#     且这棵树不能被剪裁：platform_utils/sysupgrade-helper 以它为源码编 mkimage。
 #
 # 不做：不跑 scripts/feeds update/install（会生成带宿主绝对路径的 .index/.tmp，
 # 审计树也没有）；不编译；只访问 upstream-pins.conf 与 thirdparty-feeds.conf
@@ -71,7 +73,7 @@ PLAN='1  预检：工具、pin 表格式、磁盘余量
 7  目标 feed 修正：build/target-feed-fixes/SERIES（config-6.6、target.mk）
 8  装配映射：build/assembly-map.conf（rtl8261n、DTS、base-files、本地包、blob、procd 0002 替换件）
 9  校验 Wi-Fi blob：sha256sum -c files/FILES-SHA256
-10 内核叠加层：cp -a files-6.6/. → qca/src/linux-6.6/
+10 就地叠加层：files-6.6/. → qca/src/linux-6.6/；bootloader/files/. → qca/src/u-boot-2025/
 11 构建系统补丁：build/build-fixes/SERIES（全部 tree 模式；0004/0007 空号）
 12 第三方树：passwall-selected 派生、wifihistory 稀疏检出 + 补丁、thirdparty-feeds.sh fetch
 13 feeds 接线：feeds.conf + 10 条 feeds/<name> + 156 条 package/feeds 软链（依赖上一步）
@@ -293,7 +295,8 @@ while IFS=$'\t' read -r p reason; do
 	pruned=$((pruned + 1))
 	logmsg "  PRUNE $p  （$reason）"
 done < "$BUILD/prune.conf"
-[ "$pruned" -gt 0 ] || die 4 "prune.conf 没有可执行的行"
+# prune.conf 允许为空（只有注释）：默认不剪裁任何东西，见该文件的理由说明。
+[ "$pruned" -gt 0 ] || logmsg "  PRUNE 无（prune.conf 只有注释）"
 
 # =============================================================== 5. 替换
 step "替换钉定组件（replace/overlay，按深度从浅到深）"
@@ -373,13 +376,33 @@ _pkg="$SRC/buildroot/package/sbe-wifi-firmware"
 logmsg "  BLOB_OK 6/6  LICENSE_REVIEW_REQUIRED（许可状态未改变）"
 
 # =============================================================== 10. 内核叠加
-step "内核叠加层（files-6.6 → qca/src/linux-6.6）"
+step "就地叠加层（files-6.6 → linux-6.6，bootloader/files → u-boot-2025）"
 KERNEL="$SRC/buildroot/qca/src/linux-6.6"
 [ -d "$KERNEL" ] || die 4 "内核树缺失：$KERNEL"
 cp -a "$FEEDS6/." "$KERNEL/" >>"$LOG" 2>&1 || die 4 "内核叠加失败"
 [ -f "$KERNEL/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" ] || die 4 "叠加后内核树没有 SBE DTS"
 [ -f "$KERNEL/drivers/net/phy/rtl8261n/Makefile" ] || die 4 "叠加后内核树没有 rtl8261n"
 logmsg "  OVERLAY_OK $(count_files "$KERNEL") files"
+
+# u-boot-2025 同理：qca/feeds/bootloader/u-boot-2025/Makefile 在解析期执行
+#   $(shell cp -fpR -u $(TOPDIR)/qca/feeds/bootloader/files/* $(SRC_DIR))
+# 把 bootloader/files 叠进 qca/src/u-boot-2025。审计树里这棵树就是叠加后的状态
+# （基座 35,471 文件 + 叠加新增 381，逐字节比对：零内容差异、零覆盖、零删除），
+# 而 platform_utils/sysupgrade-helper 直接拿它当源码编 mkimage/dumpimage。
+# 装配时不叠，这棵树就与审计树不一致；叠的路径与基座有重合时下面会失败，
+# 那意味着需要重新审计（叠加语义变了），不能默默放过。
+UBOOT25="$SRC/buildroot/qca/src/u-boot-2025"
+BOOTFILES="$SRC/buildroot/qca/feeds/bootloader/files"
+[ -d "$UBOOT25" ] || die 4 "缺 qca/src/u-boot-2025：prune.conf 不能删它（sysupgrade-helper 的源码树）"
+[ -d "$BOOTFILES" ] || die 4 "缺 qca/feeds/bootloader/files 叠加层"
+_ub_before=$(count_files "$UBOOT25")
+_ub_ov=$(count_files "$BOOTFILES")
+cp -a "$BOOTFILES/." "$UBOOT25/" >>"$LOG" 2>&1 || die 4 "u-boot-2025 叠加失败"
+_ub_after=$(count_files "$UBOOT25")
+[ "$_ub_after" = "$((_ub_before + _ub_ov))" ] \
+	|| die 4 "u-boot-2025 叠加后应 $_ub_before+$_ub_ov=$((_ub_before + _ub_ov)) 个文件，实际 $_ub_after（叠加层覆盖了基座里的同名文件，需重新审计）"
+[ -f "$UBOOT25/tools/sysupgrade.c" ] || die 4 "叠加后 u-boot-2025 缺 tools/sysupgrade.c"
+logmsg "  OVERLAY_OK u-boot-2025 $_ub_after files (+$_ub_ov)"
 
 # =============================================================== 11. build-fixes
 step "构建系统补丁（build/build-fixes/SERIES）"
@@ -515,6 +538,64 @@ if grep -qE '^CONFIG_PACKAGE_uboot-2025' "$SRC/buildroot/.config"; then
 fi
 [ "$(cat "$SRC/buildroot/version.date")" = "$EPOCH" ] || die 4 "version.date != $EPOCH"
 logmsg "  CONFIG_OK sha256=$_got"
+
+# 源码依赖断言：被选中的包若要拿 qca/src 里的本地树当源码，那棵树必须存在。
+# 机制在 include/local-development.mk：
+#   LOCAL_SRC ?= $(TOPDIR)/qca/src/$(PKG_NAME)
+#   ifeq (exists, $(shell [ -d $(LOCAL_SRC) ] && echo exists))
+#   PKG_UNPACK = mkdir -p $(PKG_BUILD_DIR); $(CP) $(LOCAL_SRC)/* $(PKG_BUILD_DIR)/
+#   endif
+# 目录不在时 ifeq 不成立，PKG_UNPACK 静默退回 PKG_SOURCE_PROTO:=git + 空
+# PKG_SOURCE_URL：构建目录从未被填充，包在 1 秒内以 "No rule to make target ..."
+# 失败，日志里只有一行 ERROR（run 40176273728 的 sysupgrade-helper 就是这样）。
+# 这类失败不该等到编译才出现——剪裁/替换后在这里一次性核对（仍属第 14 步）。
+_sel="$STAGE/selected-packages.txt"
+sed -n 's/^CONFIG_PACKAGE_\([A-Za-z0-9_.+-]*\)=[ym]$/\1/p' "$SRC/buildroot/.config" | sort -u > "$_sel"
+_srcbad=0
+_srcchecked=0
+while IFS= read -r _mk; do
+	_defined=$(sed -n 's/.*BuildPackage,\([A-Za-z0-9_.+-]*\).*/\1/p' "$_mk")
+	[ -n "$_defined" ] || continue
+	_is_sel=0
+	for _p in $_defined; do
+		if grep -qxF "$_p" "$_sel"; then _is_sel=1; break; fi
+	done
+	[ "$_is_sel" = 1 ] || continue
+	_relmk=${_mk#"$SRC/"}
+	# 1) 显式 LOCAL_SRC（qca-ssdk-shell、各 qca-nss-* 都这么写）
+	_explicit=$(sed -n 's/^[[:space:]]*LOCAL_SRC[[:space:]]*:*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$_mk" | head -n1)
+	if [ -n "${_explicit:-}" ]; then
+		_p=${_explicit#'$(TOPDIR)/'}
+		_srcchecked=$((_srcchecked + 1))
+		case "$_p" in
+		/*)
+			if [ ! -e "$_p" ]; then
+				logmsg "  MISSING_EXPLICIT $_p  ← $_relmk"
+				_srcbad=$((_srcbad + 1))
+			fi
+			;;
+		*)
+			if [ ! -e "$SRC/buildroot/$_p" ] && [ ! -e "$(dirname "$_mk")/$_p" ]; then
+				logmsg "  MISSING_EXPLICIT $_p  ← $_relmk"
+				_srcbad=$((_srcbad + 1))
+			fi
+			;;
+		esac
+		continue
+	fi
+	# 2) 隐式默认值 qca/src/$(PKG_NAME)
+	if ! grep -q 'local-development.mk' "$_mk"; then continue; fi
+	_pkgn=$(sed -n 's/^[[:space:]]*PKG_NAME[[:space:]]*:*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$_mk" | head -n1)
+	[ -n "${_pkgn:-}" ] || continue
+	_srcchecked=$((_srcchecked + 1))
+	if [ -d "$SRC/buildroot/qca/src/$_pkgn" ]; then continue; fi
+	# 有真实下载地址的包不依赖本地树
+	if grep -qE '^[[:space:]]*PKG_SOURCE_URL[[:space:]]*:*=[[:space:]]*[^[:space:]]' "$_mk"; then continue; fi
+	logmsg "  MISSING_IMPLICIT qca/src/$_pkgn  ← $_relmk（树不存在，且没有 PKG_SOURCE_URL 可退回）"
+	_srcbad=$((_srcbad + 1))
+done < <(find "$SRC/buildroot/package" "$SRC/buildroot/qca/feeds" -name Makefile -type f 2>/dev/null)
+[ "$_srcbad" = 0 ] || die 4 "有 $_srcbad 个选中包缺源码树（见上 MISSING_IMPLICIT / MISSING_EXPLICIT）：装配不许产出这种树"
+logmsg "  SRC_DEPS_OK selected=$(wc -l < "$_sel") checked=$_srcchecked"
 
 # =============================================================== 15. 文档
 step "文档"

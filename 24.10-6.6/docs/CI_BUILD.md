@@ -3,8 +3,10 @@
 本文件说明 GitHub Actions 上的两个 workflow 各自做什么、用什么证明“编译的就是已审计的源码”，
 以及出问题时应先看哪一道门禁。装配配方本身见 [SOURCE_ASSEMBLY.md](SOURCE_ASSEMBLY.md)。
 
-> 状态：装配 workflow 已在 Actions 上跑通并发布 `sources-v2`（PASS）；构建 workflow **尚未**
-> 完整跑过（`NOT TESTED`）。本地已完成的验证见文末“已验证 / 未验证”。
+> 状态：装配 workflow 已在 Actions 上跑通并发布 `sources-v2`（PASS）。构建 workflow 已跑到
+> 编译阶段，在 `sysupgrade-helper` 上失败（run `40176273728`）；根因是装配时剪掉了这个包的
+> 源码树 `qca/src/u-boot-2025`，修复已在本地验证（见 §6）。装配配方改过之后必须重新发布
+> `sources-vN`：`sources-v2` 的 `recipe_sha256` 已过期，门禁 3 会拒绝它。
 
 ## 1. 为什么是两个 workflow
 
@@ -53,6 +55,14 @@ SOURCE_ASSEMBLY.md；任一步失败即非零退出，不会产出半成品包�
 
 标签规则：`sources-v<已有最大数字 + 1>`。`sources-v1` 是 legacy（4 个资产、含 1.11 GB 的 `dl/`），
 保留但不再更新；构建 workflow 的 `auto` 只接受 **N ≥ 2 且资产数恰好 3** 的标签。
+
+装配第 14 步还有一条断言，专门拦“树装出来了、但少了一棵编译需要的源码树”：
+逐个检查**被 `=y`/`=m` 选中的包**，凡是靠 `include/local-development.mk` 的
+`$(TOPDIR)/qca/src/$(PKG_NAME)`（或自带显式 `LOCAL_SRC`）取源码的，那棵目录必须存在，
+否则输出 `MISSING_IMPLICIT`/`MISSING_EXPLICIT` 并 `rc=4`。原因：该 include 只在目录
+存在时才把 `PKG_UNPACK` 换成“拷本地树”，目录不在就静默退回 `PKG_SOURCE_PROTO:=git` +
+空 `PKG_SOURCE_URL`，包会在 1 秒内以 `No rule to make target …` 失败——2026-10-25 的
+`sysupgrade-helper` 就是这种死法（见 §6）。
 
 ## 3. 构建：`build-24.10-6.6.yml`
 
@@ -146,13 +156,37 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | `make download` 预检（`download-preflight.sh`） | NOT TESTED（本机 `github.com:443` 不可达，不能代表 runner） |
 | 🧱 Assemble 在 Actions 上运行（push 触发） | PASS（run `40171593200`，21m24s，11 步全过，含 `mmc.sh` 权限 744 断言） |
 | 🧱 Assemble 发布 `sources-v2`（dispatch，`publish=true`） | PASS（run `40174587694`；恰好 3 资产；`TREE-FINGERPRINT.json` 的 `entries=156058`、`aggregate=a6a662dd…deb91`、`recipe=b935371c…45f6` 与本地验证值一致） |
-| 📦 Build 在 Actions 上运行 | NOT TESTED（最近一次 `40171593136` 停在 `Resolve source tag`：当时还没有 `sources-v2`） |
+| 📦 Build 在 Actions 上运行 | NOT TESTED（`40171593136` 停在 `Resolve source tag`：当时还没有 `sources-v2`） |
+| 📦 Build 跑到编译阶段（run `40176273728`，`sources-v2`） | FAIL（`sysupgrade-helper` 0.4 s 失败：`No rule to make target 'tools-only'`；根因见下） |
+| 本地复现该失败（把 `qca/src/u-boot-2025` 挪走） | FAIL（同样的 `tools-only` 报错，`compile#0.18#0.25#0.44`，与 CI 一致） |
+| 本地修复后编译同一个包 | PASS（16 s，`mkimage`/`dumpimage` 落在 pkgdir） |
+| 源码依赖断言（第 14 步）真阳性回归 | PASS（对剪裁后的旧装配树输出 1 条 `MISSING_IMPLICIT qca/src/u-boot-2025`；对修复后的树 `missing=0`） |
+| 修复后全量装配（含 `u-boot-2025` 叠加层） | PASS（`entries=194808`，`SRC_DEPS_OK selected=364 checked=2`，`recipe_sha256=adb47539…`） |
+| 修复后装配树 vs 审计树（`--compare`） | PASS（`deltas=2` 均 known-delta，`unexplained=0`；`aggregate=3b4a7c31…`） |
+| 审计基线 `6273a000…` 与装配树 `3b4a7c31…` 的差别来源 | PASS（把基线 tsv 的那两行换成装配版本重算，聚合值精确等于 `3b4a7c31…`） |
+| 发布 `sources-v3`（新配方） | NOT TESTED（`sources-v2` 的 `recipe_sha256` 已过期，门禁 3 会拒） |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
 
 发布包由 runner 产出，`sbe1v1k-sources-24.10-6.6.tar.zst` 为 228,711,892 B；本地两次导出的
 是 228,502,877 B。两者**条目级指纹完全一致**（上面的 `entries`/`aggregate`/`recipe` 三项相同），
 字节差来自打包时的 zstd 版本差异，不是内容差异——这也是为什么门禁比对的是指纹而不是包哈希。
+
+### 2026-10-25：`sysupgrade-helper` 失败（run `40176273728`）
+
+失败形态：包在 0.4 s 内失败，`No rule to make target 'tools-only'`。这个包叫 `sysupgrade-helper`，
+但 `PKG_NAME:=u-boot-2025`、`SRC_DIR:=$(TOPDIR)/qca/src/$(PKG_NAME)`，所以它编译的是 u-boot 的
+`tools-only`（产出 `mkimage`/`dumpimage` 装进镜像），源码树是被 `prune.conf` 剪掉的
+`qca/src/u-boot-2025`。`include/local-development.mk` 只在**目录存在**时把 `PKG_UNPACK` 换成
+“拷本地树”；目录不在就静默退回 `PKG_SOURCE_PROTO:=git` + 空 `PKG_SOURCE_URL`，`Build/Configure`
+只建出 `include/`，于是 make 找不到目标。剪裁依据（“`.config` 里没有 `uboot-2025` 包”）本身没算错，
+错在只看了包名、没看 `PKG_NAME`。这条差异当时也看不到，因为 `fingerprint-exclude.conf` 同样排除了
+这个目录——两个错误互相掩盖。
+
+修复（四处，缺一不可）：`prune.conf` 规则清空；`fingerprint-exclude.conf` 把它纳入指纹；
+装配第 10 步按 `bootloader/files` 叠加成审计树的样子（`OVERLAY_OK u-boot-2025 35852 files (+381)`，
+与审计树逐文件相同、无重叠）；第 14 步加源码依赖断言，按选中包逐个检查
+`local-development.mk` 需要的目录是否存在——同类问题以后在装配阶段就以 `rc=4` 停下，不会等到编译。
 
 本地装配时 `github.com:443` 不可达，`luci` 的 `03c6023b` 是用 codeload 官方 tarball 重建的本地 Git
 镜像提供的（重建树 `ea1ee2f1…` 与原 commit 相同，`hash-object` 复现出原 SHA）。这只是本机传输路径，

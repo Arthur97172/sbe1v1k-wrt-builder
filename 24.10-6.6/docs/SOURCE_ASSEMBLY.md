@@ -18,17 +18,17 @@
 | 1 | 预检 | 工具、`upstream-pins.conf` 格式、磁盘 ≥ 25 GiB | pin 必须是 40 位 SHA、mode ∈ base/replace/overlay、恰好 1 个 base |
 | 2 | 取上游 | 37 个 pin | `git init` + `fetch --depth 1 <commit>` + `checkout --detach`；`rev-parse HEAD` 必须等于 pin |
 | 3 | 铺基座 | `everything411/qsdk@21a8d133` | `buildroot/Makefile` 存在；不带 `.git` |
-| 4 | 剪裁 | `build/prune.conf` | 删除后路径确实不存在 |
+| 4 | 剪裁 | `build/prune.conf` | 删除后路径确实不存在；**允许为空**，当前即为空（理由见 §3） |
 | 5 | 替换组件 | pins 的 `replace`/`overlay` 行 | 按路径深度从浅到深 `rsync -a --delete`；files-6.6 = 504 文件、patches-6.6 = 1219 |
 | 6 | P-B 板级补丁 | `build/p-b/SERIES` | 每条先 `--dry-run`，`--fuzz=0`，无 `.rej`；三条都只改已有文件，files-6.6 仍为 504 |
 | 7 | 目标 feed 修正 | `build/target-feed-fixes/SERIES` | 同上 |
 | 8 | 装配映射 | `build/assembly-map.conf` | 源存在；打完 files-6.6 仍为 525；DTS 含 `Spectrum SBE1V1K` 与 `sdhc_1`；`mmc.sh` 权限 744、SHA 固定 |
 | 9 | Wi-Fi blob | `sbe-wifi-firmware/files/FILES-SHA256` | `sha256sum -c` 6/6；许可仍是 `LICENSE_REVIEW_REQUIRED` |
-| 10 | 内核叠加 | `files-6.6/.` → `qca/src/linux-6.6/` | 与 `ipq95xx/Makefile:29` 的解析期拷贝一致；DTS 与 rtl8261n 落地 |
+| 10 | 就地叠加 | `files-6.6/.` → `qca/src/linux-6.6/`；`bootloader/files/.` → `qca/src/u-boot-2025/` | 与两个包 Makefile 在解析期的 `cp` 一致；DTS 与 rtl8261n 落地；u-boot 叠加后恰好多出 381 个文件且无覆盖，`tools/sysupgrade.c` 在位 |
 | 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 全部 `tree` 模式；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
 | 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` + `thirdparty-patches/` | passwall-selected 7 个包；wifihistory 稀疏检出 43 文件 + 一处补丁；`thirdparty-feed` 无悬空链接 |
 | 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 10 条 `src-link`、156 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
-| 14 | 冻结配置 | `build/config-frozen/` | `.config` 哈希；8 个 `CONFIG_FEED_*=y`；无 `uboot-2025`；`version.date=1792557977` |
+| 14 | 冻结配置 | `build/config-frozen/` | `.config` 哈希；8 个 `CONFIG_FEED_*=y`；无 `uboot-2025`；`version.date=1792557977`；**选中包用到的 `qca/src` 本地树都在**（`MISSING_IMPLICIT`/`MISSING_EXPLICIT` 必须为 0） |
 | 15 | 文档 | `docs/package/` | 拷成 `sources/README.md`、`sources/PROVENANCE.md` |
 | 16 | 指纹 | `build/fingerprint-exclude.conf` | `--compare build/fingerprint/audited-24.10-6.6.tsv.zst`；未解释差异必须为 0 |
 
@@ -55,7 +55,7 @@
 | 文件 | 作用 | 规模 |
 |---|---|---|
 | `build/upstream-pins.conf` | 37 个上游仓库的 dest/url/commit/mode | 每行一个 40 位 SHA，没有分支名、没有 latest、没有镜像回退 |
-| `build/prune.conf` | 装配时整棵删除的路径 | 目前只有 `qca/src/u-boot-2025/` |
+| `build/prune.conf` | 装配时整棵删除的路径 | 当前为空；曾删 `qca/src/u-boot-2025/`，2026-10-25 撤回（见 §3） |
 | `build/assembly-map.conf` | 仓库内文件/目录 → 装配树位置 | rtl8261n、SBE DTS、base-files、本地包、6 个 blob、bandix-plus |
 | `build/p-b/SERIES` | 板级补丁（镜像定义、DTS 注册、pwm） | 3 条，`tree` |
 | `build/target-feed-fixes/SERIES` | `config-6.6`、`target.mk` 修正 | 2 条，`tree` |
@@ -68,8 +68,8 @@
 | `build/config-frozen/{.config,version,version.date}` | 冻结配置 | 4,811 行；`version.date=1792557977` |
 | `build/local-packages/` | `sbe1v1k-defaults`、`sbe-wifi-firmware`（仅文本） | 6 个 blob 不提交 |
 | `build/local-relayout/bandix-plus/` | 人工重排的 bandix-plus | 6 个文件 |
-| `build/fingerprint-exclude.conf` | 指纹与导出共用的排除规则 | 134 条，逐条带注释 |
-| `build/fingerprint/audited-24.10-6.6.tsv.zst` | 已审计树的逐文件指纹 | 156,058 条；压缩后 5.9 MB |
+| `build/fingerprint-exclude.conf` | 指纹与导出共用的排除规则 | 133 条，逐条带注释 |
+| `build/fingerprint/audited-24.10-6.6.tsv.zst` | 已审计树的逐文件指纹 | 194,808 条；压缩后 6.7 MB |
 
 `build/known-delta.conf` 是允许保留的差异白名单。目前登记两条：`PROVENANCE.md`
 （审计后对 §2.5/§2.5.1 的文档订正，差异只在文档行）与
@@ -90,6 +90,21 @@ tar 清单断言单独保证。
 - **内核 overlay 以整文件交付**，不对上游内核打补丁：上游 `files` 仓库里根本没有
   `drivers/net/phy/`，没有可 patch 的文件。`build/kernel-overlay/` 里放
   `Kconfig`、`Makefile` 与 `rtl8261n/` 18 个文件，装配时并入 files-6.6。
+- **`qca/src/u-boot-2025` 必须保留，且要叠上 `bootloader/files`**：这棵树看着
+  “不参与编译”（`.config` 里没有 `uboot-2025` 包），但
+  `platform_utils/sysupgrade-helper` 的 `PKG_NAME` 就是 `u-boot-2025`，它经
+  `include/local-development.mk` 把这棵树当源码编出镜像里的
+  `/usr/bin/{mkimage,dumpimage}`。2026-10-25 曾按“不参与编译”把它剪裁并排除出指纹，
+  结果 CI 构建在 1 小时后以 `sysupgrade-helper failed to build` 死掉，而指纹一声不响
+  （run `40176273728`）。现在的做法：
+  1. `prune.conf` 不删它；
+  2. 装配第 10 步按 `bootloader/files/.` 叠加——审计树就是“基座 35,471 文件 +
+     叠加新增 381 文件”，逐字节比对零内容差异、零覆盖、零删除；
+  3. 它重新纳入指纹，任何出入都会被第 16 步看见；
+  4. 第 14 步新增“源码依赖断言”：每个选中包若靠 `local-development.mk` 的
+     `$(TOPDIR)/qca/src/$(PKG_NAME)`（或显式 `LOCAL_SRC`）取源码，那棵树必须在。
+     目录缺失时该文件会静默退回 `PKG_SOURCE_PROTO:=git` + 空 `PKG_SOURCE_URL`，
+     包在 1 秒内报 `No rule to make target …`，是一类极难从 CI 日志看出来的失败。
 - **procd 的 `0002` 是整文件替换，不是追加**：上游 14.1 那份的 hunk #2 上下文是
   `const char *`，套到本版 14.0 的 procd 会失败。`build/openwrt-patches/…/0002-…patch`
   是重排上下文后的同一份补丁（代码不变），由 `assembly-map.conf` 覆盖上游同名文件——
@@ -133,8 +148,17 @@ path <TAB> mode <TAB> type <TAB> sha256 <TAB> - <TAB> 解析后的软链目标
 2. 软链只记**解析后的目标**，原始链接文本不参与哈希；
 3. `buildroot/feeds.conf` 的 `src-link` 目标先规范成根内相对路径再哈希。
 
-基线：`entries=156,058`、`aggregate=2c8982d86c957780bcbfc1c40620f60b784016517dc211849fefe14e87b5250e`
-（136,103 个文件、19,654 个目录、301 个软链）。
+基线：`entries=194,808`、`aggregate=6273a00015badc0ccd35dde4138d6c4b35682779ebd00bfc96042cee40f6c224`
+（171,955 个文件、22,495 个目录、358 个软链）。
+
+装配树的 `aggregate` 与基线**必然**不同：整串行里只要有一行不一样，聚合值就变。2026-10-25 修好
+`u-boot-2025` 之后本地装配得到 `aggregate=3b4a7c31…`，`--compare` 的 `deltas=2` 正是 `known-delta.conf`
+里那两条；把基线 tsv 的这两行替换为装配版本重算，聚合值精确等于 `3b4a7c31…`——所以差异只有这两处，
+没有第三处。**门禁看的是 `unexplained=0`，不是聚合值相等。**
+
+> 2026-10-25 基线从 `156,058` / `2c8982d8…` 涨到 `194,808` / `6273a000…`：唯一原因是
+> `qca/src/u-boot-2025/` 不再被排除（35,852 个文件 + 其目录）。撤掉排除的理由见 §3
+> ——排除规则只能用来豁免“构建产物/宿主相关字节”，不能用来豁免一棵参与编译的源码树。
 
 > 基线不含 11 个“审计时在树内就地编译/手工备份”的路径（luci-base 的
 > `lemon`/`jsmin`/`po2lmo` 及其 `.o` 与 lemon 生成的 `plural_formula.c/.h`、
@@ -144,7 +168,7 @@ path <TAB> mode <TAB> type <TAB> sha256 <TAB> - <TAB> 解析后的软链目标
 
 排除清单不是“随便写几个 glob”：`tree-fingerprint.sh --check-exclusions` 会拿干净
 上游（37 个 pin 中除基座外的 36 个，按各自 dest 前缀）跑一遍，**任何一条规则命中干净源码即
-`EXCLUSION_TOO_BROAD`**。当前 134 条规则、`too_broad=0`。这条闸门保证 `*.pem`
+`EXCLUSION_TOO_BROAD`**。当前 133 条规则、`too_broad=0`。这条闸门保证 `*.pem`
 （selftests 签名键）、`*.map`、`*.scr`、`lib/test_fortify/` 这类“看起来像产物、
 其实是源码”的文件不会被误排。
 
@@ -172,7 +196,7 @@ path <TAB> mode <TAB> type <TAB> sha256 <TAB> - <TAB> 解析后的软链目标
 ### 4.4 导出断言（包与指纹对称的证据）
 
 `export-sources.sh` 打出 tar 之后，先解出**一份**成员清单（`tar -tf` 一次，避免
-156k 条目重复解压），然后做三类断言：
+194k 条目重复解压），然后做三类断言：
 
 - 包根必须有 `TREE-FINGERPRINT.json` 与 `.tsv`，且与 `--stage` 的 `fingerprint.*`
   是同一份（`cp` 而来，构建端用它做 `--compare`）；
