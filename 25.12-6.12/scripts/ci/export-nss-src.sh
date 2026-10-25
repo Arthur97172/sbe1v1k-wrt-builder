@@ -24,7 +24,7 @@
 #   scripts/ci/export-nss-src.sh [输出目录]      # 默认 /var/tmp/sbe-nss
 #   scripts/ci/export-nss-src.sh --upload [输出目录]
 #
-# --upload 需要环境变量 GH_TOKEN，并且发布到 Arthur97172/sbe1v1k 的
+# --upload 需要环境变量 GH_TOKEN，并且发布到 Arthur97172/sbe1v1k-wrt-builder 的
 # nss-src-v1 Release。**CI 已不再使用这条路**：prepare-tree.sh 会从钉定的
 # qsdk 基座稀疏检出 qca/src/nss 现场自产，并与 nss/nss-src.tar.gz.sha256
 # 比对。--upload 只保留给需要人工留档的历史场景。
@@ -35,7 +35,7 @@ SELF=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJ=$(CDPATH= cd -- "$SELF/../.." && pwd)
 ROOT=$(CDPATH= cd -- "$PROJ/.." && pwd)
 
-REPO=Arthur97172/sbe1v1k
+REPO=Arthur97172/sbe1v1k-wrt-builder
 TAG=nss-src-v1
 NAME=nss-src-v1
 PKGS_BASE="qca-ssdk qca-nss-phy qca-nss-dp qca-nss-ppe"
