@@ -164,6 +164,7 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 修复后全量装配（含 `u-boot-2025` 叠加层） | PASS（`entries=194808`，`SRC_DEPS_OK selected=364 checked=2`，`recipe_sha256=adb47539…`） |
 | 修复后装配树 vs 审计树（`--compare`） | PASS（`deltas=2` 均 known-delta，`unexplained=0`；`aggregate=3b4a7c31…`） |
 | 审计基线 `6273a000…` 与装配树 `3b4a7c31…` 的差别来源 | PASS（把基线 tsv 的那两行换成装配版本重算，聚合值精确等于 `3b4a7c31…`） |
+| 修复后本地导出 `export-sources.sh`（新配方） | PASS（258,750,952 B ≈ 258 MB，远低于 1.9 GB 上限；`sha256=6956f8e7…`，`assets=3`，`entries=194808`，聚合值与装配一致） |
 | 发布 `sources-v3`（新配方） | NOT TESTED（`sources-v2` 的 `recipe_sha256` 已过期，门禁 3 会拒） |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
@@ -171,6 +172,10 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 发布包由 runner 产出，`sbe1v1k-sources-24.10-6.6.tar.zst` 为 228,711,892 B；本地两次导出的
 是 228,502,877 B。两者**条目级指纹完全一致**（上面的 `entries`/`aggregate`/`recipe` 三项相同），
 字节差来自打包时的 zstd 版本差异，不是内容差异——这也是为什么门禁比对的是指纹而不是包哈希。
+
+上面这两个字节数是 `sources-v2`（剪裁 `u-boot-2025` 的旧配方）的。新配方把这棵树连同叠加层
+一起装进包里，本地导出变成 258,750,952 B（`sha256=6956f8e7…`），仍在 1.9 GB 上限之内；
+`recipe_sha256` 也从 `b935371c…` 变成 `adb47539…`，所以对外发布的是 `sources-v3`。
 
 ### 2026-10-25：`sysupgrade-helper` 失败（run `40176273728`）
 
