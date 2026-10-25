@@ -206,10 +206,13 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 - **认不出槽位就拒绝写入**（`PARTNAME` 既不是 `rootfs` 也不是 `rootfs_1`）：
   宁可升级失败，也不把内核和根文件系统写进不同槽位。
 - 写入前核对 tar 里 `kernel` / `root` 段的字节数与目标分区大小，rootfs 尾部
-  还要至少留 1 MiB 给 overlay，放不下就失败（否则会写一半、留下坏根文件系统）。
+  还要至少留 8 MiB 给 overlay（ext4 在 1 MiB 上也能格式化，但 overlay 一写就满、
+  变成只读，症状比拒绝刷机难查得多，所以闸门设得比最小值高），放不下就失败
+  （否则会写一半、留下坏根文件系统）。
 - `rootfs_data`：bootargs 带 `fstools_ignore_partname=1`，fstools 不会使用板上
-  名为 `rootfs_data` 的 GPT 分区（那是厂商系统的），overlay 建在 rootfs 分区
-  尾部。这与厂商的分区模型不同，是有意为之。
+  名为 `rootfs_data` 的 GPT 分区，overlay 建在 rootfs 分区尾部。厂商出厂固件
+  也是这个模型（真机上 `/overlay` 是 `/dev/loop0`，挂在 rootfs 分区 offset
+  处），我们与之保持一致。
 - 该文件由 `prepare-tree.sh` 每次构建用 `build/p-b/files/base-files/` 的副本
   覆盖（`sources-v1` 里的版本是导出时的旧版），`verify-image.sh` 再核对镜像里
   的那一份与装配树逐字节一致。

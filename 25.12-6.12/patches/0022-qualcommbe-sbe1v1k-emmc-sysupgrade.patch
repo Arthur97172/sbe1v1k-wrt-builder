@@ -19,7 +19,7 @@ emmc_upgrade_tar 读不了。
 
 2. ipq95xx/base-files/lib/upgrade/platform.sh：新增 spectrum,sbe1v1k 分支。
    槽位从正在运行的根文件系统反查（/rom 的 major:minor → sysfs uevent 的
-   PARTNAME），认不出来就拒绝写入；写之前比大小（rootfs 分区尾部留 1 MiB
+   PARTNAME），认不出来就拒绝写入；写之前比大小（rootfs 分区尾部留 8 MiB
    给就地建的 overlay）；然后设 CI_KERNPART/CI_ROOTPART 调
    emmc_do_upgrade。stage2 会先 pivot 到 ramfs，所以槽位在
    platform_pre_upgrade 里先写进 /tmp（pivot 时 /tmp 被移进新根）。
@@ -118,7 +118,7 @@ emmc_upgrade_tar 读不了。
  platform_check_image() {
  	return 0;
  }
-@@ -15,6 +92,28 @@
+@@ -15,6 +92,30 @@
  		CI_ROOTPART="rootfs"
  		emmc_do_upgrade "$1"
  		;;
@@ -137,8 +137,10 @@ emmc_upgrade_tar 读不了。
 +		echo "当前启动槽位：${kernelname} / ${rootfsname}"
 +
 +		sbe_check_size "$1" kernel "$kernelname" || return 1
-+		# 根文件系统之后要就地建 ext4 overlay，末尾至少留 1 MiB。
-+		sbe_check_size "$1" root "$rootfsname" 1048576 || return 1
++		# 根文件系统之后要就地建 ext4 overlay。ext4 最小能建出 ~1 MiB 的
++		# 文件系统，但 overlay 太小会在写满后变成只读，症状比拒绝刷机难查
++		# 得多，所以尾部留够 8 MiB 才放行。
++		sbe_check_size "$1" root "$rootfsname" 8388608 || return 1
 +
 +		CI_KERNPART="$kernelname"
 +		CI_ROOTPART="$rootfsname"
@@ -147,7 +149,7 @@ emmc_upgrade_tar 读不了。
  	*)
  		default_do_upgrade "$1"
  		;;
-@@ -23,7 +122,7 @@
+@@ -23,7 +124,7 @@
  
  platform_copy_config() {
  	case "$(board_name)" in

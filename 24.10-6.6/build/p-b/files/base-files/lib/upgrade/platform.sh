@@ -584,8 +584,10 @@ platform_do_upgrade() {
 		echo "当前启动槽位：${kernelname} / ${rootfsname}"
 
 		sbe_check_size "$1" kernel "$kernelname" || return 1
-		# 根文件系统之后要就地建 ext4 overlay，末尾至少留 1 MiB。
-		sbe_check_size "$1" root "$rootfsname" 1048576 || return 1
+		# 根文件系统之后要就地建 ext4 overlay。ext4 最小能建出 ~1 MiB 的
+		# 文件系统，但 overlay 太小会在写满后变成只读，症状比拒绝刷机难查
+		# 得多，所以尾部留够 8 MiB 才放行。
+		sbe_check_size "$1" root "$rootfsname" 8388608 || return 1
 
 		mmc_do_upgrade "$1"
 		return 0

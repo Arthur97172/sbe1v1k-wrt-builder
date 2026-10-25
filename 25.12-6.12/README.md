@@ -196,7 +196,8 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
      因此 `platform_pre_upgrade`（pivot 之前）把结论写进
      `/tmp/.sbe_upgrade_slot`，pivot 时 `/tmp` 被整体移进新根，文件不会丢。
    - 写之前比大小：`kernel` 段不得大于 `0:HLOS`，`root` 段不得大于 `rootfs`
-     且尾部至少留 1 MiB（overlay 就地建在 rootfs 分区尾部）。
+     且尾部至少留 8 MiB（overlay 就地建在 rootfs 分区尾部；1 MiB 也能格式化，
+     但一写就满变只读，闸门故意设得比最小值高）。
    - 判断成立后设 `CI_KERNPART`/`CI_ROOTPART` 并调用 `emmc_do_upgrade` →
      `emmc_upgrade_tar`：先清零内核前 8 个扇区（写入期间不留下可启动的旧内核），
      写 root，再把块数按 64 KiB 对齐，最后写内核。配置备份由
