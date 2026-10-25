@@ -75,10 +75,24 @@ CONFIG_PACKAGE_liblucihttp-ucode=y
 CONFIG_PACKAGE_luci-app-package-manager=y
 CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
 
+# 服务页面：DDNS 与 UPnP。两者都是上游 feed 自带的包（packages/net/ddns-scripts、
+# packages/net/miniupnpd 与 feeds/luci 的对应 app），不涉及第三方源或额外许可审查；
+# ddns-scripts（含 ddns-scripts-services）和 miniupnpd 由依赖自动带入。
+# 注意：UPnP 默认是关闭的，需要在 LuCI 里手动启用服务并选对外接口。
+CONFIG_PACKAGE_luci-app-ddns=y
+CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y
+CONFIG_PACKAGE_luci-app-upnp=y
+CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
+
 # ttyd web terminal: present as on 24.10-6.6, but the project-owned
 # sbe1v1k-defaults package turns it off on first boot
 # (build/local-packages/sbe1v1k-defaults/files/99-ttyd-disable).
+# luci-app-ttyd 提供 LuCI 的「服务 → 终端」菜单；没有它，ttyd 只能靠记住
+# 7681 端口访问。菜单存在不代表服务在跑——首次启动仍由上面的 uci-defaults
+# 关闭，需要时在该页面里开启。
 CONFIG_PACKAGE_ttyd=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 CONFIG_PACKAGE_sbe1v1k-defaults=y
 
 # Stage 2.5 — ath12k Wi-Fi with the vendor QCN92XX firmware/BDF.
