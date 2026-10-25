@@ -471,7 +471,10 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 编译 → `verify-image.sh` → 发 Release。
 
 细节（每道门禁证明什么、失败怎么处理）见 [docs/CI_BUILD.md](docs/CI_BUILD.md)。
-两个 workflow 都尚未在 Actions 上实际运行过，记为 `NOT TESTED`。
+截至 2026-10-25，两个 workflow 都已跑通：装配 run `40183767687` 发布 `sources-v3`（恰好
+3 个资产），构建 run `40185702727` 用 `source_tag=auto` 选中它并全量 PASS，发布
+`v16-1-5dda9f3b`（恰好 3 个固件资产）。**这只证明编译、静态镜像校验与打包通过；镜像在
+真机上的启动、升级与以太网行为仍为 `NOT TESTED`。**
 
 ## 注意
 

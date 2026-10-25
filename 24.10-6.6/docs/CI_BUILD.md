@@ -6,8 +6,9 @@
 > 状态：装配 workflow 已发布 `sources-v3`（run `40183767687`，PASS，恰好 3 个资产；
 > 指纹文件与本地导出的逐字节相同）。上一轮 Build（run `40176273728`）在 `sysupgrade-helper`
 > 上失败，根因是装配时剪掉了这个包的源码树 `qca/src/u-boot-2025`，修复与本地验证见 §6。
-> 修好后的 Build 已用 `sources-v3` 启动（run `40185702727`）：本文件更新时仍在运行，
-> 镜像产物与真机行为均为 `NOT TESTED`。
+> 修好后的 Build（run `40185702727`，`source_tag=auto` 自动选中 `sources-v3`）已 PASS：
+> 21 个构建步骤 + release job 全绿，`verify-image.sh` 静态校验通过，Release `v16-1-5dda9f3b`
+> 恰好 3 个资产。**镜像产物在真机上的启动、升级与以太网行为仍为 `NOT TESTED`。**
 
 ## 1. 为什么是两个 workflow
 
@@ -157,7 +158,7 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | `make download` 预检（`download-preflight.sh`） | NOT TESTED（本机 `github.com:443` 不可达，不能代表 runner） |
 | 🧱 Assemble 在 Actions 上运行（push 触发） | PASS（run `40171593200`，21m24s，11 步全过，含 `mmc.sh` 权限 744 断言） |
 | 🧱 Assemble 发布 `sources-v2`（dispatch，`publish=true`） | PASS（run `40174587694`；恰好 3 资产；`TREE-FINGERPRINT.json` 的 `entries=156058`、`aggregate=a6a662dd…deb91`、`recipe=b935371c…45f6` 与本地验证值一致） |
-| 📦 Build 在 Actions 上运行 | NOT TESTED（`40171593136` 停在 `Resolve source tag`：当时还没有 `sources-v2`） |
+| 📦 Build 在 Actions 上运行（首次尝试 `40171593136`） | NOT TESTED（停在 `Resolve source tag`：当时还没有 `sources-v2`；后续运行见本表末尾） |
 | 📦 Build 跑到编译阶段（run `40176273728`，`sources-v2`） | FAIL（`sysupgrade-helper` 0.4 s 失败：`No rule to make target 'tools-only'`；根因见下） |
 | 本地复现该失败（把 `qca/src/u-boot-2025` 挪走） | FAIL（同样的 `tools-only` 报错，`compile#0.18#0.25#0.44`，与 CI 一致） |
 | 本地修复后编译同一个包 | PASS（16 s，`mkimage`/`dumpimage` 落在 pkgdir） |
@@ -168,6 +169,11 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 修复后本地导出 `export-sources.sh`（新配方） | PASS（258,750,952 B ≈ 258 MB，远低于 1.9 GB 上限；`sha256=6956f8e7…`，`assets=3`，`entries=194808`，聚合值与装配一致） |
 | 发布 `sources-v3`（新配方） | PASS（run `40183767687`：assemble 10:12→10:32 UTC，publish 10:33；`Assert exactly 3 assets`、`Verify published assets` 均 success） |
 | CI 发布的指纹与本地导出是否一致 | PASS（`TREE-FINGERPRINT.json` 2,276 B 与本地产物 `cmp` 无差异；包 258,497,698 B vs 本地 258,750,952 B，字节差来自 zstd 版本，条目指纹相同） |
+| 📦 Build 全量（run `40185702727`，`sources-v3`） | PASS（10:40:00→11:37:48 UTC，57m48s；21 个构建步骤 + release job 全绿，`Verify image (static)` success） |
+| `source_tag=auto` 是否选中新配方 | PASS（`Resolve source tag` 解析到 `sources-v3`；`Verify tree fingerprint`、`Verify recipe hash`（`adb47539…`）、`Check frozen config`、`Verify thirdparty source pins` 全部 success） |
+| 修复后的 `make download` 在 runner 上 | PASS（`Download third-party tarballs` success；此前只在本地跑过、`NOT TESTED` 的这条现已在 runner 上验证） |
+| 修复后的 `sysupgrade-helper` | PASS（`Apply custom packages` + `Build` 均 success，不再出现 `tools-only`） |
+| Release `v16-1-5dda9f3b` 资产数 | PASS（恰好 3 个：`fit-uImage.itb` 5,887,728 B、`initramfs-fit-uImage.itb` 92,900,880 B、`squashfs-sysupgrade.bin` 73,923,366 B；`published_at` 11:37:59Z） |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
 
