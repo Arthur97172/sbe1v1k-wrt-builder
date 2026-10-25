@@ -341,6 +341,11 @@ while IFS=$'\t' read -r op src dest note; do
 		[ -f "$REPO/$src" ] || die 4 "映射源文件不存在：$src"
 		mkdir -p "$(dirname -- "$SRC/$dest")"
 		cp -p "$REPO/$src" "$SRC/$dest"
+		# git 只记录 644/755 两种权限，检出时 744 会变成 755。审计树里
+		# mmc.sh 是 744，而指纹逐位比较权限，所以按审计值恢复。
+		case "$dest" in
+		*/lib/upgrade/mmc.sh) chmod 0744 "$SRC/$dest" ;;
+		esac
 		;;
 	*)
 		die 4 "未知映射操作：$op"

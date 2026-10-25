@@ -127,6 +127,14 @@ portability patches that make these sources build against Linux 6.12 live in
 25.12-6.12/nss/patches/ and are applied by 25.12-6.12/nss/install.sh.
 EOF
 
+# 统一权限位：tar 会把权限写进包头，而 git checkout 的文件权限受宿主 umask
+# 影响（022 → 644/755，002 → 664/775）。nss-src-v1 是在 umask 002 下制作的
+# （目录与可执行文件 775、普通文件 664），CI runner 的 022 会产出另一种字节。
+# 这里按“目录/可执行 775、普通文件 664”归一，使 sha256 与宿主环境无关。
+find "$OUT/$NAME" -type d -exec chmod 0775 {} +
+find "$OUT/$NAME" -type f -perm /111 -exec chmod 0775 {} +
+find "$OUT/$NAME" -type f ! -perm /111 -exec chmod 0664 {} +
+
 # 固定时间戳，不用 git 提交时间：否则每次提交后重新打包都会得到新的 sha256，
 # 而 nss/nss-src.tar.gz.sha256 是提交进仓库、供 CI 校验的期望值。
 # 取值与 prepare-tree.sh 的 SBE_SOURCE_DATE_EPOCH 默认值一致（2026-10-23T00:00:00Z）。
