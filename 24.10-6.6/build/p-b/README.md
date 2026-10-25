@@ -16,6 +16,7 @@
 | 路径 | 性质 | 状态 |
 |---|---|---|
 | `files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts` | 新设备树（801 行，2026-10-25 加入 eMMC：`sdc_default_state` + `&sdhc_1`） | 已用 `cpp` + `dtc` 离线校验：**0 error**（2026-10-25 复验，反编译 DTB 确认 `mmc@7804000` 为 `okay`） |
+| `files/base-files/lib/upgrade/platform.sh` | target feed 的 `lib/upgrade/platform.sh` + `spectrum,sbe1v1k` 槽位探测与大小校验（770 行） | 单元测试 13/13 PASS（沙盒替换 `/proc`、`/sys` 路径后直接跑文件里的真函数）；真机 `NOT TESTED` |
 | `files/base-files/etc/board.d/01_network` | target feed 文件 + `spectrum,sbe1v1k` 分支 | 以 feed 版本为基线 |
 | `files/base-files/etc/board.d/02_ipq_board` | target feed 文件 + `spectrum,sbe1v1k` | 以 feed 版本为基线 |
 | `files/base-files/etc/init.d/eth0-lan-attach` | 厂商脚本，逐字照抄 | LICENSE_REVIEW_REQUIRED |
@@ -50,6 +51,12 @@
 CI 使用的是固定 Release 资产 `sources-v1`，其中的 DTS 不会随仓库更新；因此
 `24.10-6.6/scripts/ci/prepare-tree.sh` 自 2026-10-25 起每次构建都用本目录的
 `files/arch/.../ipq9574-sbe1v1k.dts` 覆盖装配树里的副本（并断言 `&sdhc_1` 存在）。
+
+`files/base-files/lib/upgrade/platform.sh` 同理：sysupgrade 写哪个槽位完全由它
+决定，写死 `0:HLOS`/`rootfs` 会让升级静默失效或写出内核/根文件系统错配的机器。
+`prepare-tree.sh` 也会用本目录的副本覆盖装配树版本，并断言 `sbe_detect_slot`
+存在、`sh -n` 通过；`verify-image.sh` 再从最终镜像里取出 `/lib/upgrade/platform.sh`
+与装配树比对。
 
 依据：`target/linux/feeds/ipq95xx/Makefile`（`LINUX_IS_FLATTENED_TREE` 分支）在解析时执行
 `cp -fpR -u $(TOPDIR)/target/linux/feeds/files-$(LINUX_SRC_VERSION)/* $(CONFIG_EXTERNAL_KERNEL_TREE)`，

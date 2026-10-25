@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # 25.12-6.12 Stage 1 编译后的静态检查（不接触设备、不执行目标二进制）。
 #
-# 检查对象是最终交付物本身：本目标的 sysupgrade 镜像是
-#   <fit kernel> | pad-to 64k | <squashfs rootfs> | pad-rootfs
-# （与上游 qualcommbe/qcom_rdp433 相同的布局），所以先按 64 KiB 对齐定位
-# squashfs 偏移，再从镜像里解出根文件系统核对。
+# 检查对象是最终交付物本身：本目标的 sysupgrade 镜像是 tar 容器
+#   sysupgrade-spectrum_sbe1v1k/{CONTROL,kernel,root}
+# （upgrade 脚本里的 emmc_upgrade_tar 就按这个格式读），所以先把 root 段取
+# 出来解成 squashfs 再核对，并确认 kernel 段就是发布的那个 FIT。
 #
 # 检查项：
 #   1. 三个交付镜像齐全、非空，打印尺寸与 SHA-256；
@@ -17,7 +17,11 @@
 #      （本机与 CI 用同一判据：2026-10-24 决定 CI 镜像也带 blob。）
 #   6. apk/opkg 包数据库存在并打印包数量；
 #   7. 设备树里 mmc@7804000（eMMC）为 okay，且该 DTB 逐字节存在于两个 FIT 中
-#      （板子从 eMMC 启动，控制器关闭时真机无法启动）。
+#      （板子从 eMMC 启动，控制器关闭时真机无法启动）；
+#   8. sysupgrade 镜像的 tar 段齐全（CONTROL/kernel/root），kernel 段与发布的
+#      FIT 逐字节一致；
+#   9. 镜像里的升级脚本按当前槽位写 eMMC（写死槽位会让升级写进没人读的分区，
+#      而 default_do_upgrade 在这块板上只会去写 mtd 分区 "image"）。
 #
 # 用法：scripts/ci/verify-image.sh [工作区根目录]
 
@@ -89,6 +93,15 @@ if [ -n "$DTB" ] && [ -f "$DTB" ]; then
 				|| bad "DTB 中 mmc@7804000 未启用：内核拿不到 mmcblk0，根文件系统无法挂载" ;;
 		*) bad "DTB 中找不到 mmc@7804000 节点" ;;
 		esac
+		# overlay 的位置：厂商 GPT 里有 rootfs_data 分区，fstools 默认会去用它；
+		# 本项目的模型是 overlay 建在 rootfs 分区尾部（升级时只需写 HLOS/rootfs
+		# 两个分区）。靠 chosen/bootargs-append 传 fstools_ignore_partname=1，
+		# 这个选项是 920-device_tree_cmdline.patch 提供的，缺了它 fstools 会改去
+		# 挂 rootfs_data，升级与恢复的语义都跟着变。
+		CHOSEN=$(awk '/^[[:space:]]*chosen \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		printf '%s\n' "$CHOSEN" | grep -q 'fstools_ignore_partname=1' \
+			&& ok "DTB 的 chosen/bootargs-append 带 fstools_ignore_partname=1" \
+			|| bad "DTB 的 chosen 没有 fstools_ignore_partname=1（fstools 会改用 rootfs_data 分区）"
 	else
 		bad "无法反编译 DTB：$DTB"
 	fi
@@ -108,29 +121,37 @@ else
 	bad "找不到编译出的 DTB（build_dir/target-*/linux-qualcommbe_ipq95xx/{image-*,linux-*/arch/arm64/boot/dts/qcom/}ipq9574-sbe1v1k.dtb）"
 fi
 
-# ---- 定位 squashfs 并解包 ---------------------------------------------------
+# ---- 从最终镜像里解出 squashfs 根文件系统 ----------------------------------
+# 镜像格式：tar 容器，目录名是 sysupgrade-<BOARD_NAME>。emmc_upgrade_tar 用
+# 同样的方式读它；这里也按 tar 读，才能断言“写进设备的就是校验过的这些字节”。
 
 UNSQ="$BR/staging_dir/host/bin/unsquashfs4"
 [ -x "$UNSQ" ] || UNSQ=$(command -v unsquashfs || true)
 [ -n "$UNSQ" ] && [ -x "$UNSQ" ] || { bad "缺少 unsquashfs4"; exit 1; }
 
-# kernel 是 FIT（sbe1v1k-fit-uImage.itb），pad-to 64k 之后紧跟 squashfs。
-KSIZE=$(stat -c %s "$FIT")
-OFF=$(( (KSIZE + 65535) / 65536 * 65536 ))
-magic=$(dd if="$IMG" bs=1 skip="$OFF" count=4 status=none | od -An -tx1 | tr -d ' \n')
-if [ "$magic" != "68737173" ] && [ "$magic" != "73717368" ]; then
-	# 回退：在镜像里搜索 squashfs 魔数并逐个尝试。
-	OFF=""
-	while IFS=: read -r pos _; do
-		[ -n "$pos" ] || continue
-		if "$UNSQ" -o "$pos" -s "$IMG" >/dev/null 2>&1; then OFF=$pos; break; fi
-	done < <(grep -abo -a 'hsqs' "$IMG" | head -n 20)
-	[ -n "$OFF" ] || { bad "在镜像中找不到 squashfs 超级块"; exit 1; }
+say "[verify] 从 sysupgrade 镜像（tar）提取 root 段"
+BOARDDIR=$(tar tf "$IMG" 2>/dev/null | grep -m1 '^sysupgrade-.*/$' | sed 's:/$::' || true)
+[ -n "$BOARDDIR" ] || { bad "sysupgrade 镜像里没有 sysupgrade-<board>/ 目录（不是 tar 容器）"; exit 1; }
+say "[verify] tar 目录 ${BOARDDIR}"
+for seg in CONTROL kernel root; do
+	if tar tf "$IMG" | grep -qx "${BOARDDIR}/${seg}"; then
+		ok "tar 含 ${BOARDDIR}/${seg}"
+	else
+		bad "tar 缺少 ${BOARDDIR}/${seg}"
+	fi
+done
+tar xf "$IMG" -C "$TMP" "${BOARDDIR}/root" \
+	|| { bad "无法从 tar 取出 ${BOARDDIR}/root"; exit 1; }
+if [ -s "$FIT" ]; then
+	if tar xOf "$IMG" "${BOARDDIR}/kernel" | cmp -s - "$FIT"; then
+		ok "kernel 段与 $(basename "$FIT") 逐字节一致"
+	else
+		bad "kernel 段与 $(basename "$FIT") 不一致：发布的内核不是升级会写入的那个"
+	fi
 fi
-say "[verify] squashfs 偏移 $OFF"
 
 set +e
-"$UNSQ" -no-progress -o "$OFF" -d "$TMP/rootfs" "$IMG" >"$TMP/unsquashfs.log" 2>&1
+"$UNSQ" -no-progress -d "$TMP/rootfs" "$TMP/${BOARDDIR}/root" >"$TMP/unsquashfs.log" 2>&1
 rc=$?
 set -e
 case "$rc" in
@@ -265,6 +286,26 @@ if [ -L "$ROOTFS/etc/rc.d/S09sbe-wifi-cal" ]; then
 		|| bad "/etc/rc.d/S09sbe-wifi-cal 指向 $tgt"
 else
 	bad "缺少 /etc/rc.d/S09sbe-wifi-cal（校准不会在 ath12k 加载前生成）"
+fi
+
+# ---- 升级脚本：sysupgrade 必须按当前槽位写 eMMC ------------------------------
+# 本板是 A/B 布局（0:HLOS|rootfs 与 0:HLOS_1|rootfs_1）。没有 spectrum,sbe1v1k
+# 分支就会落到 default_do_upgrade（mtd write - image），在这块板上等于什么都没
+# 刷；槽位写死则会把内核与根文件系统写进不同的槽，重启后起不来。
+UPG_SRC="$BR/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh"
+UPG_IMG="$ROOTFS/lib/upgrade/platform.sh"
+if [ ! -f "$UPG_IMG" ]; then
+	bad "镜像缺少 /lib/upgrade/platform.sh"
+elif ! grep -q '^sbe_detect_slot()' "$UPG_IMG"; then
+	bad "镜像里的升级脚本没有 sbe_detect_slot：槽位是写死的"
+elif ! grep -q 'spectrum,sbe1v1k' "$UPG_IMG"; then
+	bad "升级脚本没有 spectrum,sbe1v1k 分支（会落到 default_do_upgrade 写 mtd）"
+elif ! grep -q 'emmc_do_upgrade' "$UPG_IMG"; then
+	bad "升级脚本没有调用 emmc_do_upgrade"
+elif [ -f "$UPG_SRC" ] && ! cmp -s "$UPG_SRC" "$UPG_IMG"; then
+	bad "镜像里的 /lib/upgrade/platform.sh 与装配树不一致"
+else
+	ok "升级脚本按槽位写 eMMC（sbe_detect_slot + emmc_do_upgrade）且与装配树一致"
 fi
 
 # ---- 包数据库 ---------------------------------------------------------------

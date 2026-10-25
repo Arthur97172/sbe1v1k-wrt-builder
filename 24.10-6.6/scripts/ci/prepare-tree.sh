@@ -66,6 +66,22 @@ cmp -s "$SRC_DTS" "$DST_DTS" || { echo "[prepare] 设备树覆盖失败" >&2; ex
 grep -q '&sdhc_1 {' "$DST_DTS" \
 	|| { echo "[prepare] 设备树没有启用 eMMC 的 &sdhc_1 块" >&2; exit 1; }
 
+# 升级脚本同样受 sources-v1 固定快照的影响：sysupgrade 写哪个槽位由它决定，
+# 写错槽位重启后还是旧系统（或内核/根文件系统错配起不来）。这里也用仓库版本
+# 覆盖，并断言槽位探测函数确实在、脚本语法没坏。
+echo "[prepare] 用仓库版本覆盖升级脚本"
+UPG=lib/upgrade/platform.sh
+SRC_UPG="$PROJ/build/p-b/files/base-files/$UPG"
+DST_UPG="$BR/target/linux/feeds/ipq95xx/base-files/$UPG"
+[ -f "$SRC_UPG" ] || { echo "[prepare] 缺少 $SRC_UPG" >&2; exit 1; }
+[ -f "$DST_UPG" ] || { echo "[prepare] 装配树缺少 $DST_UPG" >&2; exit 1; }
+cp -f "$SRC_UPG" "$DST_UPG"
+chmod 0755 "$DST_UPG"
+cmp -s "$SRC_UPG" "$DST_UPG" || { echo "[prepare] 升级脚本覆盖失败" >&2; exit 1; }
+sh -n "$DST_UPG" || { echo "[prepare] 升级脚本语法错误：$DST_UPG" >&2; exit 1; }
+grep -q '^sbe_detect_slot()' "$DST_UPG" \
+	|| { echo "[prepare] 升级脚本缺少槽位探测函数 sbe_detect_slot" >&2; exit 1; }
+
 echo "[prepare] 重建 host-bin（Ubuntu runner 无 gnu* 前缀）"
 rm -rf "$PROJ/build/host-bin"
 mkdir -p "$PROJ/build/host-bin"

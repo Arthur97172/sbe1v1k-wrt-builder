@@ -19,7 +19,8 @@
 #   7. 设置了 SBE_EXPECT_WIFI_FIRMWARE=1 时（CI 使用）：sbe-wifi-firmware
 #      已安装，且 6 个厂商固件/BDF 与装配树里的包逐字节一致；
 #   8. 设备树里 mmc@7804000（eMMC）为 okay，且该 DTB 逐字节存在于两个 FIT 中
-#      （板子从 eMMC 启动，控制器关闭时真机无法启动）。
+#      （板子从 eMMC 启动，控制器关闭时真机无法启动）；
+#   9. 镜像里的升级脚本带 A/B 槽位探测（写死槽位会让升级写进没人读的分区）。
 #
 # 任何一项失败即以非零退出，CI 记为失败，不做静默降级。
 #
@@ -207,6 +208,24 @@ fi
 [ -f "$ROOTFS/etc/uci-defaults/99-wireless-defaults" ] \
 	&& ok "首启入口 /etc/uci-defaults/99-wireless-defaults 在镜像中" \
 	|| bad "镜像缺少首启入口 /etc/uci-defaults/99-wireless-defaults"
+
+# ---- 升级脚本：sysupgrade 必须写回当前槽位 ----------------------------------
+# 板子是 A/B 布局（0:HLOS|rootfs 与 0:HLOS_1|rootfs_1）。写死槽位会让升级
+# 悄悄失效，或者把内核与根文件系统写进不同槽位导致无法启动。镜像里的脚本
+# 必须带槽位探测，且与装配树（= 仓库 build/p-b/files）逐字节一致。
+UPG_SRC="$BR/target/linux/feeds/ipq95xx/base-files/lib/upgrade/platform.sh"
+UPG_IMG="$ROOTFS/lib/upgrade/platform.sh"
+if [ ! -f "$UPG_IMG" ]; then
+	bad "镜像缺少 /lib/upgrade/platform.sh"
+elif ! grep -q '^sbe_detect_slot()' "$UPG_IMG"; then
+	bad "镜像里的升级脚本没有 sbe_detect_slot：sysupgrade 会写死 0:HLOS/rootfs"
+elif ! grep -q '0:HLOS_1 rootfs_1' "$UPG_IMG" || ! grep -q '0:HLOS rootfs' "$UPG_IMG"; then
+	bad "镜像里的升级脚本缺少 rootfs / rootfs_1 两种槽位映射"
+elif [ -f "$UPG_SRC" ] && ! cmp -s "$UPG_SRC" "$UPG_IMG"; then
+	bad "镜像里的 /lib/upgrade/platform.sh 与装配树不一致"
+else
+	ok "升级脚本含槽位探测（rootfs / rootfs_1）且与装配树一致"
+fi
 
 # ---- 关键文件存在 / 明确排除 ------------------------------------------------
 for f in \

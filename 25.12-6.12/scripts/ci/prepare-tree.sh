@@ -112,6 +112,25 @@ grep -q '^&sdhc_1 {' \
 	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
 	|| { echo "补丁应用不完整：设备树没有启用 eMMC 的 &sdhc_1 块" >&2; exit 1; }
 
+# 写入目标同样要在编译前断言。25.12 的 sysupgrade 镜像必须改成 tar 容器
+# （emmc_upgrade_tar 只认它），升级脚本必须按当前槽位写 eMMC，设备树必须把
+# fstools_ignore_partname=1 传给内核。缺任何一条，镜像要么什么都刷不进去
+# （default_do_upgrade 写 mtd 分区 "image"），要么内核与根文件系统落进不同
+# 槽位、overlay 跑到别的分区。宁可在这里失败，也不要等 3 小时后再验镜像。
+UPG="$BR/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh"
+[ -f "$UPG" ] || { echo "补丁应用不完整：缺少升级脚本 $UPG" >&2; exit 1; }
+sh -n "$UPG" || { echo "升级脚本语法错误：$UPG" >&2; exit 1; }
+grep -q '^sbe_detect_slot()' "$UPG" \
+	|| { echo "补丁应用不完整：升级脚本缺少槽位探测 sbe_detect_slot" >&2; exit 1; }
+grep -q 'spectrum,sbe1v1k' "$UPG" \
+	|| { echo "补丁应用不完整：升级脚本没有 spectrum,sbe1v1k 分支" >&2; exit 1; }
+grep -q 'IMAGE/sysupgrade.bin/squashfs := .*sysupgrade-tar' \
+	"$BR/target/linux/qualcommbe/image/ipq95xx.mk" \
+	|| { echo "补丁应用不完整：sysupgrade 镜像不是 tar 容器" >&2; exit 1; }
+grep -q 'fstools_ignore_partname=1' \
+	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
+	|| { echo "补丁应用不完整：设备树没有 fstools_ignore_partname=1" >&2; exit 1; }
+
 echo "[prepare] 安装项目自带软件包"
 for d in "$PROJ"/build/local-packages/*/; do
 	[ -d "$d" ] || continue

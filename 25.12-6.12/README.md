@@ -155,9 +155,88 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 `/dev/mmcblk0`，U-Boot 注入的 `root=PARTUUID=<uuid>` 无法解析，真机刷入后无法
 启动。`scripts/ci/verify-image.sh` 会反编译编出的 DTB 断言 `mmc@7804000` 为
 `okay`，并确认该 DTB 逐字节存在于两个交付 FIT 中。注意 eMMC 能起来不等于能
-启动：本目标的 sysupgrade 仍走 `default_do_upgrade` → `mtd write - firmware`，
-而板子上没有名为 `firmware` 的 MTD 分区；写入目标（`0:HLOS`/`rootfs` 及 A/B
-槽位）尚未改动，**刷写前不要依赖本镜像完成升级**。
+升级：写入目标见下一节（`patches/0022`），真机升级状态仍是 `NOT TESTED`。
+
+### 升级（sysupgrade）与 A/B 槽位（`patches/0022`）
+
+板子是 QSDK 的 eMMC A/B 布局：SBL 在 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 之间选
+一组，每组指向 `0:HLOS` + `rootfs` 或 `0:HLOS_1` + `rootfs_1`，U-Boot 再按选中的
+那组注入 `root=PARTUUID=…`。本补丁之前，`spectrum_sbe1v1k` 落到
+`default_do_upgrade` → `mtd write - image`，而板上没有名为 `image` 的 MTD 分区，
+**升级什么也不会发生**（固件照样重启回旧系统）。
+
+三处改动：
+
+1. **镜像格式**（`target/linux/qualcommbe/image/ipq95xx.mk`）：
+
+   ```make
+   IMAGES := sysupgrade.bin
+   IMAGE/sysupgrade.bin/squashfs := append-rootfs | pad-to 64k | \
+       sysupgrade-tar rootfs=$$$$@ | append-metadata
+   ```
+
+   （`$$$$@` 是 `Device/Init` 里 `IMAGE_CMD` 的两级转义，与 `Device/EmmcImage`
+   逐字相同。）
+
+   与 `Device/EmmcImage` 相同的 tar 容器
+   （`sysupgrade-spectrum_sbe1v1k/{CONTROL,kernel,root}`），但不产出
+   `factory.bin`——发布资产固定三个。原布局（内核 + `pad-to 64k` + 根文件系统）
+   只有厂商的 mtd/dumpimage 流程认得，`emmc_upgrade_tar` 读不了。`pad-rootfs`
+   也去掉了：它调用 `padjffs2`，会往 squashfs 后面追加 JFFS2 EOF 标记。
+
+2. **升级脚本**（`target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh`
+   的 `spectrum,sbe1v1k` 分支）：写回**当前正在运行的槽位**，不碰 bootconfig。
+   - 槽位探测：`/rom`（squashfs 下层挂载点）→ `/proc/self/mountinfo` 第 5 字段
+     `/rom` 对应的 `major:minor` → `/sys/dev/block/<maj>:<min>/uevent` 的
+     `PARTNAME`；`rootfs`→`0:HLOS` + `rootfs`，`rootfs_1`→`0:HLOS_1` + `rootfs_1`，
+     其他值一律拒绝写入（fail closed）。本内核没有
+     `CONFIG_BOOTCONFIG_PARTITION`，没有 `/proc/boot_info`，`root=PARTUUID=…`
+     也反查不到槽位，所以只能从正在运行的根文件系统本身判断。
+   - stage2 在调 `platform_do_upgrade` 之前 pivot 到 ramfs，`/rom` 随即消失；
+     因此 `platform_pre_upgrade`（pivot 之前）把结论写进
+     `/tmp/.sbe_upgrade_slot`，pivot 时 `/tmp` 被整体移进新根，文件不会丢。
+   - 写之前比大小：`kernel` 段不得大于 `0:HLOS`，`root` 段不得大于 `rootfs`
+     且尾部至少留 1 MiB（overlay 就地建在 rootfs 分区尾部）。
+   - 判断成立后设 `CI_KERNPART`/`CI_ROOTPART` 并调用 `emmc_do_upgrade` →
+     `emmc_upgrade_tar`：先清零内核前 8 个扇区（写入期间不留下可启动的旧内核），
+     写 root，再把块数按 64 KiB 对齐，最后写内核。配置备份由
+     `platform_copy_config` → `emmc_copy_config` 写回新根文件系统尾部。
+   - 其他板子的分支原样保留（`8devices,kiwi-dvk` 与 `default_do_upgrade`）。
+
+3. **`rootfs_data` 模型**（`ipq9574-sbe1v1k.dts` 的 `chosen`）：加
+   `bootargs-append = " fstools_ignore_partname=1"`，与厂商产品 DTB（S1）一致。
+   不传这个选项时 fstools 会去挂 GPT 里那个 `rootfs_data` 分区，overlay 就跑到
+   升级不写的分区里；传了以后 overlay 在 `rootfs` 分区尾部，跟着根文件系统一起
+   被替换。`bootargs-append` 由 `target/linux/generic/hack-6.12/920-device_tree_cmdline.patch`
+   提供：U-Boot 注入的 `bootargs`（含 `root=PARTUUID=…`）之后拼接这一段。
+
+CI 断言：`prepare-tree.sh` 在编译前检查镜像配方是 tar、升级脚本有
+`sbe_detect_slot` 与 `spectrum,sbe1v1k` 分支、设备树带
+`fstools_ignore_partname=1`；`verify-image.sh` 再从最终镜像里取 tar 段、比对
+`kernel` 段与发布的 FIT、反编译 DTB 查 `chosen`、并把镜像里的
+`/lib/upgrade/platform.sh` 与装配树逐字节比对。
+
+本地增量构建要注意：`package/base-files/Makefile:18` 的 `PKG_FILE_DEPENDS` 只登记
+了 `$(GENERIC_PLATFORM_DIR)/base-files/`，**不含**本子目标的
+`target/linux/qualcommbe/ipq95xx/base-files/`；而且 `target/install` 只重建内核
+镜像，不会重新把包合并进 rootfs。改过这里的文件之后要跑
+
+```sh
+make package/base-files/clean
+make package/base-files/compile
+make package/install target/install
+```
+
+否则镜像里留的还是旧版本（`verify-image.sh` 第 9 项会以 FAIL 指出）。CI 每次
+都是新树、走 `world`，不受影响。
+
+**就地写当前槽位**是有意选择：不读也不写 bootconfig，下一次启动读到的一定是
+同一对物理分区，行为确定；代价是写入期间断电会毁掉正在运行的这一槽（另一槽
+仍在，但 bootconfig 不改就不会回退）。厂商固件写另一槽再切 bootconfig 的做法
+需要改写 U-Boot 环境，而本内核没有 `/proc/boot_info` 可用，静态审计也无法确认
+环境变量的存放位置，故不采用。
+
+真机验证状态：**`NOT TESTED`**（第 3 阶段，需单独批准 + 现场密码）。
 
 ### Stage 2.3：设备定义切到 NSS 设备树
 
@@ -367,8 +446,9 @@ ssh root@<router-ip> reboot
 
 ## Stage 1 已知限制（未在真机验证，状态 `UNVERIFIED`）
 
-- 设备树沿用 RDP433（NOR+NAND 布局）；真实板使用 eMMC，vendor 升级脚本走
-  `mmc_do_upgrade` / `0:HLOS` + `rootfs`，Stage 1 镜像**不具备**该布局。
+- 设备树沿用 RDP433（NOR+NAND 布局）；真实板使用 eMMC。升级已改成 tar 容器 +
+  按当前槽位写 `0:HLOS` / `rootfs`（`patches/0022`，见“升级与 A/B 槽位”），
+  但分区名、分区大小与槽位映射都来自厂商镜像的静态审计，真机 `NOT TESTED`。
 - 以太网已由 Stage 2.1–2.4 换成 QSDK NSS-dp（主线 PPE 节点被删除），但
   端口/PHY 行为尚无真机观测。
 - 无线为 ath12k 上游驱动（Stage 2.5 起带厂商固件与板级 BDF），无 QSDK NSS

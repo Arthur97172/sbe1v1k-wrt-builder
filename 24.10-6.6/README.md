@@ -187,6 +187,41 @@ make -C sources/buildroot target/linux/clean
 sbe1v1k DTS 由 make 每次拷进新树，无需手工处理。CI 用的是 `sources-v1` 源码包，
 要重新导出上传才生效；新内核在编译与真机验证前一律记为 `UNVERIFIED` / `NOT TESTED`。
 
+## 升级（sysupgrade）与 A/B 槽位
+
+镜像格式是 `pad-rootfs-64k | sysupgrade-tar | append-metadata`，即
+`sysupgrade-spectrum_sbe1v1k/{CONTROL,kernel,root}` 的 tar 包：`mmc.sh` 把
+`kernel` 写进 HLOS 分区、`root` 写进 rootfs 分区，再在 rootfs 尾部就地建 ext4
+overlay。
+
+板子的 eMMC 是 QSDK 的 A/B 布局：`0:HLOS` + `rootfs` 与 `0:HLOS_1` + `rootfs_1`，
+SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那组注入
+`root=PARTUUID=…`。本内核没有启用 `CONFIG_BOOTCONFIG_PARTITION`（没有
+`/proc/boot_info`），所以 `lib/upgrade/platform.sh` 从**正在运行的根文件系统**
+反推槽位：`/rom` 的 major:minor → `/sys/dev/block/<maj>:<min>/uevent` 的
+`PARTNAME`；`rootfs` 对应 `0:HLOS`，`rootfs_1` 对应 `0:HLOS_1`。stage2 会先
+切到 ramfs（那时 `/rom` 已不在），所以结论在 `platform_pre_upgrade`（切换之前）
+写进 `/tmp`。
+
+- **认不出槽位就拒绝写入**（`PARTNAME` 既不是 `rootfs` 也不是 `rootfs_1`）：
+  宁可升级失败，也不把内核和根文件系统写进不同槽位。
+- 写入前核对 tar 里 `kernel` / `root` 段的字节数与目标分区大小，rootfs 尾部
+  还要至少留 1 MiB 给 overlay，放不下就失败（否则会写一半、留下坏根文件系统）。
+- `rootfs_data`：bootargs 带 `fstools_ignore_partname=1`，fstools 不会使用板上
+  名为 `rootfs_data` 的 GPT 分区（那是厂商系统的），overlay 建在 rootfs 分区
+  尾部。这与厂商的分区模型不同，是有意为之。
+- 该文件由 `prepare-tree.sh` 每次构建用 `build/p-b/files/base-files/` 的副本
+  覆盖（`sources-v1` 里的版本是导出时的旧版），`verify-image.sh` 再核对镜像里
+  的那一份与装配树逐字节一致。
+- 本地增量构建时注意：`package/base-files/Makefile` 的 `PKG_FILE_DEPENDS` 不含
+  子目标的 `target/linux/feeds/ipq95xx/base-files/`，而且 `target/install` 不会
+  重新把包合并进 rootfs。改过之后要跑 `make package/base-files/clean` →
+  `make package/base-files/compile` → `make package/install target/install`，
+  否则镜像里留的是旧脚本（`verify-image.sh` 第 9 项会以 FAIL 指出）。CI 每次
+  都是新树，不受影响。
+
+真机升级状态：`NOT TESTED`。
+
 ## CI
 
 `.github/workflows/build-24.10-6.6.yml`（`name: 📦 Build 24.10-6.6`）在 `main` 分支上，

@@ -1,0 +1,200 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k 的 sysupgrade 写 eMMC A/B 槽位
+
+SBE1V1K 从 eMMC 启动，布局是 QSDK 的 A/B：SBL 在 0:BOOTCONFIG /
+0:BOOTCONFIG1 之间选一组，每组指向 0:HLOS + rootfs 或 0:HLOS_1 + rootfs_1，
+U-Boot 再按选中的那组注入 root=PARTUUID=…。
+
+本补丁之前，spectrum_sbe1v1k 的 sysupgrade 落到 default_do_upgrade
+(mtd write - image)，板上没有名为 image 的 MTD 分区，升级实际什么也不做；
+镜像格式也是“内核 + pad-to 64k + 根文件系统”的原始拼接，本内核的
+emmc_upgrade_tar 读不了。
+
+三处改动：
+
+1. image/ipq95xx.mk：sysupgrade 镜像改成 tar 容器
+   （sysupgrade-<board>/{CONTROL,kernel,root}），与 Device/EmmcImage 相同，
+   但不产出 factory.bin——发布资产固定三个。去掉 pad-rootfs：它调用
+   padjffs2，会往 squashfs 后面追加 JFFS2 EOF 标记。
+
+2. ipq95xx/base-files/lib/upgrade/platform.sh：新增 spectrum,sbe1v1k 分支。
+   槽位从正在运行的根文件系统反查（/rom 的 major:minor → sysfs uevent 的
+   PARTNAME），认不出来就拒绝写入；写之前比大小（rootfs 分区尾部留 1 MiB
+   给就地建的 overlay）；然后设 CI_KERNPART/CI_ROOTPART 调
+   emmc_do_upgrade。stage2 会先 pivot 到 ramfs，所以槽位在
+   platform_pre_upgrade 里先写进 /tmp（pivot 时 /tmp 被移进新根）。
+   其他板子的分支不变。
+
+3. 板级 DTS 的 chosen 增加 bootargs-append = " fstools_ignore_partname=1"，
+   与厂商产品 DTB 一致：overlay 建在 rootfs 分区尾部，不用 GPT 里的
+   rootfs_data 分区。bootargs-append 由
+   target/linux/generic/hack-6.12/920-device_tree_cmdline.patch 提供。
+
+分类：设备定义与升级路径修正；不涉及内核代码。真机 NOT TESTED。
+
+--- a/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh
++++ b/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh
+@@ -4,6 +4,83 @@
+ RAMFS_COPY_BIN='fw_printenv fw_setenv head'
+ RAMFS_COPY_DATA='/etc/fw_env.config /var/lock/fw_printenv.lock'
+ 
++#
++# Spectrum SBE1V1K（Askey）：写回当前正在运行的槽位
++#
++# 板子是 QSDK 的 A/B 布局：SBL 先在 0:BOOTCONFIG / 0:BOOTCONFIG1 之间选一组，
++# 每组指向 0:HLOS + rootfs 或 0:HLOS_1 + rootfs_1，U-Boot 再按选中的那组注入
++# root=PARTUUID=…。固件必须写回“正在运行的那一对”：写进另一个槽位，重启后
++# 还是旧系统；内核和根文件系统落进不同槽位，则直接起不来。
++#
++# 本内核没有启用 CONFIG_BOOTCONFIG_PARTITION（没有 /proc/boot_info），
++# /proc/cmdline 也只给出 root=PARTUUID=…，没法直接反查槽位。能确定槽位的只有
++# 正在运行的根文件系统本身：/rom 是 squashfs 下层的挂载点，它的 major:minor
++# 对应的 /sys/dev/block/<maj>:<min>/uevent 里写着 PARTNAME。
++#
++# stage2 在调 platform_do_upgrade 之前会 pivot 到 ramfs，那时 /rom 已经不在；
++# 所以要在 platform_pre_upgrade（pivot 之前）把结论写进 /tmp —— pivot 时 /tmp
++# 被整体移进新根，文件不会丢。
++SBE_SLOT_FILE=/tmp/.sbe_upgrade_slot
++
++sbe_detect_slot() {
++	local mp majmin part
++
++	for mp in /rom /; do
++		majmin=$(awk -v mp="$mp" '$5 == mp { print $3; exit }' /proc/self/mountinfo)
++		[ -n "$majmin" ] || continue
++		part=$(sed -n 's/^PARTNAME=//p' "/sys/dev/block/$majmin/uevent" 2>/dev/null)
++		[ -n "$part" ] && break
++	done
++
++	case "$part" in
++	rootfs)		echo "0:HLOS rootfs" ;;
++	rootfs_1)	echo "0:HLOS_1 rootfs_1" ;;
++	*)		return 1 ;;
++	esac
++}
++
++sbe_upgrade_slot() {
++	[ -s "$SBE_SLOT_FILE" ] && { cat "$SBE_SLOT_FILE"; return 0; }
++	sbe_detect_slot
++}
++
++# 分区写满时 `tar … > /dev/…` 会写到一半才报错，留下一个“看起来刷完了”的坏
++# 根文件系统；所以先比大小。rootfs 分区尾部还要留给 overlay，必须是正数。
++sbe_check_size() { # <tar> <段名> <分区名> [分区尾部至少保留的字节数]
++	local tar=$1 sec=$2 part=$3 reserve=${4:-0}
++	local entry size dev bytes
++
++	entry=$(tar tf "$tar" | grep -m1 "^sysupgrade-.*/${sec}$")
++	[ -n "$entry" ] || { echo "镜像里没有 ${sec} 段" >&2; return 1; }
++	size=$(tar xOf "$tar" "$entry" | wc -c)
++
++	dev=$(find_mmc_part "$part")
++	[ -n "$dev" ] || { echo "找不到分区 ${part}" >&2; return 1; }
++	bytes=$(( $(cat "/sys/class/block/$(basename "$dev")/size") * 512 ))
++
++	if [ "$size" -gt "$bytes" ]; then
++		echo "${sec} 段 ${size} 字节，超过 ${part} 分区 ${bytes} 字节" >&2
++		return 1
++	fi
++	if [ $((bytes - size)) -lt "$reserve" ]; then
++		echo "${part} 分区尾部只剩 $((bytes - size)) 字节，少于 ${reserve} 字节" >&2
++		return 1
++	fi
++	echo "${sec} 段 ${size} 字节，${part} 分区 ${bytes} 字节"
++}
++
++platform_pre_upgrade() {
++	case "$(board_name)" in
++	spectrum,sbe1v1k)
++		if sbe_detect_slot > "$SBE_SLOT_FILE.tmp" 2>/dev/null; then
++			mv -f "$SBE_SLOT_FILE.tmp" "$SBE_SLOT_FILE"
++		else
++			rm -f "$SBE_SLOT_FILE.tmp" "$SBE_SLOT_FILE"
++		fi
++		;;
++	esac
++}
++
+ platform_check_image() {
+ 	return 0;
+ }
+@@ -15,6 +92,28 @@
+ 		CI_ROOTPART="rootfs"
+ 		emmc_do_upgrade "$1"
+ 		;;
++	spectrum,sbe1v1k)
++		local slot kernelname rootfsname
++
++		# 槽位认不出来就什么都不写：宁可升级失败，也不能把内核和根文件
++		# 系统写进不同的槽位（U-Boot 只按一个槽位读这两个分区）。
++		slot=$(sbe_upgrade_slot) || {
++			echo "无法确定当前启动槽位（根文件系统不在 rootfs / rootfs_1 上）。" >&2
++			echo "拒绝写入：内核与根文件系统写进不同槽位会导致设备无法启动。" >&2
++			return 1
++		}
++		kernelname=$(echo "$slot" | cut -d' ' -f1)
++		rootfsname=$(echo "$slot" | cut -d' ' -f2)
++		echo "当前启动槽位：${kernelname} / ${rootfsname}"
++
++		sbe_check_size "$1" kernel "$kernelname" || return 1
++		# 根文件系统之后要就地建 ext4 overlay，末尾至少留 1 MiB。
++		sbe_check_size "$1" root "$rootfsname" 1048576 || return 1
++
++		CI_KERNPART="$kernelname"
++		CI_ROOTPART="$rootfsname"
++		emmc_do_upgrade "$1"
++		;;
+ 	*)
+ 		default_do_upgrade "$1"
+ 		;;
+@@ -23,7 +122,7 @@
+ 
+ platform_copy_config() {
+ 	case "$(board_name)" in
+-	8devices,kiwi-dvk)
++	8devices,kiwi-dvk|spectrum,sbe1v1k)
+ 		emmc_copy_config
+ 		;;
+ 	esac
+--- a/target/linux/qualcommbe/image/ipq95xx.mk
++++ b/target/linux/qualcommbe/image/ipq95xx.mk
+@@ -56,7 +56,13 @@
+ 	IMAGE_SIZE := 25344k
+ 	DEVICE_PACKAGES := kmod-leds-pwm kmod-hwmon-pwmfan \
+ 			   kmod-qca-ssdk-nohnat kmod-qca-nss-dp kmod-qca-nss-ppe
+-	IMAGE/sysupgrade.bin := append-kernel | pad-to 64k | append-rootfs | pad-rootfs | check-size | append-metadata
++	# sysupgrade 写的是 eMMC 分区（0:HLOS + rootfs），不是 mtd：真正的写入
++	# 由 platform.sh 里的 emmc_upgrade_tar 完成，它只认 tar 容器
++	# （sysupgrade-<board>/{CONTROL,kernel,root}）。原先的“内核 + pad-to 64k +
++	# 根文件系统 + pad-rootfs”原始布局只有厂商的 mtd/dumpimage 流程认得。
++	# 布局与 Device/EmmcImage 相同，但不产出 factory.bin：发布资产固定三个。
++	IMAGES := sysupgrade.bin
++	IMAGE/sysupgrade.bin/squashfs := append-rootfs | pad-to 64k | sysupgrade-tar rootfs=$$$$@ | append-metadata
+ endef
+ TARGET_DEVICES += spectrum_sbe1v1k
+ 
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -46,6 +46,22 @@
+ 		ethernet2 = "/soc@0/dp3";
+ 		ethernet3 = "/soc@0/dp4";
+ 	};
++
++	/*
++	 * rootfs_data 与 overlay 的位置
++	 *
++	 * 厂商的 GPT 里有一个 rootfs_data 分区，但本项目沿用厂商产品 DTB（S1）
++	 * 的做法：让 fstools 忽略按分区名查找的 rootfs_data，把 overlay 建在
++	 * rootfs 分区尾部。这样升级时只需写 0:HLOS 与 rootfs 两个分区，overlay
++	 * 跟着根文件系统一起被替换，不依赖另一个分区的存在与大小。
++	 *
++	 * ipq9574-rdp-common.dtsi 已经有 chosen/stdout-path；这里的节点与之合并。
++	 * bootargs-append 是 920-device_tree_cmdline.patch 加的内核选项：U-Boot
++	 * 注入的 bootargs（含 root=PARTUUID=…）之后会再拼上这一段。
++	 */
++	chosen {
++		bootargs-append = " fstools_ignore_partname=1";
++	};
+ };
+ 
+ /*
