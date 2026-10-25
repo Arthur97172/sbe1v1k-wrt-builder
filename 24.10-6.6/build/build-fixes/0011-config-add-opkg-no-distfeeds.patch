@@ -1,0 +1,28 @@
+config: add CONFIG_OPKG_NO_DISTFEEDS
+
+The SBE1V1K image ships a fixed package set and has no matching upstream
+package repository (custom kernel ABI).  Give the build an explicit switch
+to write a placeholder /etc/opkg/distfeeds.conf instead of pointing at
+downloads.openwrt.org feeds that cannot serve this ABI.
+
+Apply from the buildroot top:  patch -p1 < 0011-...
+
+--- a/config/Config-build.in
++++ b/config/Config-build.in
+@@ -112,6 +112,16 @@
+ 		  This removes all ipkg/opkg status data files from the target directory
+ 		  before building the root filesystem.
+ 
++	config OPKG_NO_DISTFEEDS
++		bool
++		prompt "Do not generate distribution package feeds"
++		depends on !USE_APK
++		help
++		  Do not write /etc/opkg/distfeeds.conf.  Use this for images that
++		  ship a fixed package set and have no matching upstream package
++		  repository (for example a custom vendor target whose kernel ABI
++		  is not published on downloads.openwrt.org).
++
+ 	config IPK_FILES_CHECKSUMS
+ 		bool
+ 		prompt "Record files checksums in package metadata"

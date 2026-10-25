@@ -1,0 +1,24 @@
+kernel: crypto: fix sha512 module autoload list
+
+ModuleAutoLoad parses AUTOLOAD as one "<priority> <bootflag> <modules...>"
+triple.  Appending a second AutoLoad triple put "0" and "09" into
+/etc/modules.d/09-crypto-sha512 as bogus module names.  Replace the whole
+triple instead (G3.5-c, finding F7).
+
+Apply from the buildroot top:  patch -p1 < 0013-...
+
+--- a/package/kernel/linux/modules/crypto.mk
++++ b/package/kernel/linux/modules/crypto.mk
+@@ -1118,7 +1118,11 @@
+ 
+ define KernelPackage/crypto-sha512/aarch64
+   FILES+=$(LINUX_DIR)/arch/arm64/crypto/sha512-arm64.ko
+-  AUTOLOAD+=$(call AutoLoad,09,sha512-arm64)
++  # G3.5-c (F7): ModuleAutoLoad parses AUTOLOAD as one
++  # "<priority> <bootflag> <modules...>" triple, so appending a second
++  # AutoLoad triple made "0" and "09" end up in /etc/modules.d/09-crypto-sha512
++  # as bogus module names.  Replace the whole triple instead.
++  AUTOLOAD:=$(call AutoLoad,09,sha512_generic sha512-arm64)
+ endef
+ 
+ KernelPackage/crypto-sha512/imx/cortexa7=$(KernelPackage/crypto-sha512/arm)

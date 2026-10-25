@@ -50,14 +50,14 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
 │   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义
 │   ├── patches/              按包分开的 6.12 可移植性补丁
-│   └── nss-src.tar.gz.sha256  CI 下载的 nss-src-v1 源码包校验值
+│   └── nss-src.tar.gz.sha256  CI 自产 NSS 源码包的校验值（见下）
 └── scripts/
     ├── render-overlay.sh     把 files/ 整体复制进装配树并替换版本占位符
     ├── local/
     │   └── build-wifi-image.sh  本机一键出带厂商固件的镜像（CI 下拒绝运行）
     └── ci/
         ├── prepare-tree.sh   仅 CI：克隆上游、钉定 feeds、应用补丁、装本地包、装配 NSS
-        ├── export-nss-src.sh 生成/上传 nss-src-v1 源码包（ISC，仅源码）
+        ├── export-nss-src.sh 打包 NSS 源码（ISC，仅源码），CI 自产时由 prepare-tree.sh 调用
         └── verify-image.sh   从最终 sysupgrade 镜像解出 rootfs 做静态校验
 ```
 
@@ -484,7 +484,8 @@ cp 25.12-6.12/build/config-seed/ipq95xx-spectrum-sbe1v1k.seed \
 的决定随构建产物公开分发。
 
 NSS 源码：本机若已有厂商树 `sources/buildroot/qca/src/nss/base`，`nss/install.sh`
-直接用它；CI 没有厂商树，改用 Release 资产 `nss-src-v1`（见下）。
+直接用它；CI 没有厂商树，从钉定的 QSDK 基座稀疏检出同一目录、现场重打并校验
+`nss-src-v1`（见下）。
 
 产物在 `sources/buildroot-25.12-6.12/bin/targets/qualcommbe/ipq95xx/`，只交付三个文件：
 
@@ -499,7 +500,7 @@ NSS 源码：本机若已有厂商树 `sources/buildroot/qca/src/nss/base`，`ns
 `workflow_dispatch`）。
 
 流程：`prepare-tree.sh`（克隆上游并钉定提交、`feeds update/install`、应用补丁、
-装本地包、**下载并校验 NSS 源码包后装配**）→ 写 `.config` + `defconfig` →
+装本地包、**自产并校验 NSS 源码包后装配**）→ 写 `.config` + `defconfig` →
 `world` 编译 → `verify-image.sh` → 上传日志/产物 → **每次运行新建一个 Release**，
 tag 为 `v<run>-<attempt>-<sha8>-25.12-6.12`，资产恰好三个固件文件。
 
@@ -507,22 +508,27 @@ tag 为 `v<run>-<attempt>-<sha8>-25.12-6.12`，资产恰好三个固件文件。
 
 CI 的装配树里没有厂商 QSDK 树，而默认设备的 `DEVICE_PACKAGES` 需要
 `kmod-qca-ssdk-nohnat` / `kmod-qca-nss-dp` / `kmod-qca-nss-ppe`（补丁 0009 已删掉
-主线 PPE 节点，缺了它们就没有以太网）。因此四个包的源码单独发布成 Release 资产：
+主线 PPE 节点，缺了它们就没有以太网）。因此 CI 在装配时**自己产出**这份源码包：
 
-- 内容：`qca-ssdk`、`qca-nss-phy`、`qca-nss-dp`、`qca-nss-ppe`，逐字取自 QSDK 14.x
-  厂商树，**仅源码、无任何二进制固件**；
+- 内容：`qca-ssdk`、`qca-nss-phy`、`qca-nss-dp`、`qca-nss-ppe`、
+  `qca-nss-ecm`、`qca-nss-ae-clients`、`qca-nss-sfe`，逐字取自 QSDK 14.x 树，
+  **仅源码、无任何二进制固件**；
 - 授权：文件头全部是 ISC（带 SPDX 行或完整 ISC 文本），版权归 The Linux Foundation
   与 Qualcomm；包内附 `NOTICE-ISC.txt`；
-- 生成：`scripts/ci/export-nss-src.sh`（固定排序/mtime/属主，输出可重复；
-  打包前复核许可并拒绝任何 `*.bin`/`*.ko`/`*.o`）；
-- 上传：`scripts/ci/export-nss-src.sh --upload`（需要 `GH_TOKEN`，发布到
-  `Arthur97172/sbe1v1k` 的 `nss-src-v1` Release；仓库为私有后，CI 用
-  workflow 的 `GH_TOKEN` 通过 `gh release download` 认证下载）；
-- 校验：仓库里提交 `nss/nss-src.tar.gz.sha256`，`prepare-tree.sh` 解包前必须通过
-  `sha256sum -c`；CI 端缓存到 `<工作区>/.sbe-cache/nss-src-v1`。
+- 来源：对 `everything411/qsdk` @ `21a8d13393aa8c7d2abf806e62a8dac2ba7af52f`
+  做 `--filter=blob:none` 部分克隆，只稀疏检出 `qca/src/nss`；`rev-parse HEAD`
+  必须等于该提交，否则按 `PIN_MISMATCH` / `SOURCE_UNAVAILABLE` 失败，**不降级到分支头**；
+- 生成：`prepare-tree.sh` 调 `scripts/ci/export-nss-src.sh`（固定排序/mtime/属主，
+  输出可重复；打包前复核许可并拒绝任何 `*.bin`/`*.ko`/`*.o`）；
+- 校验：仓库里提交 `nss/nss-src.tar.gz.sha256`（当前 `6cd707b7…`）。自产结果必须
+  `sha256sum -c` 通过——不一致说明上游不再是同一份源码，直接失败。CI 端缓存到
+  `<工作区>/.sbe-cache/nss-src-v1`，缓存命中时跳过重新自产。
 
-本机已有厂商树时不需要下载；也可以用 `SBE_NSS_SRC_TARBALL=<本地包>` 让
-`prepare-tree.sh` 使用本地文件。
+**不再依赖任何人工上传的 Release 资产**：`nss-src-v1` 这个 tag 只是历史产物，
+workflow 不引用它。`export-nss-src.sh --upload` 仍保留，仅用于手工重发/留档，
+需要 `GH_TOKEN`。
+
+本机已有厂商树时不需要自产；也可以用 `SBE_NSS_BASE=<已解包的 7 包目录>` 直接指定。
 
 ## 注意
 

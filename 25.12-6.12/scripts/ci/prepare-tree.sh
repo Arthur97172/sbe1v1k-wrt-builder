@@ -7,9 +7,11 @@
 # 以补丁形式保存在 25.12-6.12/patches/。
 #
 # 唯一的例外是 NSS 数据通路：qca-ssdk / qca-nss-phy / qca-nss-dp /
-# qca-nss-ppe 的源码来自 QSDK 14.x，体积与仓库无关，因此单独发布成
-# Release 资产 nss-src-v1（ISC），这里按 25.12-6.12/nss/nss-src.tar.gz.sha256
-# 校验后解包，再交给 nss/install.sh 装配。
+# qca-nss-ppe 的源码来自 QSDK 14.x。它们不再由人工上传的 Release 资产提供：
+# 本脚本从 QSDK 基座（everything411/qsdk，固定提交 21a8d133）稀疏检出
+# qca/src/nss，用 scripts/ci/export-nss-src.sh 现场重打 nss-src-v1.tar.gz，
+# 并与提交进仓库的 25.12-6.12/nss/nss-src.tar.gz.sha256 逐字节比对——
+# 不一致即说明上游不再是同一份源码，直接失败。
 #
 # 步骤：
 #   1. 若 sources/buildroot-25.12-6.12 不存在，克隆 openwrt/openwrt 并
@@ -17,7 +19,7 @@
 #   2. 生成 feeds.conf（openwrt-25.12 分支），feeds update 后把每个 feed
 #      检出到记录的提交，再 feeds install -a；
 #   3. 按顺序应用 25.12-6.12/patches/*.patch；
-#   4. 安装本地软件包，然后下载/校验/解包 NSS 源码并装配；
+#   4. 安装本地软件包，然后自产/复用/解包 NSS 源码并装配；
 #   5. 写入 version（REVISION）与 version.date（固定 SOURCE_DATE_EPOCH）；
 #   6. 重建 host-bin（Ubuntu runner 上没有 /usr/bin/gnu* 前缀）。
 #
@@ -140,14 +142,19 @@ for d in "$PROJ"/build/local-packages/*/; do
 	echo "[prepare]   package/$name"
 done
 
-# NSS 源码不在仓库里（QSDK 厂商树有数十 GB），单独发布成 Release 资产
-# nss-src-v1。默认设备 spectrum_sbe1v1k 的 DEVICE_PACKAGES 依赖
-# kmod-qca-ssdk-nohnat / kmod-qca-nss-dp / kmod-qca-nss-ppe，而补丁 0009
-# 又删掉了主线 PPE 节点；不装这几个包，镜像就没有以太网。
-NSS_REPO=${SBE_REPO:-${GITHUB_REPOSITORY:-Arthur97172/sbe1v1k}}
-NSS_URL=${NSS_SRC_URL:-https://github.com/$NSS_REPO/releases/download/nss-src-v1/nss-src-v1.tar.gz}
+# NSS 源码不在仓库里（QSDK 厂商树有数十 GB）。默认设备 spectrum_sbe1v1k
+# 的 DEVICE_PACKAGES 依赖 kmod-qca-ssdk-nohnat / kmod-qca-nss-dp /
+# kmod-qca-nss-ppe，而补丁 0009 又删掉了主线 PPE 节点；不装这几个包，
+# 镜像就没有以太网。
+#
+# 源码来源按优先级：SBE_NSS_BASE（已有解包目录）→ 本地缓存 → 现场自产。
+# 自产方式：对 QSDK 基座做 blob:none 部分克隆 + 只检出 qca/src/nss，
+# 用 export-nss-src.sh 重打 tar.gz，再与 nss/nss-src.tar.gz.sha256 比对。
+# 这样 CI 不再需要任何人工上传的 Release 资产，而校验强度不变（哈希相同）。
 NSS_SHA_FILE=$PROJ/nss/nss-src.tar.gz.sha256
 NSS_CACHE=$ROOT/.sbe-cache
+NSS_QSDK_URL=${SBE_NSS_QSDK_URL:-https://github.com/everything411/qsdk}
+NSS_QSDK_COMMIT=${SBE_NSS_QSDK_COMMIT:-21a8d13393aa8c7d2abf806e62a8dac2ba7af52f}
 
 echo "[prepare] 接入 NSS 源码"
 mkdir -p "$NSS_CACHE"
@@ -158,26 +165,50 @@ elif [ -d "$NSS_CACHE/nss-src-v1/qca-ssdk" ]; then
 	SBE_NSS_BASE=$NSS_CACHE/nss-src-v1
 else
 	[ -f "$NSS_SHA_FILE" ] || { echo "缺少 $NSS_SHA_FILE" >&2; exit 1; }
-	tmp=$(mktemp -d "$NSS_CACHE/dl.XXXXXX")
-	if [ -n "${SBE_NSS_SRC_TARBALL:-}" ]; then
-		echo "[prepare]   使用本地源码包 $SBE_NSS_SRC_TARBALL"
-		cp "$SBE_NSS_SRC_TARBALL" "$tmp/nss-src-v1.tar.gz"
-	elif [ -n "${GH_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
-		# 私有仓库的 Release 资产不能匿名下载；有 token 时走 gh（CI 里始终有）。
-		echo "[prepare]   用 gh 下载 $NSS_REPO 的 nss-src-v1"
-		GH_TOKEN="$GH_TOKEN" gh release download nss-src-v1 \
-			--repo "$NSS_REPO" \
-			--pattern 'nss-src-v1.tar.gz' \
-			--dir "$tmp" --clobber
-	else
-		echo "[prepare]   下载 $NSS_URL"
-		curl -fL --retry 3 --retry-delay 2 -o "$tmp/nss-src-v1.tar.gz" "$NSS_URL"
-	fi
-	cp "$NSS_SHA_FILE" "$tmp/nss-src.tar.gz.sha256"
-	( cd "$tmp" && sha256sum -c nss-src.tar.gz.sha256 ) \
-		|| { echo "NSS 源码包校验失败" >&2; exit 1; }
-	tar -C "$NSS_CACHE" -xzf "$tmp/nss-src-v1.tar.gz"
-	rm -rf "$tmp"
+	echo "[prepare]   从 qsdk 基座自产 NSS 源码包（稀疏检出 qca/src/nss @ ${NSS_QSDK_COMMIT:0:12}）"
+	nss_work=$(mktemp -d "$NSS_CACHE/gen.XXXXXX")
+	nss_clone=$nss_work/qsdk
+	export GIT_TERMINAL_PROMPT=0
+	git init -q "$nss_clone"
+	git -C "$nss_clone" remote add origin "$NSS_QSDK_URL"
+	git -C "$nss_clone" config core.sparseCheckout true
+	git -C "$nss_clone" config core.sparseCheckoutCone true
+	# cone 模式必须逐级写出父目录的“重新包含”行。只写 /qca/src/nss/ 时
+	# git 会把整棵树都当成稀疏外（实测 checkout 出 0 个文件），而少写一行也
+	# 不行——下面六行与 `git sparse-checkout set --cone qca/src/nss` 生成的
+	# 内容逐字一致，只是提前到 checkout 之前写，避免先落 2.7 GB 全树再删。
+	mkdir -p "$nss_clone/.git/info"
+	cat > "$nss_clone/.git/info/sparse-checkout" <<'EOF'
+/*
+!/*/
+/qca/
+!/qca/*/
+/qca/src/
+!/qca/src/*/
+/qca/src/nss/
+EOF
+	git -c protocol.version=2 -C "$nss_clone" fetch --quiet --depth 1 \
+		--filter=blob:none origin "$NSS_QSDK_COMMIT" \
+		|| { echo "取不到 qsdk 基座 $NSS_QSDK_COMMIT（SOURCE_UNAVAILABLE）" >&2; rm -rf "$nss_work"; exit 1; }
+	git -C "$nss_clone" checkout --quiet --detach FETCH_HEAD
+	got=$(git -C "$nss_clone" rev-parse HEAD)
+	[ "$got" = "$NSS_QSDK_COMMIT" ] \
+		|| { echo "qsdk 基座 HEAD 不符：$got（PIN_MISMATCH）" >&2; rm -rf "$nss_work"; exit 1; }
+	for d in base/qca-ssdk base/qca-nss-phy base/qca-nss-dp base/qca-nss-ppe \
+	         clients/qca-nss-ecm clients/qca-nss-ae-clients clients/qca-nss-sfe; do
+		[ -d "$nss_clone/qca/src/nss/$d" ] \
+			|| { echo "稀疏检出缺少 qca/src/nss/$d" >&2; rm -rf "$nss_work"; exit 1; }
+	done
+	SBE_NSS_SRC_BASE="$nss_clone/qca/src/nss/base" \
+	SBE_NSS_SRC_CLIENTS="$nss_clone/qca/src/nss/clients" \
+		"$SELF/export-nss-src.sh" "$nss_work/out" \
+		|| { echo "NSS 源码包自产失败" >&2; rm -rf "$nss_work"; exit 1; }
+	cp "$NSS_SHA_FILE" "$nss_work/out/nss-src.tar.gz.sha256"
+	( cd "$nss_work/out" && sha256sum -c nss-src.tar.gz.sha256 ) \
+		|| { echo "NSS 源码包自产结果与 nss-src.tar.gz.sha256 不一致（源码已漂移）" >&2
+		     rm -rf "$nss_work"; exit 1; }
+	tar -C "$NSS_CACHE" -xzf "$nss_work/out/nss-src-v1.tar.gz"
+	rm -rf "$nss_work"
 	SBE_NSS_BASE=$NSS_CACHE/nss-src-v1
 fi
 SBE_NSS_BASE="$SBE_NSS_BASE" SBE_BUILDROOT="$BR" "$PROJ/nss/install.sh" "$ROOT"

@@ -1,0 +1,30 @@
+openwrt-patches: drop the QSDK busybox config override
+
+The QSDK openwrt-patches tree ships a busybox extension whose
+Package/busybox/overrideconfig makes the scan source its own Config.in,
+which in turn sources Config-defaults.in (ARPING/TIMEOUT default y,
+FEATURE_EDITING_MAX_LEN 1024). In the audited tree that override never
+took effect: tmp/info/.packageinfo-busybox was stale, so the Kconfig
+metadata came only from feeds/base/utils/busybox/Config.in, and the
+audited firmware was built with CONFIG_BUSYBOX_CUSTOM=n and the OpenWrt
+applet defaults (build_dir/busybox .../.config: EDITING_MAX_LEN=512, no
+CONFIG_TIMEOUT, 261 =y entries).
+
+A fresh scan on CI does pick the override up and flips 39
+CONFIG_BUSYBOX_DEFAULT_* plus TIMEOUT/EDITING_MAX_LEN, i.e. the gate
+would silently produce a different busybox than the audited one. Keep the
+install extension (inetd/inittab/rcS, which the audited build did apply)
+and the patches/, drop only the config override, so the CI build matches
+the audited firmware. Registered in build/known-delta.conf.
+
+Apply from the buildroot top:  patch -p1 < 0017-...
+
+--- a/openwrt-patches/package/utils/busybox/busybox.mk
++++ b/openwrt-patches/package/utils/busybox/busybox.mk
+@@ -19,4 +19,5 @@
+ endef
+ 
+ Package/busybox/install += $(newline)$(busybox_install_append)
+-Package/busybox/overrideconfig = $(newline)$(busybox_config_append)
++# 24.10-6.6：去掉 QSDK 的 busybox 配置覆盖（原因见 build/build-fixes/SERIES 0017）
++# Package/busybox/overrideconfig = $(newline)$(busybox_config_append)

@@ -1,0 +1,11 @@
+# P-B 板级补丁序列。与 build-fixes/SERIES 同一语法：
+#   <patch 文件><TAB><mode><TAB><目标目录（相对 sources/）><TAB><说明>
+#   mode 一律 tree（patch -p1 -d <目标目录>）。
+# 应用方式：先 --dry-run，禁止 fuzz、禁止 || true。
+#
+# 与 target-feed-fixes 的分工见 build/target-feed-fixes/SERIES 的注释：
+# 这里放板级镜像定义、设备树注册、pwm 特性；那里放 config-6.6 与 target.mk。
+
+0001-ipq95xx-image-add-spectrum-sbe1v1k.patch	tree	buildroot/target/linux/feeds	设备定义（gzip FIT + tar sysupgrade + pad-rootfs-64k）
+0002-arm64-dts-qcom-add-ipq9574-sbe1v1k.patch	tree	buildroot/target/linux/feeds/files-6.6	dts Makefile 注册，BUILD_DTS_*=1
+0003-ipq95xx-add-pwm-feature.patch	tree	buildroot/target/linux/feeds	FEATURES 加 pwm（风扇/灯）

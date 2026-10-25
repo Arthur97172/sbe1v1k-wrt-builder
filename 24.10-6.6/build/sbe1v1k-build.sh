@@ -18,7 +18,12 @@
 #   ./24.10-6.6/build/sbe1v1k-build.sh menuconfig    # 交互式配置
 #   ./24.10-6.6/build/sbe1v1k-build.sh -j8           # 完整编译
 #
-# 本脚本不联网、不接触任何设备、不写入口令。
+# 联网仅发生在「内核预检」这一处，且只在交互终端（stdin 与 stdout 都是终端）
+# 里进行：编译前调用 scripts/check-kernel.sh，发现 CodeLinaro 有新内核时询问
+# 是否升级，回答 y 则自动同步版本串并在编译前清理内核产物。CI、管道、脚本调用
+# 一律跳过，SBE_KERNEL_CHECK=0 可显式关闭、=1 可强制在非交互环境里只做检查。
+#
+# 本脚本不接触任何设备、不写入口令。
 
 set -e
 
@@ -122,6 +127,36 @@ if [ "${SBE_SKIP_CUSTOM_PACKAGES:-0}" != 1 ]; then
 		echo "[build] .config sha256: $(sha256sum "$BUILDROOT/.config" | cut -d' ' -f1)"
 		if [ "${1:-}" = menuconfig ]; then
 			echo "[build] 注意: menuconfig 的改动不会写回文件 B，下次构建会被重新覆盖" >&2
+		fi
+		;;
+	esac
+fi
+
+# 内核预检：只在交互式本地构建里联网。check-kernel.sh 自己判断终端，
+# 有更新时询问，答 y 则完成三处同步（树 / include/kernel-6.6 / build-fixes）。
+# 退出码语义：0=最新或已升级 2=有更新但未升级 3=读不到远端（都继续构建）；
+# 1=本地两处版本不一致，继续编译只会产出与真实代码错位的版本串，必须停。
+if [ "${SBE_KERNEL_CHECK:-auto}" != 0 ]; then
+	case "${1:-}" in
+	clean|dirclean|distclean|config-clean|help|defconfig|menuconfig) ;;
+	*)
+		if [ "${SBE_KERNEL_CHECK:-auto}" = 1 ] || { [ -t 0 ] && [ -t 1 ]; }; then
+			kver_of() {
+				sed -n 's/^LINUX_VERSION-6\.6 = \.//p' \
+					"$BUILDROOT/include/kernel-6.6" 2>/dev/null | head -n 1
+			}
+			kver_before=$(kver_of)
+			krc=0
+			"$PROJ/scripts/check-kernel.sh" || krc=$?
+			kver_after=$(kver_of)
+			case $krc in
+			0|2|3) ;;
+			*) echo "[build] 内核预检异常 (exit $krc)，停止构建" >&2; exit "$krc" ;;
+			esac
+			if [ "$kver_before" != "$kver_after" ]; then
+				echo "[build] 内核 6.6.${kver_before:-?} -> 6.6.${kver_after:-?}，清理内核构建产物"
+				make -C "$BUILDROOT" target/linux/clean
+			fi
 		fi
 		;;
 	esac

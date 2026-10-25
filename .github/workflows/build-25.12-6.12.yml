@@ -73,9 +73,6 @@ jobs:
             cpio time
 
       - name: Prepare build tree
-        env:
-          # 仓库可能被设为私有：nss-src-v1 Release 资产需要认证下载。
-          GH_TOKEN: ${{ github.token }}
         run: ./25.12-6.12/scripts/ci/prepare-tree.sh "$GITHUB_WORKSPACE"
 
       # 镜像必须带厂商固件（2026-10-24 决定）。defconfig 对未知包是静默丢弃，

@@ -1,0 +1,16 @@
+# 目标平台 feed（target/linux/feeds）在钉定上游之上的仓库改动。
+#
+# 语法：<patch 文件><TAB><mode><TAB><目标目录（相对 sources/）><TAB><说明>
+# 应用方式：按顺序在 target/linux/feeds 根上 `patch -p1`（先 --dry-run，禁止 fuzz）。
+#
+# 归属边界（避免同一改动两处各写一遍）：
+#   - 本文件只覆盖**审计树里没有记录**的两处差异：config-6.6 的 RTL8261N 与
+#     generic/target.mk 的 uboot 默认包剪裁；
+#   - 板级改动（image/generic.mk、ipq95xx/Makefile 的 pwm）与 base-files 覆盖
+#     仍由 build/p-b 交付：先套 p-b/patches/{0001,0003}，再把 p-b/files/base-files
+#     逐文件拷进 ipq95xx/，最后才应用本表（顺序见 docs/SOURCE_ASSEMBLY.md §3.4）。
+#   - 装配后断言：ipq95xx/config-6.6 与 generic/target.mk 必须与本表落盘结果
+#     逐字节一致，且 .config 中不存在 CONFIG_PACKAGE_uboot-2025.*=y。
+
+0001-config-6.6-enable-rtl8261n.patch	tree	buildroot/target/linux/feeds	CONFIG_RTL8261N_PHY=y（10G 口 RTL8261N）
+0002-target.mk-drop-uboot-default-packages.patch	tree	buildroot/target/linux/feeds	去掉 16 个空的 uboot-* 默认包

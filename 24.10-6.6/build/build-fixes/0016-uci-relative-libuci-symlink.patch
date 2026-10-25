@@ -1,0 +1,18 @@
+uci: install libuci.so as a relative symlink
+
+Same defect as 0015 for uci: the absolute $(PKG_BUILD_DIR) target is
+meaningless inside the rootfs.
+
+Apply from the buildroot top:  patch -p1 < 0016-...
+
+--- a/package/system/uci/Makefile
++++ b/package/system/uci/Makefile
+@@ -62,7 +62,7 @@
+ define Package/libuci/install
+ 	$(INSTALL_DIR) $(1)/lib
+ 	$(CP) $(PKG_BUILD_DIR)/libuci.so.* $(1)/lib/
+-	ln -s $(PKG_BUILD_DIR)/libuci.so.$(PKG_ABI_VERSION) $(1)/lib/libuci.so
++	ln -s libuci.so.$(PKG_ABI_VERSION) $(1)/lib/libuci.so
+ endef
+ 
+ define Package/libuci-lua/install

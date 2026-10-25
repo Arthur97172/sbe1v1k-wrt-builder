@@ -1,0 +1,6 @@
+1ac784cb46331e00732c100d13cb2cba6b21fcd0130175b4aacc1984c044dd6c  ./lib/firmware/ath12k/QCN92XX/hw1.0/board-2.bin
+5115c1c1e91278f0c50dcf2bbdacf9ba666cd5e99d225005c4d462d234deebfc  ./lib/firmware/ath12k/QCN92XX/hw1.0/firmware-2.bin
+09bf842d4817b92fba6db2b22c8130b110ec745f6c3fe35c2ded483dc7ecf019  ./lib/firmware/ath12k/QCN92XX/hw1.0/regdb.bin
+7017230c90272e4c04b060b1be8f3bdac35ed03b2c6f3b13e571a6511072c287  ./usr/share/sbe-wifi/bdf41/b1.bin
+9db42f414a0b458c35bc0000cfb563be34cd21179ef04e85d144a7386fe2737f  ./usr/share/sbe-wifi/bdf41/b2.bin
+73df79398dd48e0d77c3d89bab85db283d9e4e23f80c664cd7e2e9c3930e453d  ./usr/share/sbe-wifi/bdf41/b4.bin

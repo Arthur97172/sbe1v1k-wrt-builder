@@ -3,9 +3,17 @@ name: 📦 Build 24.10-6.6
 # 在 GitHub Actions 上编译 Spectrum SBE1V1K（IPQ9574）OpenWrt+QSDK 固件，
 # 并把三个交付镜像发布到本次运行专属的 GitHub Release。
 #
-# 仓库只保存“编译输入”：24.10-6.6/（overlay、构建脚本、CI 脚本）与 .config 种子。
-# 体积约 2.4 GB 的装配源码仍是固定 Release（默认 sources-v1）里的资产，
-# 每次构建下载并做 SHA-256 校验后再解包，git 仓库里不放源码。
+# 编译输入是 sources-vN：由 .github/workflows/sources-24.10-6.6.yml 用公开上游
+# 现场装配并发布（tar.zst + SHA256SUMS + TREE-FINGERPRINT.json，恰好 3 个资产）。
+# 本 workflow 只下载、校验、编译，不装配源码。
+#
+# 门禁顺序（每一步失败都在编译前停下）：
+#   1. SHA256SUMS 校验源码包；
+#   2. 解包后用 TREE-FINGERPRINT.tsv 重算树指纹，未解释差异必须为 0；
+#   3. TREE-FINGERPRINT.json 里的 recipe_sha256 必须等于本仓库当前配方的哈希；
+#   4. render-overlay.sh + check-config.sh：overlay 渲染后再比对冻结 .config；
+#   5. thirdparty-feeds.sh check（SBE_NO_GIT=1，源码包不带 .git）；
+#   6. download-preflight.sh：make -k download 取齐第三方 tarball。
 #
 # 说明：
 #   - 构建不会接触任何设备，仅下载源码包与编译依赖；
@@ -17,9 +25,9 @@ on:
   workflow_dispatch:
     inputs:
       source_tag:
-        description: '存放源码包的 Release tag'
+        description: '源码包 tag（auto = 最新且资产数为 3 的 sources-vN，N≥2）'
         required: true
-        default: 'sources-v1'
+        default: 'auto'
   push:
     branches: [main]
     paths:
@@ -27,7 +35,7 @@ on:
       - '24.10-6.6/**'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: build-firmware-${{ github.ref }}
@@ -37,8 +45,12 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
-    env:
-      SOURCE_TAG: ${{ github.event.inputs.source_tag || 'sources-v1' }}
+    permissions:
+      contents: read
+    outputs:
+      source_tag: ${{ steps.tag.outputs.tag }}
+      release_tag: ${{ steps.meta.outputs.tag }}
+      vline: ${{ steps.meta.outputs.vline }}
 
     steps:
       - name: Checkout
@@ -66,40 +78,109 @@ jobs:
             libelf-dev libxml-parser-perl libtool-bin autoconf automake \
             cmake device-tree-compiler zstd swig python3 python3-dev
 
-      - name: Download source bundles
+      - name: Resolve source tag
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          want='${{ inputs.source_tag }}'
+          if [ -n "$want" ] && [ "$want" != auto ]; then
+            tag=$want
+          else
+            # 只认 3 个资产的 sources-vN；sources-v1 是 4 资产 legacy，跳过。
+            tag=''
+            for t in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+                         --json tagName --jq '.[].tagName' \
+                       | grep -E '^sources-v[0-9]+$' \
+                       | sed 's/^sources-v//' | sort -rn | head -20); do
+              [ "$t" -ge 2 ] || continue
+              cand="sources-v$t"
+              n=$(gh release view "$cand" --repo "$GITHUB_REPOSITORY" \
+                    --json assets --jq '.assets | length')
+              if [ "$n" = 3 ]; then tag=$cand; break; fi
+              echo "::$warning::$cand 有 $n 个资产，不是预期的 3 个，跳过"
+            done
+            [ -n "$tag" ] || { echo "::error::找不到可用的 sources-vN（N≥2，3 个资产）"; exit 1; }
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "使用源码包：$tag"
+
+      - name: Download source bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bundle"
           gh release download "$SOURCE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern 'sbe1v1k-sources-*.tar.zst' \
             --pattern 'SHA256SUMS' \
+            --pattern 'TREE-FINGERPRINT.json' \
             --dir "$RUNNER_TEMP/bundle"
-          ( cd "$RUNNER_TEMP/bundle" && sha256sum -c SHA256SUMS --ignore-missing )
-          ( cd "$RUNNER_TEMP/bundle" && sha256sum sbe1v1k-sources-*.tar.zst ) | tee source-bundles.sha256
+          n=$(find "$RUNNER_TEMP/bundle" -maxdepth 1 -type f | wc -l)
+          [ "$n" = 3 ] || { echo "::error::$SOURCE_TAG 应恰好 3 个资产，实际下载 $n 个"; exit 1; }
+          ( cd "$RUNNER_TEMP/bundle" && sha256sum -c SHA256SUMS )
           ls -lh "$RUNNER_TEMP/bundle"
 
-      - name: Extract source bundles
+      - name: Extract source bundle
         run: |
+          set -euo pipefail
           mkdir -p sources
-          for f in "$RUNNER_TEMP"/bundle/sbe1v1k-sources-*.tar.zst; do
-            echo "extracting $f"
-            tar --zstd -xf "$f" -C sources
-          done
+          tar --zstd -xf "$RUNNER_TEMP"/bundle/sbe1v1k-sources-*.tar.zst -C sources
           du -sh sources/*
+          for f in buildroot/Makefile luci/luci.mk README.md PROVENANCE.md \
+                   TREE-FINGERPRINT.json TREE-FINGERPRINT.tsv; do
+            [ -e "sources/$f" ] || { echo "::error::源码包缺少 $f"; exit 1; }
+          done
+
+      - name: Verify tree fingerprint
+        run: |
+          set -euo pipefail
+          ./24.10-6.6/scripts/ci/tree-fingerprint.sh \
+            --root sources \
+            --exclude 24.10-6.6/build/fingerprint-exclude.conf \
+            --profile fresh \
+            --out fp.json --tsv fp.tsv \
+            --compare sources/TREE-FINGERPRINT.tsv \
+            --known-delta 24.10-6.6/build/known-delta.conf
+
+      - name: Verify recipe hash
+        run: |
+          set -euo pipefail
+          want=$(sed -n 's/.*"recipe_sha256": "\([0-9a-f]*\)".*/\1/p' sources/TREE-FINGERPRINT.json)
+          got=$(./24.10-6.6/scripts/ci/recipe-hash.sh)
+          [ -n "$want" ] || { echo "::error::TREE-FINGERPRINT.json 里没有 recipe_sha256"; exit 1; }
+          if [ "$want" != "$got" ]; then
+            echo "::error::配方哈希不符：源码包 $want，本仓库 $got（装配输入在发布后被改过）"
+            exit 1
+          fi
+          echo "recipe_sha256 $got"
 
       - name: Prepare build tree
         run: ./24.10-6.6/scripts/ci/prepare-tree.sh "$GITHUB_WORKSPACE"
 
       - name: Render files overlay
-        # 快速失败：banner 占位符没替换成功就不要开始 2.5 小时的编译。
+        # 快速失败：banner 占位符没替换成功就不要开始数小时的编译。
+        # 必须排在 check-config 之前：冻结 .config 的等价性依赖 overlay 里的配置片段。
         run: ./24.10-6.6/scripts/render-overlay.sh
+
+      - name: Check frozen config
+        run: ./24.10-6.6/scripts/ci/check-config.sh "$GITHUB_WORKSPACE"
 
       - name: Verify thirdparty source pins
         # 只读校验：源码包里的第三方仓库 HEAD 必须等于文件 A 的 pin，
         # thirdparty-feed 的相对软链必须指向正确目录。
+        # 源码包不带 .git，所以按 pin/指纹信任（SBE_NO_GIT=1）。
+        env:
+          SBE_NO_GIT: '1'
         run: ./24.10-6.6/scripts/thirdparty-feeds.sh check
+
+      - name: Download third-party tarballs
+        # 源码包不含 dl/；先 make -k download 把第三方 tarball 取齐，
+        # 任何一条取不到都在这里失败并给出 DOWNLOAD_FAIL 清单。
+        run: ./24.10-6.6/scripts/ci/download-preflight.sh "$GITHUB_WORKSPACE"
 
       - name: Apply custom packages
         # 应用文件 B（应用开关）并逐包反查。defconfig 对未知包是静默丢弃的，
@@ -133,6 +214,14 @@ jobs:
           ( cd "$REL" && sha256sum openwrt-ipq95xx-generic-spectrum_sbe1v1k-* )
           ls -lh "$REL"
 
+      - name: Record release tag
+        if: success()
+        id: meta
+        run: |
+          echo "tag=v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}" >> "$GITHUB_OUTPUT"
+          VLINE=$(grep -m1 '^ Version:' sources/buildroot/files/etc/banner | sed 's/^ *//')
+          echo "vline=$VLINE" >> "$GITHUB_OUTPUT"
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -140,7 +229,11 @@ jobs:
           name: build-log-${{ github.run_number }}
           path: |
             build.log
-            source-bundles.sha256
+            download.log
+            download-fail.txt
+            check-config.log
+            config-diff.txt
+            fp.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -156,24 +249,39 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  release:
+    needs: build
+    if: success()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Download firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbe1v1k-firmware-${{ github.run_number }}
+          path: ${{ runner.temp }}/release
+
       - name: Create GitHub Release
-        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.release_tag }}
+          SOURCE_TAG: ${{ needs.build.outputs.source_tag }}
+          VLINE: ${{ needs.build.outputs.vline }}
         run: |
           set -eu
-          # 每次运行一个独立 Release：tag 带 run/attempt/短 SHA，重跑不覆盖旧产物。
-          TAG="v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}"
           REL="$RUNNER_TEMP/release"
-          VLINE=$(grep -m1 '^ Version:' sources/buildroot/files/etc/banner | sed 's/^ *//')
-
+          n=$(find "$REL" -maxdepth 1 -type f | wc -l)
+          [ "$n" = 3 ] || { echo "::error::固件资产应为 3 个，实际 $n"; exit 1; }
+          # 每次运行一个独立 Release：tag 带 run/attempt/短 SHA，重跑不覆盖旧产物。
           cat > "$REL/notes.md" <<EOF
           Spectrum SBE1V1K (IPQ9574) firmware — OpenWrt 24.10-SNAPSHOT + QSDK 14.0
 
           - 版本行：${VLINE}
           - 提交：\`${GITHUB_SHA}\`
           - 运行：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          - 源码包 Release：\`${SOURCE_TAG}\`（已通过 SHA256SUMS 校验，见构建日志）
+          - 源码包：\`${SOURCE_TAG}\`（SHA256SUMS、树指纹、配方哈希三道校验均通过）
 
           资产（恰好 3 个）：
           - \`openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin\`

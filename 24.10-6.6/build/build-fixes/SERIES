@@ -1,0 +1,38 @@
+# 24.10-6.6 装配期补丁序列。assemble-sources.sh 按本文件逐行应用，不按目录
+# 通配排序：文件名顺序只是给人看的，真正起作用的是这里的次序。
+#
+# 语法：<patch 文件><TAB><模式><TAB><目标><TAB><说明>
+#   tree            patch -p1 -d <buildroot> 应用；目标恒为 buildroot
+#   package-patch   原样复制进目标包的 patches/ 目录（构建期由 OpenWrt 应用）
+#                   target 是相对 buildroot 的目录，必须以 / 结尾
+#
+# 应用规则（脚本必须照做）：
+#   - 每条先 --dry-run，不通过即 ASSERTION_FAILED（禁止 `|| true`、禁止 fuzz）；
+#   - tree 模式应用后按 patch 里的 +++ b/ 路径逐条比对审计树哈希；
+#   - package-patch 只做复制，落盘文件名与第一列相同。
+#
+# 0004 为什么空号：procd 的 rcS 并发启动补丁必须**替换**上游
+# openwrt-patches/package/system/procd/patches/0002-…，而不是追加。
+# include/quilt.mk 会应用 openwrt-patches 下的 0002，再应用包自带的
+# package/system/procd/patches/*；两处都放就会把同一段代码打两遍。替换件
+# 放在 build/openwrt-patches/…，由 assembly-map.conf 的 copy-file 交付。
+#
+# 0007 为什么空号：wlan-hostapd 的共享 files/ 现在由 upstream-pins.conf 把整个
+# hostapd 包钉到 CodeLinaro feed 的 edfb839（自带 files/ 与 noextns 安装段），
+# 再打一条“新建这些文件”的补丁只会全部报 already exists。编号保留空位不重排。
+
+0001-kernel-drop-duplicate-ip6-vti.patch	tree	buildroot	ip6_vti 与 6.6 内核自带模块重名
+0002-kernel-6.6-report-6.6.147.patch	tree	buildroot	include/kernel-6.6 上报 6.6.147
+0003-tools-always-build-lzop.patch	tree	buildroot	always 包需要 lzop
+0005-qca-nss-phy-depend-on-hwmon-core.patch	tree	buildroot	nss-phy 缺 DEPENDS:=+kmod-hwmon-core
+0006-qca-nss-ecm-disable-multicast.patch	tree	buildroot	关闭 ECM 组播前端
+0008-qca-wifi-nss-plugins-emesh-gate.patch	tree	buildroot	emesh 插件按配置门控
+0009-mac80211-deterministic-build-id.patch	tree	buildroot	mac80211 可复现构建 ID
+0010-libev-drop-missing-ev-trace-header.patch	tree	buildroot	libev 缺 ev_trace.h
+0011-config-add-opkg-no-distfeeds.patch	tree	buildroot	新增 CONFIG_OPKG_NO_DISTFEEDS
+0012-base-files-honour-opkg-no-distfeeds.patch	tree	buildroot	distfeeds 生成受 0011 控制
+0013-kernel-crypto-fix-sha512-autoload.patch	tree	buildroot	sha512 模块 autoload 三元组修正
+0014-kernel-netfilter-drop-nf-flow-table-hw.patch	tree	buildroot	6.6 已无 nf_flow_table_hw
+0015-ubus-relative-libubus-symlink.patch	tree	buildroot	libubus.so.20231128 改相对软链
+0016-uci-relative-libuci-symlink.patch	tree	buildroot	libuci.so 改相对软链
+0017-openwrt-patches-busybox-drop-config-override.patch	tree	buildroot	去掉 QSDK busybox 配置覆盖（审计时从未生效）

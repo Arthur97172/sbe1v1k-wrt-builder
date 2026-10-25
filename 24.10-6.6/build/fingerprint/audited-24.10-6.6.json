@@ -1,0 +1,622 @@
+{
+  "aggregate_sha256": "2c8982d86c957780bcbfc1c40620f60b784016517dc211849fefe14e87b5250e",
+  "canonicalized_count": 1,
+  "canonicalized_files": [
+    "buildroot/feeds.conf"
+  ],
+  "dir_count": 19654,
+  "entry_count": 156058,
+  "errors": [],
+  "excluded": [
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/build_dir/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/staging_dir/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/tmp/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/bin/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/dl/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/files/"
+    },
+    {
+      "kind": "glob",
+      "matches": 9,
+      "pattern": "buildroot/feeds/*.index"
+    },
+    {
+      "kind": "glob",
+      "matches": 9,
+      "pattern": "buildroot/feeds/*.targetindex"
+    },
+    {
+      "kind": "glob",
+      "matches": 9,
+      "pattern": "buildroot/feeds/*.tmp"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/feeds/base"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/version"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/version.date"
+    },
+    {
+      "kind": "glob",
+      "matches": 4,
+      "pattern": "buildroot/key-build*"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/.config.old"
+    },
+    {
+      "kind": "glob",
+      "matches": 6,
+      "pattern": "buildroot/.config.*.bak"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/.config.*backup"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "luci/.git"
+    },
+    {
+      "kind": "glob",
+      "matches": 5,
+      "pattern": "apps/*/.git"
+    },
+    {
+      "kind": "glob",
+      "matches": 9,
+      "pattern": "thirdparty/*/.git"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/u-boot-2025/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/user_headers/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/include/generated/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/include/config/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/include/generated/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/asm/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/asm-generic/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/drm/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/fwctl/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/linux/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/misc/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/mtd/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/rdma/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/scsi/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/sound/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/video/"
+    },
+    {
+      "kind": "dir",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/include/xen/"
+    },
+    {
+      "kind": "glob",
+      "matches": 2193,
+      "pattern": "buildroot/qca/src/linux-6.6/*.o"
+    },
+    {
+      "kind": "glob",
+      "matches": 759,
+      "pattern": "buildroot/qca/src/linux-6.6/*.a"
+    },
+    {
+      "kind": "glob",
+      "matches": 111,
+      "pattern": "buildroot/qca/src/linux-6.6/*.ko"
+    },
+    {
+      "kind": "glob",
+      "matches": 4337,
+      "pattern": "buildroot/qca/src/linux-6.6/*.cmd"
+    },
+    {
+      "kind": "glob",
+      "matches": 111,
+      "pattern": "buildroot/qca/src/linux-6.6/*.mod"
+    },
+    {
+      "kind": "glob",
+      "matches": 111,
+      "pattern": "buildroot/qca/src/linux-6.6/*.mod.c"
+    },
+    {
+      "kind": "glob",
+      "matches": 775,
+      "pattern": "buildroot/qca/src/linux-6.6/*.order"
+    },
+    {
+      "kind": "glob",
+      "matches": 2,
+      "pattern": "buildroot/qca/src/linux-6.6/*.symvers"
+    },
+    {
+      "kind": "glob",
+      "matches": 329,
+      "pattern": "buildroot/qca/src/linux-6.6/*.dtb"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.dtbo"
+    },
+    {
+      "kind": "glob",
+      "matches": 987,
+      "pattern": "buildroot/qca/src/linux-6.6/*.tmp"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/.initramfs_data.cpio.d"
+    },
+    {
+      "kind": "glob",
+      "matches": 22,
+      "pattern": "buildroot/qca/src/linux-6.6/lib/test_fortify/*.log.d"
+    },
+    {
+      "kind": "glob",
+      "matches": 2,
+      "pattern": "buildroot/qca/src/linux-6.6/*.lex.c"
+    },
+    {
+      "kind": "glob",
+      "matches": 2,
+      "pattern": "buildroot/qca/src/linux-6.6/*.tab.c"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/lib/test_fortify.log"
+    },
+    {
+      "kind": "glob",
+      "matches": 22,
+      "pattern": "buildroot/qca/src/linux-6.6/lib/test_fortify/*.log"
+    },
+    {
+      "kind": "glob",
+      "matches": 7,
+      "pattern": "buildroot/qca/src/linux-6.6/.config*"
+    },
+    {
+      "kind": "glob",
+      "matches": 3,
+      "pattern": "buildroot/qca/src/linux-6.6/*.prepared*"
+    },
+    {
+      "kind": "glob",
+      "matches": 3,
+      "pattern": "buildroot/qca/src/linux-6.6/*.checked-*"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.built"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.dep_files"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.image"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.modules"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.scmversion"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.vermagic"
+    },
+    {
+      "kind": "glob",
+      "matches": 7,
+      "pattern": "buildroot/qca/src/linux-6.6/*.tmp_vmlinux*"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*.vmlinux.export.c"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/vmlinux"
+    },
+    {
+      "kind": "glob",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/*System.map"
+    },
+    {
+      "kind": "glob",
+      "matches": 2,
+      "pattern": "buildroot/qca/src/linux-6.6/*modules.builtin*"
+    },
+    {
+      "kind": "glob",
+      "matches": 2,
+      "pattern": "buildroot/qca/src/linux-6.6/*kernel/config_data*"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/init/utsversion-tmp.h"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/lib/crc32table.h"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/lib/gen_crc32table"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/drivers/scsi/scsi_devinfo_tbl.c"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/boot/Image"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/kernel/vmlinux.lds"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/kernel/vdso/vdso.lds"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/kernel/vdso/vdso.so"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/kernel/vdso/vdso.so.dbg"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/basic/fixdep"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/dtc/dtc"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/dtc/fdtoverlay"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/dtc/dtc-parser.tab.h"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/kallsyms"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/kconfig/conf"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/kconfig/parser.tab.h"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/mod/modpost"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/mod/mk_elfconfig"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/mod/elfconfig.h"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/mod/devicetable-offsets.h"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/mod/devicetable-offsets.s"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/module.lds"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/sorttable"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/scripts/unifdef"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/crypto/sha512-core.S"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/arch/arm64/kernel/asm-offsets.s"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/kernel/bounds.s"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/gen_init_cpio"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/initramfs_data.cpio"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/src/linux-6.6/usr/initramfs_inc_data"
+    },
+    {
+      "kind": "glob",
+      "matches": 9,
+      "pattern": "buildroot/scripts/config/*.o"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/scripts/config/conf"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/contrib/lemon"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/jsmin"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/jsmin.o"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/po2lmo"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/po2lmo.o"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/lib/lmo.o"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/lib/plural_formula.c"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/lib/plural_formula.h"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "luci/modules/luci-base/src/lib/plural_formula.o"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/.config.sbe-bak"
+    },
+    {
+      "kind": "path",
+      "matches": 1,
+      "pattern": "buildroot/qca/feeds/nss/clients/qca-nss-ecm/Makefile.orig"
+    }
+  ],
+  "file_count": 136103,
+  "link_count": 301,
+  "profile": "audited",
+  "recipe_sha256": "-",
+  "root_subtrees": [
+    "buildroot",
+    "luci",
+    "apps",
+    "thirdparty",
+    "thirdparty-feed",
+    "passwall-selected",
+    "local-relayout",
+    "PROVENANCE.md",
+    "README.md"
+  ],
+  "schema": "sbe1v1k-tree-fingerprint/1",
+  "source_date_epoch": "-",
+  "subtrees": {
+    "PROVENANCE.md": {
+      "entries": 1,
+      "sha256": "69ef32fe98751a943a810f09ccd51a59d1f7e93899df0d0cc2c3c0918a04a3f6"
+    },
+    "README.md": {
+      "entries": 1,
+      "sha256": "9e355eea224ceccb99da3fae4b73ab32d6cdc9c4d2febe4d3032fa28d1e7da0a"
+    },
+    "apps": {
+      "entries": 357,
+      "sha256": "20b15c58ca234ee18124bebbf29c065afcd43f02db490fdb2eaa5c1383d73f21"
+    },
+    "buildroot": {
+      "entries": 142257,
+      "sha256": "4d367902935f007e56c53ad159f8a5a3dc098d5de9008b1c159bb85125ac19dc"
+    },
+    "local-relayout": {
+      "entries": 9,
+      "sha256": "3a225d685398661273f4e8259c81d62c8bca8889286e513a631d98a06ddcdf40"
+    },
+    "luci": {
+      "entries": 10619,
+      "sha256": "9fcc73708ae3d0347da9647ba608b90539da74114676c278c4126efbc85594cc"
+    },
+    "passwall-selected": {
+      "entries": 964,
+      "sha256": "e8148032f66705d7e7b065c7364e4db9b057127418d496d725af180a641a1254"
+    },
+    "thirdparty": {
+      "entries": 1838,
+      "sha256": "f08df136e39e4c98388bed240328c87b5737cf9faf2f682920a9a528dc4539de"
+    },
+    "thirdparty-feed": {
+      "entries": 12,
+      "sha256": "920df30422d5bc9bbd09637139f8d67d803db6cdb65ee9583d59783c8222bab8"
+    }
+  }
+}

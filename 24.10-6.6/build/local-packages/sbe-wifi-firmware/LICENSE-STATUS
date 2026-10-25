@@ -1,0 +1,17 @@
+License status: LICENSE_REVIEW_REQUIRED
+
+The files shipped by this package are proprietary binaries extracted verbatim
+from the vendor firmware image distributed with the Spectrum SBE1V1K
+(QSDK14, package sbe-full-candidate version 23).
+
+    lib/firmware/ath12k/QCN92XX/hw1.0/firmware-2.bin
+    lib/firmware/ath12k/QCN92XX/hw1.0/board-2.bin
+    lib/firmware/ath12k/QCN92XX/hw1.0/regdb.bin
+    usr/share/sbe-wifi/bdf41/b1.bin
+    usr/share/sbe-wifi/bdf41/b2.bin
+    usr/share/sbe-wifi/bdf41/b4.bin
+
+Their redistribution terms have not been reviewed.  This package exists only
+for local, self-built use on hardware the owner possesses (project decision
+N-3).  Do not redistribute any image built with it until the license review
+is complete.  Per-file SHA-256 sums are in files/FILES-SHA256.

@@ -1,0 +1,19 @@
+target: ipq95xx: enable the RTL8261N PHY driver
+
+The SBE1V1K routes the 10G port through a Realtek RTL8261N; without
+CONFIG_RTL8261N_PHY the dp1 link never comes up.  The driver itself is supplied
+by build/kernel-overlay (18 files, SPDX GPL-2.0-only, provenance recorded in
+docs/SOURCE_ASSEMBLY.md).
+
+Apply from target/linux/feeds:  patch -p1 < 0001-...
+
+--- a/ipq95xx/config-6.6
++++ b/ipq95xx/config-6.6
+@@ -357,6 +357,7 @@
+ CONFIG_CNSS2_QCA9574_SUPPORT=y
+ CONFIG_QCA807X_PHY=y
+ CONFIG_QCA808X_PHY=y
++CONFIG_RTL8261N_PHY=y
+ # CONFIG_CNSS2_CALIBRATION_SUPPORT is not set
+ # CONFIG_CNSS2_DEBUG is not set
+ CONFIG_CNSS2_GENL=y

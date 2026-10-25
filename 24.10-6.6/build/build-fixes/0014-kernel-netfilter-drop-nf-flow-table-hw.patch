@@ -1,0 +1,27 @@
+kernel: netfilter: drop nf_flow_table_hw
+
+CONFIG_NF_FLOW_TABLE_HW and its module were folded into nf_flow_table in
+Linux 6.6; the tree has neither.  Autoloading nf_flow_table_hw only
+produced a failed modprobe on every boot (G3.5-c, finding F7).
+
+Apply from the buildroot top:  patch -p1 < 0014-...
+
+--- a/package/kernel/linux/modules/netfilter.mk
++++ b/package/kernel/linux/modules/netfilter.mk
+@@ -210,11 +210,13 @@
+   TITLE:=Netfilter flowtable support
+   KCONFIG:= \
+ 	CONFIG_NETFILTER_INGRESS=y \
+-	CONFIG_NF_FLOW_TABLE \
+-	CONFIG_NF_FLOW_TABLE_HW
++	CONFIG_NF_FLOW_TABLE
+   DEPENDS:=+kmod-nf-conntrack
+   FILES:= $(LINUX_DIR)/net/netfilter/nf_flow_table.ko
+-  AUTOLOAD:=$(call AutoProbe,nf_flow_table nf_flow_table_hw)
++  # G3.5-c (F7): CONFIG_NF_FLOW_TABLE_HW and its module nf_flow_table_hw were
++  # folded into nf_flow_table in Linux 6.6 (no such symbol/module in this
++  # tree), so autoloading it only produced a failed modprobe on boot.
++  AUTOLOAD:=$(call AutoProbe,nf_flow_table)
+ endef
+ 
+ $(eval $(call KernelPackage,nf-flow))

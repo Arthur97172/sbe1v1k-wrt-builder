@@ -1,0 +1,24 @@
+base-files: honour CONFIG_OPKG_NO_DISTFEEDS
+
+Companion of 0011: when the symbol is set, write a single explanatory
+comment into distfeeds.conf instead of the generated feed list.
+
+Apply from the buildroot top:  patch -p1 < 0012-...
+
+--- a/package/base-files/Makefile
++++ b/package/base-files/Makefile
+@@ -259,8 +259,12 @@
+ else
+ 	$(if $(CONFIG_CLEAN_IPKG),, \
+ 		mkdir -p $(1)/etc/opkg; \
+-		$(call FeedSourcesAppendOPKG,$(1)/etc/opkg/distfeeds.conf); \
+-		$(VERSION_SED_SCRIPT) $(1)/etc/opkg/distfeeds.conf)
++		$(if $(CONFIG_OPKG_NO_DISTFEEDS), \
++			echo '# Distribution feeds disabled: this image ships a fixed package set.' >$(1)/etc/opkg/distfeeds.conf; \
++		, \
++			$(call FeedSourcesAppendOPKG,$(1)/etc/opkg/distfeeds.conf); \
++			$(VERSION_SED_SCRIPT) $(1)/etc/opkg/distfeeds.conf; \
++		))
+ 	$(if $(CONFIG_IPK_FILES_CHECKSUMS),, \
+ 		rm -f $(1)/sbin/pkg_check)
+ endif

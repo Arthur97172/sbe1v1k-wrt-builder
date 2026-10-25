@@ -1,0 +1,18 @@
+ubus: install libubus.so.20231128 as a relative symlink
+
+The QSDK base links the compatibility name to an absolute host path
+($(PKG_INSTALL_DIR)/...), which lands in the image as a dangling link.
+
+Apply from the buildroot top:  patch -p1 < 0015-...
+
+--- a/package/system/ubus/Makefile
++++ b/package/system/ubus/Makefile
+@@ -71,7 +71,7 @@
+ define Package/libubus/install
+ 	$(INSTALL_DIR) $(1)/lib
+ 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libubus.so.* $(1)/lib/
+-	ln -s $(PKG_INSTALL_DIR)/usr/lib/libubus.so.$(PKG_ABI_VERSION)  $(1)/lib/libubus.so.20231128
++	ln -s libubus.so.$(PKG_ABI_VERSION) $(1)/lib/libubus.so.20231128
+ endef
+ 
+ define Package/libubus-lua/install

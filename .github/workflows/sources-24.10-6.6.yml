@@ -1,0 +1,245 @@
+name: 🧱 Assemble 24.10-6.6 sources
+
+# 从公开上游 + 本仓库的装配输入重建 24.10-6.6 的源码树，并（可选）发布成
+# sources-vN。这是“把代码放到 GitHub 让 Actions 自己生产源码包”的那一半：
+# 仓库只提交几 MB 文本（钉定表、补丁、配置、指纹基线），Actions 自己去
+# CodeLinaro / GitHub 取 37 个固定提交，装配、验证、打包。
+#
+# 三条硬约束：
+#   - 只按 40 位 commit 取，取不到即 SOURCE_UNAVAILABLE，绝不降级到分支头；
+#   - 装配结果必须与 build/fingerprint/audited-24.10-6.6.tsv.zst 完全一致
+#     （未解释差异 > 0 即 FAIL），这是“重建的树 == 已审计的树”的唯一证据；
+#   - 发布恰好 3 个资产：tar.zst、SHA256SUMS、TREE-FINGERPRINT.json。
+#
+# 手动发布（workflow_dispatch，publish=true）才建 Release；push 触发只验证。
+# 不改路由器、不刷机、不接触任何设备。
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: '发布为 sources-vN'
+        required: true
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      tag:
+        description: '指定 tag（留空 = sources-v<已有最大 +1>）'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sources-24.10-6.6.yml'
+      - '24.10-6.6/build/**'
+      - '24.10-6.6/docs/**'
+      - '24.10-6.6/scripts/ci/assemble-sources.sh'
+      - '24.10-6.6/scripts/ci/export-sources.sh'
+      - '24.10-6.6/scripts/ci/tree-fingerprint.sh'
+      - '24.10-6.6/scripts/ci/recipe-hash.sh'
+      - '24.10-6.6/scripts/thirdparty-feeds.sh'
+      # 24.10 的 6 个厂商 Wi-Fi blob 取自 25.12 的已提交副本（跨版本耦合）
+      - '25.12-6.12/build/local-packages/sbe-wifi-firmware/**'
+
+concurrency:
+  group: assemble-24.10-sources
+  cancel-in-progress: false
+
+env:
+  SOURCE_DATE_EPOCH: '1792557977'
+  TZ: UTC
+  LC_ALL: C
+  SBE_MIN_FREE_GB: '25'
+
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      "${AGENT_TOOLSDIRECTORY:-}" || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates git rsync patch python3 zstd coreutils findutils \
+            tar gzip
+          git --version; zstd --version; patch --version | head -1
+
+      - name: Assemble sources
+        run: |
+          set -o pipefail
+          ./24.10-6.6/scripts/ci/assemble-sources.sh \
+            --stage "$RUNNER_TEMP/stage" \
+            --compare 24.10-6.6/build/fingerprint/audited-24.10-6.6.tsv.zst \
+            2>&1 | tee assemble-sources.log
+
+      - name: Export bundle
+        run: |
+          ./24.10-6.6/scripts/ci/export-sources.sh \
+            --stage "$RUNNER_TEMP/stage" \
+            --out "$RUNNER_TEMP/dist" 2>&1 | tee export-sources.log
+
+      - name: Write release notes
+        run: |
+          set -euo pipefail
+          F="$RUNNER_TEMP/stage/fingerprint.json"
+          recipe=$(./24.10-6.6/scripts/ci/recipe-hash.sh)
+          agg=$(sed -n 's/.*"aggregate_sha256": "\([0-9a-f]*\)".*/\1/p' "$F")
+          entries=$(sed -n 's/.*"entry_count": \([0-9]*\).*/\1/p' "$F")
+          tar_sha=$(cut -d' ' -f1 "$RUNNER_TEMP/dist/SHA256SUMS")
+          tar_mb=$(( $(stat -c '%s' "$RUNNER_TEMP"/dist/*.tar.zst) / 1000 / 1000 ))
+          {
+            echo "## 24.10-6.6 源码装配"
+            echo
+            echo '```'
+            echo "recipe_sha256    $recipe"
+            echo "aggregate_sha256 $agg"
+            echo "entries          $entries"
+            echo "tar_sha256       $tar_sha"
+            echo "tar_size         ${tar_mb} MB"
+            echo '```'
+            echo
+            echo "### 上游钉定（$(grep -cE '^[^#[:space:]]' 24.10-6.6/build/upstream-pins.conf) 个）"
+            echo
+            echo '```'
+            grep -E '^[^#[:space:]]' 24.10-6.6/build/upstream-pins.conf \
+              | awk -F'\t' '{printf "%-6s %s %s\n", $4, substr($3,1,12), $1}'
+            echo '```'
+            echo
+            echo "指纹与已审计基线（build/fingerprint/audited-24.10-6.6.tsv.zst）逐文件一致，"
+            echo "未解释差异为 0。指纹只证明**源码树**与审计树相同，"
+            echo "不证明固件逐字节可复现（工具链、签名密钥、时间戳不同）。"
+            echo
+            echo "- 本包**不含** \`dl/\`：构建端跑 \`make -k download\` 自行取第三方 tarball。"
+            echo "- \`sources-v1\` 为 legacy（4 个资产、含 dl），新构建请用 \`sources-v2\` 起。"
+            echo "- 6 个厂商 Wi-Fi blob 的许可状态仍是 **LICENSE_REVIEW_REQUIRED**，"
+            echo "  不因为“来自本仓库”而改变。"
+            echo "- qsdk 基座来自个人镜像 everything411/qsdk（单提交，无历史），"
+            echo "  仅用于复现已审计字节；kernel/target/files/patches 等均已换成 CodeLinaro 固定提交。"
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbe1v1k-sources-24.10-6.6
+          path: ${{ runner.temp }}/dist/*
+          retention-days: 14
+
+      - name: Upload release notes
+        # notes.md 不能放进 dist：publish 任务断言 dist 里恰好 3 个文件。
+        # 单独一个 artifact 传过去，避免发布任务重新计算（它没有装配树）。
+        uses: actions/upload-artifact@v4
+        with:
+          name: sources-release-notes
+          path: ${{ runner.temp }}/notes.md
+          retention-days: 2
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assemble-logs
+          path: |
+            assemble-sources.log
+            export-sources.log
+            ${{ runner.temp }}/stage/assemble.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    needs: assemble
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: sbe1v1k-sources-24.10-6.6
+          path: ${{ runner.temp }}/dist
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: sources-release-notes
+          path: ${{ runner.temp }}
+
+      - name: Assert exactly 3 assets
+        run: |
+          set -euo pipefail
+          ls -l "$RUNNER_TEMP/dist"
+          n=$(find "$RUNNER_TEMP/dist" -maxdepth 1 -type f | wc -l)
+          [ "$n" = 3 ] || { echo "::error::资产数应为 3，实际 $n"; exit 1; }
+          ( cd "$RUNNER_TEMP/dist" && sha256sum -c SHA256SUMS )
+
+      - name: Pick tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          want='${{ inputs.tag }}'
+          if [ -n "$want" ]; then
+            tag=$want
+          else
+            max=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+                    --json tagName --jq '.[].tagName' \
+                  | grep -E '^sources-v[0-9]+$' | sed 's/^sources-v//' | sort -n | tail -1 || true)
+            tag="sources-v$(( ${max:-1} + 1 ))"
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::tag $tag 已存在；拒绝覆盖已发布的源码包"; exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "将发布：$tag"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "24.10-6.6 sources ($TAG)" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest=false \
+            "$RUNNER_TEMP"/dist/*.tar.zst \
+            "$RUNNER_TEMP"/dist/SHA256SUMS \
+            "$RUNNER_TEMP"/dist/TREE-FINGERPRINT.json
+
+      - name: Verify published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          n=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
+          [ "$n" = 3 ] || { echo "::error::$TAG 的资产数应为 3，实际 $n"; exit 1; }
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.size)"'

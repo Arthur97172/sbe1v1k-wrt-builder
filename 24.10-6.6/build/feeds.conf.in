@@ -1,0 +1,24 @@
+# SBE1V1K build — feed definitions (assembled 2026-10-21)
+# The QSDK base tree ships its feed content inside qca/feeds/ instead of a
+# feeds.conf.  Only the feeds required by the ipq95xx target's DEFAULT_PACKAGES
+# are linked for the first (minimal) build:
+#   bootloader      -> uboot-ipq9574-*, uboot-2025-ipq9574-*
+#   platform_utils  -> kmod-usb-phy-ipq807x, kmod-usb-dwc3-qcom-internal,
+#                      sysupgrade-helper
+# Stage 3 (approved 2026-10-21) additionally links:
+#   nss             -> qca-nss-dp / qca-nss-ppe / qca-ssdk / qca-nss-ecm
+#   wlan-open       -> mac80211 + ath12k backports (local source in qca/src)
+#   wlan-hostapd    -> QSDK hostapd/wpad (fixed commit 8990591d...)
+# See docs/STAGE3_INTEGRATION_PLAN.md.
+src-link bootloader qca/feeds/bootloader
+src-link platform_utils qca/feeds/platform_utils
+src-link nss qca/feeds/nss
+src-link wlan_open qca/feeds/wlan-open/mac80211
+src-link wlan_hostapd qca/feeds/wlan-hostapd
+src-link packages qca/feeds/packages
+src-link luci ../luci
+src-link sbe1v1k_apps ../apps
+# G3.9 (2026-10-22) — third-party apps, pinned per-repo symlinks and the
+# curated passwall package subset.  See sources/PROVENANCE.md §2.9.
+src-link thirdparty ../thirdparty-feed
+src-link passwall_selected ../passwall-selected

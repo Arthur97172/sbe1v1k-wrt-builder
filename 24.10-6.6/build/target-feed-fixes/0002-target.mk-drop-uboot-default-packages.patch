@@ -1,0 +1,38 @@
+target: ipq95xx: drop the 16 uboot-* default packages
+
+Each of them is an empty metapackage that installs no files, yet forces a full
+U-Boot build per variant.  The board boots the vendor U-Boot; nothing in this
+image is allowed to flash one.  uboot-envtools (fw_printenv) comes in through
+its own dependency and is unaffected.
+
+Apply from target/linux/feeds:  patch -p1 < 0002-...
+
+--- a/ipq95xx/generic/target.mk
++++ b/ipq95xx/generic/target.mk
+@@ -7,21 +7,10 @@
+ 	Build images for IPQ95xx 64 bit system.
+ endef
+ 
++# G3.5-c (F6): the 16 uboot-* entries below are empty metapackages — every
++# one installs no files.  They only added opkg metadata and forced a full
++# U-Boot build for each variant.  The device boots the vendor U-Boot and
++# never installs one from this image, so they are dropped.  uboot-envtools
++# (fw_printenv) is pulled in by its own dependency and is unaffected.
+ DEFAULT_PACKAGES += \
+-	uboot-ipq9574-mmc \
+-	uboot-ipq9574-norplusmmc \
+-	uboot-ipq9574-norplusnand \
+-	uboot-ipq9574-nand \
+-	uboot-ipq9574-debug-mmc \
+-	uboot-ipq9574-debug-norplusmmc \
+-	uboot-ipq9574-debug-norplusnand \
+-	uboot-ipq9574-debug-nand \
+-	uboot-2025-ipq9574-mmc \
+-	uboot-2025-ipq9574-norplusmmc \
+-	uboot-2025-ipq9574-norplusnand \
+-	uboot-2025-ipq9574-nand \
+-	uboot-2025-ipq9574-debug-mmc \
+-	uboot-2025-ipq9574-debug-norplusmmc \
+-	uboot-2025-ipq9574-debug-norplusnand \
+-	uboot-2025-ipq9574-debug-nand \
+ 	sysupgrade-helper

@@ -2,8 +2,11 @@
 
 OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Linux 6.6）。
 
-本目录只放**编译必需**的文件；装配好的源码树（约 2.4 GB）不在这里，而是作为
-Release 资产 `sources-v1` 保存，由 CI 下载并校验 SHA-256 后解包到 `sources/`。
+本目录只放**编译必需的输入**；装配好的源码树（约 2.4 GB）不在这里。CI 由
+`.github/workflows/sources-24.10-6.6.yml` 从公开上游 + 本目录的引脚/补丁/配置现场装配，
+发布成 Release 资产 `sources-vN`，再由构建 workflow 下载、校验、解包到 `sources/`。
+需要人工上传的文件已经没有了。装配配方见 [docs/SOURCE_ASSEMBLY.md](docs/SOURCE_ASSEMBLY.md)，
+流水线说明见 [docs/CI_BUILD.md](docs/CI_BUILD.md)。
 
 ## 目录
 
@@ -17,7 +20,7 @@ Release 资产 `sources-v1` 保存，由 CI 下载并校验 SHA-256 后解包到
 │   ├── custom-packages.conf          文件 B：应用开关清单（改这个）
 │   ├── custom-packages-options.conf  技术性固定选项（每轮重放，勿随意删）
 │   ├── thirdparty-feeds.conf         文件 A：第三方源地址与固定提交
-│   ├── build-fixes/  local-packages/  p-b/   装配期改动与本地软件包
+│   ├── build-fixes/  openwrt-patches/  local-packages/  p-b/   装配期改动与本地软件包
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
@@ -29,9 +32,14 @@ Release 资产 `sources-v1` 保存，由 CI 下载并校验 SHA-256 后解包到
     ├── thirdparty-feeds.sh   check / fetch 文件 A 登记的第三方源码
     ├── check-kernel.sh       查 CodeLinaro 厂商内核是否有更新；可确认后升级
     └── ci/
-        ├── prepare-tree.sh   仅 CI：重写 feeds 绝对路径、重建 host-bin、固定时间戳
-        ├── verify-image.sh   从最终 sysupgrade 镜像解出 rootfs 做静态校验
-        └── export-sources.sh 本地导出源码包（发布到 sources-* Release）
+        ├── assemble-sources.sh  装配入口（Actions 用它生成 sources-vN）
+        ├── tree-fingerprint.sh  树指纹与审计基线比对
+        ├── check-config.sh      冻结 .config 等价门禁
+        ├── download-preflight.sh  make -k download 预检
+        ├── recipe-hash.sh       装配输入哈希
+        ├── prepare-tree.sh      仅 CI：重建 host-bin、固定时间戳、残留断言
+        ├── verify-image.sh      从最终 sysupgrade 镜像解出 rootfs 做静态校验
+        └── export-sources.sh    把装配 stage 打成源码包（tar.zst + SHA256SUMS + 指纹）
 ```
 
 ## LuCI（Web 管理界面）
@@ -140,11 +148,12 @@ local <feed-name> <path>
 2. `scripts/thirdparty-feeds.sh fetch` 拉取；
 3. `build/sbe1v1k-build.sh defconfig`，确认 `.config` 没有意外变化；
 4. 更新 `sources/PROVENANCE.md` §2.9 的 pin 与许可证记录；
-5. `scripts/ci/export-sources.sh` 重新导出源码包并上传到 Release，
-   更新工作流使用的 `SOURCE_TAG` / 校验和。
+5. 提交并 push；等 `sources-24.10-6.6.yml` 验证通过后手动 `publish=true` 发新的
+   `sources-vN`，构建 workflow 的 `source_tag=auto` 会自动用最新的一版。
 
 第 5 步不能省：**CI 编译用的是源码包，不是本地 `sources/`**，只改文件 A
-不会影响 CI。
+不会影响 CI。装配输入（`build/**`、四个装配脚本、25.12 的 Wi-Fi blob）一有 push，
+装配 workflow 就会重新验证并比对新指纹。
 
 ### 检查与升级内核
 
@@ -165,6 +174,10 @@ local <feed-name> <path>
 - **升级**：浅克隆该分支（数 GB、10–40 分钟）→ 换 `qca/src/linux-6.6` →
   同步 `include/kernel-6.6` 的 `LINUX_VERSION-6.6` → 改名并更新
   `build-fixes/0002-kernel-6.6-report-*.patch`。**不编译**。
+- **构建前预检**：`build/sbe1v1k-build.sh` 在交互终端里（stdin 与 stdout 都是终端）
+  会先跑一次 `check-kernel.sh`，有更新就询问，答 `y` 则自动升级并在编译前执行
+  `make target/linux/clean`。CI、管道、脚本调用**一律跳过**（构建脚本只在预检这一处联网）；
+  `SBE_KERNEL_CHECK=0` 关掉预检，`=1` 在非交互环境里只检查、不提示。
 - **备份**：旧树在 `sources/.kernel-backup/linux-6.6.<旧版本>-<时间戳>/`，
   含 `tree`、`0002.patch`、`state`。不能放进 `qca/src/` —— 那里的 `linux-*.*`
   会被 `ipq95xx/Makefile:13` 的 glob 一起匹配。中途失败会自动回滚。
@@ -184,8 +197,10 @@ make -C sources/buildroot target/linux/clean
 ```
 
 `target/linux/feeds/ipq95xx/config-6.6` 可能需要补新符号；`files-6.6` 里的
-sbe1v1k DTS 由 make 每次拷进新树，无需手工处理。CI 用的是 `sources-v1` 源码包，
-要重新导出上传才生效；新内核在编译与真机验证前一律记为 `UNVERIFIED` / `NOT TESTED`。
+sbe1v1k DTS 由 make 每次拷进新树，无需手工处理。CI 用的内核由装配 workflow 按
+`build/upstream-pins.conf` 的 CodeLinaro 提交现场取；换内核要先改那个 pin、
+重跑装配并发布新的 `sources-vN`。新内核在编译与真机验证前一律记为
+`UNVERIFIED` / `NOT TESTED`。
 
 ## 升级（sysupgrade）与 A/B 槽位
 
@@ -227,13 +242,21 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 
 ## CI
 
-`.github/workflows/build-24.10-6.6.yml`（`name: 📦 Build 24.10-6.6`）在 `main` 分支上，
-`24.10-6.6/**` 或工作流本身变更时触发（也可手动 `workflow_dispatch`，可指定源码包 tag）。
+两个 workflow，避免把几小时的编译和装配挤在一次运行里：
 
-流程：下载并校验源码包 → 解包到 `sources/` → `prepare-tree.sh` → `render-overlay.sh`
-（占位符没替换成功就立刻失败）→ `thirdparty-feeds.sh check`（pin/软链）→
-应用文件 B 并逐包反查 → 编译 → `verify-image.sh` → 上传日志/产物 →
-**每次运行新建一个 Release**，tag 为 `v<run>-<attempt>-<sha8>`，资产恰好三个固件文件。
+| workflow | 触发 | 产物 |
+|---|---|---|
+| `sources-24.10-6.6.yml` 🧱 | `build/**`、`docs/**`、四个装配脚本变更 / 手动 | Release `sources-vN`：源码包 + `SHA256SUMS` + 指纹（恰好 3 个） |
+| `build-24.10-6.6.yml` 📦 | `24.10-6.6/**` 变更 / 手动（可指定 `source_tag`） | Release `v<run>-<attempt>-<sha8>`：三个固件（恰好 3 个） |
+
+构建流程：`source_tag=auto` 挑最新的 `sources-vN`（N≥2、资产数恰好 3；`sources-v1` 是含
+`dl/` 的 legacy，跳过）→ `sha256sum -c` → 解包 → 树指纹比对（未解释差异必须为 0）→
+配方哈希比对 → `prepare-tree.sh` → `render-overlay.sh` → `check-config.sh` →
+`thirdparty-feeds.sh check` → `make -k download` 预检 → 应用文件 B 并逐包反查 →
+编译 → `verify-image.sh` → 发 Release。
+
+细节（每道门禁证明什么、失败怎么处理）见 [docs/CI_BUILD.md](docs/CI_BUILD.md)。
+两个 workflow 都尚未在 Actions 上实际运行过，记为 `NOT TESTED`。
 
 ## 注意
 

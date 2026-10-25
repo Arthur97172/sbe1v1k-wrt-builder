@@ -2,42 +2,28 @@ From: P-B device definition staging <noreply@sbe1v1k-build>
 Subject: [PATCH 0001] ipq95xx: image: add Spectrum SBE1V1K device
 
 Adds the device definition for the Askey/Spectrum SBE1V1K
-(IPQ9574 + 3 x QCN9224).  Destination inside the build tree:
-target/linux/ipq95xx/image/generic.mk
-(i.e. oss-system-feeds-target-ipq/ipq95xx/image/generic.mk).
+(IPQ9574 + 3 x QCN9224) to the pinned target feed.
 
-Why each non-default value is set:
+Regenerated 2026-10-25 against
+sources/codelinaro/oss-system-feeds-target-ipq @ 5494b2ac so that applying it
+to the pinned feed reproduces the audited tree byte for byte.  It carries three
+decisions that earlier revisions got wrong:
 
-  BUILD_DTS_ipq9574-sbe1v1k := 1
-      image.mk skips its own DTB compilation when this is set.  The DTS is
-      registered in the kernel's arch/arm64/boot/dts/qcom/Makefile by
-      patch 0002, so the kernel "dtbs" target compiles it exactly once.
+  * gzip FIT, not LZMA.  The factory U-Boot is built without CONFIG_LZMA and
+    cannot decompress IH_COMP_LZMA; both factory images ship a gzip FIT.
+  * tar sysupgrade container, not a raw kernel+rootfs pair, because mmc.sh
+    writes sysupgrade-<board>/{CONTROL,kernel,root} to "0:HLOS" / "rootfs".
+  * pad-rootfs-64k instead of pad-rootfs, so the root member size matches the
+    64 KiB overlay-alignment probe in fstools rootdisk.c.
 
-  KERNEL_LOADADDR := 0x42000000
-      Device/Default resolves to 0x40000000 because CONFIG_ENABLE_UBI_CORE is
-      not set for ipq95xx.  0x40000000 is the base of the 32 MiB
-      nss@40000000 reserved-memory window declared by the board DTS, so the
-      default would place the kernel inside a no-map reservation.
-      0x42000000 is the load address the Askey QSDK14 image uses for this
-      board (extracted/firmware-analysis-qsdk14/sysupgrade-askey_sbe1v1k).
-
-  IMAGE_SIZE := 96m
-      UNVERIFIED.  Vendor rootfs images measure 82.4 MiB (S1) and 52 MiB (S2);
-      96m is an upper bound that keeps the sysupgrade tar inside the largest
-      flash layout seen for this board.  Must be replaced with the real
-      partition size once it can be read from the device.
-
-  DEVICE_PACKAGES := kmod-leds-pwm kmod-hwmon-pwmfan
-      The board drives RGB LEDs and the fan through the IPQ9574 PWM
-      controller (vendor S1 DTB: pwm channels 0/1/2 for red/green/blue,
-      channel 3 for the fan).  CONFIG_PWM and CONFIG_PWM_IPQ are already =y
-      in ipq95xx/config-6.6; these two packages only add the consumer drivers.
-      No KEYBOARD_GPIO fragment is needed: kmod-gpio-button-hotplug (already
-      in DEFAULT_PACKAGES) replaces gpio_keys and clears its KCONFIG.
+Apply from target/linux/feeds:  patch -p1 < 0001-...
 
 --- a/ipq95xx/image/generic.mk
 +++ b/ipq95xx/image/generic.mk
-@@ -120,0 +121,23 @@
+@@ -118,3 +118,57 @@
+ endef
+ TARGET_DEVICES += qcom_db-al01-c2
+ 
 +# Spectrum SBE1V1K (Askey): IPQ9574 + 3 x QCN9224.
 +# DTS: arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts, registered in the
 +# kernel dts Makefile by patch 0002, hence BUILD_DTS_* := 1.
@@ -45,8 +31,39 @@ Why each non-default value is set:
 +# is not set for ipq95xx), which overlaps the 32 MiB nss@40000000 window
 +# reserved by the board DTS.  0x42000000 is what the Askey QSDK14 image uses.
 +# IMAGE_SIZE: UNVERIFIED, see docs/PB_DEVICE_DEFINITION.md.
++#
++# G3.5-b: use gzip, not LZMA, for the FIT kernel.  The factory U-Boot
++# (QSDK14 ipq9574 defconfigs) is built without CONFIG_LZMA, and U-Boot
++# only decompresses IH_COMP_LZMA when that option is enabled
++# (boot/image.c).  Both factory images (QSDK13 6.6.47 and QSDK14
++# 6.6.116) ship a gzip FIT, so gzip is the only compression proven to be
++# bootable by the vendor bootloader.
++#
++# The factory QSDK13 sysupgrade image is a tar container
++# (sysupgrade-<board>/{CONTROL,kernel,root}) written by mmc.sh to
++# "0:HLOS" and "rootfs".  mmc_do_flash() puts the rootfs_data ext4
++# filesystem at the tar member size, while mount_root (fstools
++# libfstools/rootdisk.c, ROOTDEV_OVERLAY_ALIGN) probes at
++# align_up(squashfs bytes_used, 64 KiB).  The two only agree when the
++# root member is exactly that aligned value, so normalise the image to
++# it:  extend with zeros or drop stale padding (e.g. a previous
++# padjffs2 run) instead of padding relative to the file size.
++# bytes_used is a little-endian u64 at offset 40 of the superblock; the
++# host is assumed little-endian (all supported OpenWrt build hosts).
++define Build/pad-rootfs-64k
++	set -e; \
++	bytes_used=$$(od -An -tu8 -j40 -N8 $(IMAGE_ROOTFS) | tr -d ' \n'); \
++	case "$$bytes_used" in ''|*[!0-9]*) \
++		echo "pad-rootfs-64k: cannot read squashfs bytes_used" >&2; \
++		exit 1; \
++	esac; \
++	target=$$(( (bytes_used + 65535) / 65536 * 65536 )); \
++	truncate -s $$target $(IMAGE_ROOTFS); \
++	echo "pad-rootfs-64k: bytes_used=$$bytes_used size=$$target"
++endef
++
 +define Device/spectrum_sbe1v1k
-+	$(call Device/FitImageLzma)
++	$(call Device/FitImage)
 +	DEVICE_VENDOR := Spectrum
 +	DEVICE_MODEL := SBE1V1K
 +	DEVICE_VARIANT :=
@@ -58,6 +75,6 @@ Why each non-default value is set:
 +	KERNEL_SIZE := $(if $(CONFIG_DEBUG),8680k,7000k)
 +	IMAGE_SIZE := 96m
 +	DEVICE_PACKAGES := kmod-leds-pwm kmod-hwmon-pwmfan
-+	IMAGE/sysupgrade.bin := append-kernel | pad-to $$$$(KERNEL_SIZE) | append-rootfs | pad-rootfs | append-metadata
++	IMAGE/sysupgrade.bin := pad-rootfs-64k | sysupgrade-tar | append-metadata
 +endef
 +TARGET_DEVICES += spectrum_sbe1v1k

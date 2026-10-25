@@ -1,0 +1,20 @@
+# 第三方树（thirdparty/luci-wifihistory）在审计树里的唯一一处本地改动。
+#
+# 来源：github.com/openwrt/luci @ 03c6023b0c7a93ba7d6e13b49e69917d5bce7fb7
+#       的 sources/wifihistory 分支，稀疏检出 applications/luci-app-wifihistory。
+# 原因：该分支的包位于仓库的 applications/ 下，原 Makefile 用相对路径
+#       `include ../../luci.mk` 指向仓库根的 luci.mk；我们只检出这一个子目录，
+#       相对路径会解析到 sources/thirdparty/luci.mk（不存在）。改成
+#       $(TOPDIR)/feeds/luci/luci.mk，指向 feeds/luci 的 luci.mk。
+# 验证：装配时先 --dry-run，应用后与审计树该文件逐字节一致（指纹覆盖）。
+#
+--- a/applications/luci-app-wifihistory/Makefile
++++ b/applications/luci-app-wifihistory/Makefile
+@@ -6,6 +6,6 @@
+ 
+ PKG_LICENSE:=Apache-2.0
+ 
+-include ../../luci.mk
++include $(TOPDIR)/feeds/luci/luci.mk
+ 
+ # call BuildPackage - OpenWrt buildroot signature

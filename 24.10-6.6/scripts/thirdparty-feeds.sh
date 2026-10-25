@@ -135,7 +135,8 @@ if [ "$CMD" = update ]; then
 	cat "$tmpf" > "$CONF"
 	rm -f "$tmpf"
 	pass "文件 A: $key -> $new"
-	echo "提醒：同步更新 sources/PROVENANCE.md §2.9，并重新导出/上传源码包后 CI 才会生效。"
+	echo "提醒：同步更新 build/upstream-pins.conf 与 docs/package/PROVENANCE.md §2.9；" \
+	     "push 后由 sources-24.10-6.6.yml 重新装配、发布新的 sources-vN 才对 CI 生效。"
 	CMD=fetch
 fi
 
@@ -167,9 +168,28 @@ while IFS= read -r raw; do
 			printf 'CLONE %s -> %s\n' "$key" "$vdir"
 			tmp="$dir.clone.$$"
 			rm -rf "$tmp"
-			if git clone -q --no-checkout "$url" "$tmp" \
-				&& git -C "$tmp" fetch -q --depth 1 origin "$commit" \
-				&& git -C "$tmp" checkout -q --detach FETCH_HEAD; then
+			# 按 40 位 commit 浅取，不拉整段历史：CI 上一个仓库的完整历史可能
+			# 上百 MB，而这里只要一个快照。取不到就失败，不降级到分支头。
+			if [ "${#commit}" -ne 40 ]; then
+				fail "$key 的 commit 必须是 40 位十六进制: $commit"
+				continue
+			fi
+			ok=0
+			if git init -q "$tmp" && git -C "$tmp" remote add origin "$url"; then
+				for try in 1 2 3; do
+					if [ "$try" = 3 ]; then
+						git -c http.version=HTTP/1.1 -C "$tmp" fetch -q --depth 1 \
+							origin "$commit" && ok=1
+					else
+						git -C "$tmp" fetch -q --depth 1 origin "$commit" && ok=1
+					fi
+					[ "$ok" = 1 ] && break
+					[ "$try" -lt 3 ] && { printf 'RETRY %s 第 %d 次\n' "$key" "$((try + 1))"; sleep 5; }
+				done
+			fi
+			if [ "$ok" = 1 ] \
+				&& git -C "$tmp" checkout -q --detach FETCH_HEAD \
+				&& [ "$(git -C "$tmp" rev-parse HEAD)" = "$commit" ]; then
 				mkdir -p "$(dirname "$dir")"
 				rm -rf "$dir"
 				mv "$tmp" "$dir"
@@ -182,6 +202,13 @@ while IFS= read -r raw; do
 		fi
 
 		if [ ! -d "$dir/.git" ]; then
+			# 从 sources-vN 源码包解出来的树不带 .git：包只装源码，VCS 元数据
+			# 由装配时的 pin 断言与 tree-fingerprint 承担。CI 用 SBE_NO_GIT=1
+			# 声明这一点；本地审计树仍要求 .git，避免“以为在校验 pin”。
+			if [ "${SBE_NO_GIT:-0}" = 1 ]; then
+				skip "$key 无 .git（源码包不带 VCS 元数据；pin 已由指纹与 recipe_sha256 钉住）"
+				continue
+			fi
 			fail "$key 没有 .git，无法校验 pin（$vdir；如需重建请手工移除该目录后 fetch）"
 			continue
 		fi
