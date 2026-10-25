@@ -577,7 +577,7 @@ ERROR: package/feeds/nss/qca-ssdk failed to build (build variant: nohnat).
 |---|---|
 | 本机 `package/qca-ssdk/clean` 后干净重编（GCC 14.3、`-Werror`） | PASS（`compile#205.33#21.13#227.39`，0 error/warning；`ssdk_plat.o` 含 `qca_ssdk_switch_reg_read/write`；产出 `kmod-qca-ssdk-nohnat-6.12.112-r1.apk` 633.2 KB） |
 | 补丁在 12 个既有补丁之后按序应用、结果与手工编辑树逐字节相同 | PASS（`diff -r` 无差异） |
-| CI（`make world` 全量） | NOT TESTED |
+| CI（`make world` 全量） | PASS（run `40183887734`，2026-10-25 10:14→11:10 UTC，55m40s；`Build`、`Verify image (static)`、`Create GitHub Release` 全部 success；Release `v12-1-5dda9f3b-25.12-6.12` 恰好 3 个资产） |
 | 模块加载与交换芯片寄存器实际读写 | NOT TESTED |
 | 真机启动/以太网/升级 | NOT TESTED |
 

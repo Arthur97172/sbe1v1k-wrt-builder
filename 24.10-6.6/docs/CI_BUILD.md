@@ -3,10 +3,11 @@
 本文件说明 GitHub Actions 上的两个 workflow 各自做什么、用什么证明“编译的就是已审计的源码”，
 以及出问题时应先看哪一道门禁。装配配方本身见 [SOURCE_ASSEMBLY.md](SOURCE_ASSEMBLY.md)。
 
-> 状态：装配 workflow 已在 Actions 上跑通并发布 `sources-v2`（PASS）。构建 workflow 已跑到
-> 编译阶段，在 `sysupgrade-helper` 上失败（run `40176273728`）；根因是装配时剪掉了这个包的
-> 源码树 `qca/src/u-boot-2025`，修复已在本地验证（见 §6）。装配配方改过之后必须重新发布
-> `sources-vN`：`sources-v2` 的 `recipe_sha256` 已过期，门禁 3 会拒绝它。
+> 状态：装配 workflow 已发布 `sources-v3`（run `40183767687`，PASS，恰好 3 个资产；
+> 指纹文件与本地导出的逐字节相同）。上一轮 Build（run `40176273728`）在 `sysupgrade-helper`
+> 上失败，根因是装配时剪掉了这个包的源码树 `qca/src/u-boot-2025`，修复与本地验证见 §6。
+> 修好后的 Build 已用 `sources-v3` 启动（run `40185702727`）：本文件更新时仍在运行，
+> 镜像产物与真机行为均为 `NOT TESTED`。
 
 ## 1. 为什么是两个 workflow
 
@@ -165,7 +166,8 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 修复后装配树 vs 审计树（`--compare`） | PASS（`deltas=2` 均 known-delta，`unexplained=0`；`aggregate=3b4a7c31…`） |
 | 审计基线 `6273a000…` 与装配树 `3b4a7c31…` 的差别来源 | PASS（把基线 tsv 的那两行换成装配版本重算，聚合值精确等于 `3b4a7c31…`） |
 | 修复后本地导出 `export-sources.sh`（新配方） | PASS（258,750,952 B ≈ 258 MB，远低于 1.9 GB 上限；`sha256=6956f8e7…`，`assets=3`，`entries=194808`，聚合值与装配一致） |
-| 发布 `sources-v3`（新配方） | NOT TESTED（`sources-v2` 的 `recipe_sha256` 已过期，门禁 3 会拒） |
+| 发布 `sources-v3`（新配方） | PASS（run `40183767687`：assemble 10:12→10:32 UTC，publish 10:33；`Assert exactly 3 assets`、`Verify published assets` 均 success） |
+| CI 发布的指纹与本地导出是否一致 | PASS（`TREE-FINGERPRINT.json` 2,276 B 与本地产物 `cmp` 无差异；包 258,497,698 B vs 本地 258,750,952 B，字节差来自 zstd 版本，条目指纹相同） |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
 
