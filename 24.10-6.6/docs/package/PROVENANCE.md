@@ -340,7 +340,7 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | `luci-app-tasks` | `luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 2026-10-25T14:30:18Z | `Add interface screenshot to READMEs` | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 1.1 MB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 2026-10-27T12:09:18Z | `feat: show the current LAN settings in the PPPoE and DH…` | GPL-3.0-only（`LICENSE`） | 1.6 MB |
 | `luci-app-xpu-status` | `luci-app-xpu-status` | `14e7d81a75cf864396f308d1a8e83bcc1d5d53d6` | 2026-11-07T06:44:16Z | `luci-app-xpu-status 1.0.3-r1：README 增加截图并调整章节顺序` | GPL-3.0-only（`LICENSE`） | 920 KB |
-| `luci-app-oxidns` | `luci-app-oxidns` | `6c432f6d6492cf6a8cbf63b8d5dbe8d67642853f` | 2026-11-07T08:44:21Z | `feat(config): clean up ad filtering card in normal mode`（tag `v1.3.5`，`PKG_VERSION 1.3.7`） | GPL-3.0-or-later（`LICENSE`） | 1.8 MB |
+| `luci-app-oxidns` | `luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | 2026-11-07T09:38:03Z | `docs: show screenshot and install steps before feature list`（tag `v1.3.7`，`PKG_VERSION 1.3.8`） | GPL-3.0-or-later（`LICENSE`） | 2.9 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2026-11-07T03:37:47Z | `Move Load and Link Rate next to the Interface column` | GPL-3.0-only（`LICENSE`） | 1.1 MB |
 
 十个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。五个新应用
@@ -445,6 +445,7 @@ git 历史与本表下方备注中）。**2026-11-07 用户要求移除 `luci-ap
 | `luci-app-poweroff` | `Arthur97172/luci-app-poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | 2026-10-25T13:34:55Z | `docs: reorder README sections and add screenshot` | GPL-3.0-only（`LICENSE` 与 `PKG_LICENSE` 一致） |
 | `luci-app-bandix-plus` | `timsaya/luci-app-bandix-plus` | `c4f002f74f3a0f4aeb79fb5d35f5a7bbd3392a1f` | 2026-10-21T18:54:43+08:00 | `luci-app-bandix-plus: bump to 0.1.3-r2` | Apache-2.0（`LICENSE`；Makefile 头误写 GPLv2，以 `PKG_LICENSE` 与 `LICENSE` 为准） |
 | `openwrt-bandix-plus` | `timsaya/openwrt-bandix-plus` | `fba9704300f2900451e00a1645e11b1f179204b8` | 2026-10-21T18:46:15+08:00 | `bandix-plus: bump to 0.1.3-r1` | Apache-2.0（`LICENSE`） |
+| `luci-theme-argon` | `jerrykuku/luci-theme-argon` | `6bdb62e6f9839f0faf69c86b2a0c0506e66359b6` | 2026-11-06T09:11:52Z | `release: v3.1.3`（annotated tag `v3.1.3` 的 peel 目标） | Apache-2.0 + MIT（`LICENSE`；`PKG_LICENSE:=Apache-2.0 MIT`） |
 
 `sources/passwall-selected/`（新目录，不带 `.git`）是从
 `openwrt-passwall-packages` 上述 commit **复制**出的 7 个包目录。复制结果
@@ -489,7 +490,9 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 `luci-app-poweroff` **1.0.0-r1**（自维护仓库，`LUCI_DEPENDS:=+luci-base`，
 `PKGARCH:=all`，无外部联网、无预编译二进制；i18n 包
 `luci-i18n-poweroff-zh-cn` 由 `po/zh_Hans/poweroff.po` 经 `luci.mk` 生成）、
-`luci-app-bandix-plus` 0.1.3-r2、`bandix-plus` 0.1.3-r1。
+`luci-app-bandix-plus` 0.1.3-r2、`bandix-plus` 0.1.3-r1、`luci-theme-argon` **3.1.3**
+（`6bdb62e6`，243 个受版本控制文件；仓库根目录即包目录，v3 起 `luci-app-argon-config`
+的设置页已并入主题包，发行里的同名包只是空迁移包，故本构建只接一个源包）。
 
 2026-11-07 升级后的第三方版本锚点：`openwrt-passwall` 26.11.3（tag `26.11.3-1`）、
 `openwrt-passwall-packages` 取 `main` @ `da712cf0`、`luci-app-poweroff` 1.0.0-r1
@@ -500,10 +503,10 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 
 | 项目 | 值 |
 |---|---|
-| 接入方式 | `feeds.conf` 追加 `src-link thirdparty …/sources/thirdparty-feed` 与 `src-link passwall_selected …/sources/passwall-selected`；2026-11-07 又追加 `src-link routing qca/feeds/routing`（只为 meshassistant 的 batctl/kmod-batman-adv）。`thirdparty-feed` 只含 9 个指向固定 clone 的符号链接，避免把 `openwrt-passwall-packages` 的 60 多个包（含同名 `xray-core`/`sing-box`）索引进 feed |
+| 接入方式 | `feeds.conf` 追加 `src-link thirdparty …/sources/thirdparty-feed` 与 `src-link passwall_selected …/sources/passwall-selected`；2026-11-07 又追加 `src-link routing qca/feeds/routing`（只为 meshassistant 的 batctl/kmod-batman-adv）。`thirdparty-feed` 只含 10 个指向固定 clone 的符号链接，避免把 `openwrt-passwall-packages` 的 60 多个包（含同名 `xray-core`/`sing-box`）索引进 feed |
 | `feeds/packages` 路径 | 新建 `sources/buildroot/feeds/packages -> ../qca/feeds/packages` 软链，满足第三方包的 `include $(TOPDIR)/feeds/packages/lang/{golang,rust}/…` 与 luci 的 `findrev`；`packages` feed 仍未建立索引，包通过 `package/feeds/packages/` 手工符号链接可见 |
 | 构建期联网 | 首次下载各包 `PKG_SOURCE`/`PKG_MIRROR_HASH` 对应的 tarball 或 git 镜像；其中 **`chinadns-ng` 与 `bandix-plus` 下载的是 GitHub Release 的 aarch64 预编译二进制**（`chinadns-ng+wolfssl_noasm@aarch64…`、`bandix-plus-0.1.3-aarch64.tar.gz`，`PKG_HASH 42ddd494…` / `46de71c3…`）；`mihomo-meta`、`xray-core`、`sing-box`、`yq` 首次需构建 `golang/host` |
-| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、xpu-status 无外部联网。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
+| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、xpu-status 无外部联网；`luci-theme-argon` 3.1.3 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
 | 本地修改 | 无。`wifihistory` 原先的一行 include 改写随该应用一起删除（2026-11-07）；其余 7 个 clone `git status --porcelain` 为空 |
 | 供应链结论 | 全部公开 GitHub、逐 commit 固定；许可证以 GPL 系为主，`chinadns-ng`/`ipt2socks` 为 **AGPL**，`chinadns-ng` 与 `bandix-plus` 为预编译二进制（`LICENSE_REVIEW_REQUIRED`）；运行期一律 `NOT TESTED` |
 
@@ -519,11 +522,12 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2.6.3-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `af6f4abe6ccb4147addfd3975bd45451e13d03a6` | 1.0.0-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
-| `apps/luci-app-oxidns` | `6c432f6d6492cf6a8cbf63b8d5dbe8d67642853f` | v1.3.5（tag） |
+| `apps/luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | v1.3.7（tag；PKG_VERSION 1.3.8） |
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 1.1.1-r1（tag） |
 | `apps/luci-app-xpu-status` | `14e7d81a75cf864396f308d1a8e83bcc1d5d53d6` | v1.0.3（tag） |
+| `repo argon` | `6bdb62e6f9839f0faf69c86b2a0c0506e66359b6` | thirdparty/luci-theme-argon |
 | `repo bandix-core` | `fba9704300f2900451e00a1645e11b1f179204b8` | thirdparty/openwrt-bandix-plus |
 | `repo bandix-luci` | `c4f002f74f3a0f4aeb79fb5d35f5a7bbd3392a1f` | thirdparty/luci-app-bandix-plus |
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |

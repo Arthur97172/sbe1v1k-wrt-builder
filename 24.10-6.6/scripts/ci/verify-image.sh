@@ -260,6 +260,22 @@ for f in etc/config/dawn usr/sbin/socat; do
 	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f（meshassistant 依赖未落地）"
 done
 
+# 2026-11-07 第二批（用户清单）：WireGuard 内核模块、GNU wget/tar 的 alternatives
+# 目标、openssh 客户端工具、Argon 主题（设置页已并入主题包，不再是独立
+# luci-app-argon-config）。wpad 继续用 mesh-openssl-noextns：带 QCN 扩展的
+# wpad-mesh-openssl 在本 QSDK 树里 SOURCE_UNAVAILABLE（qcn-app-extns 未导入）。
+for f in usr/libexec/wget-ssl usr/libexec/tar-gnu usr/bin/ssh-keyscan \
+	etc/config/argon www/luci-static/resources/view/argon-config.js \
+	www/luci-static/argon/css/cascade.css \
+	usr/share/ucode/luci/template/themes/argon/header.ut
+do
+	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f"
+done
+wmod=$(find "$ROOTFS/lib/modules" -name 'wireguard.ko*' -print -quit 2>/dev/null || true)
+[ -n "$wmod" ] \
+	&& ok "存在 wireguard 内核模块（${wmod#"$ROOTFS"/}）" \
+	|| bad "缺少 wireguard 内核模块（kmod-wireguard 未编出）"
+
 if [ -f "$ROOTFS/usr/lib/opkg/status" ]; then
 	n=$(grep -c '^Package:' "$ROOTFS/usr/lib/opkg/status")
 	ok "包数量 $n"

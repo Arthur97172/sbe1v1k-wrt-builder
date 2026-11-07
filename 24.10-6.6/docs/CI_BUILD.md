@@ -201,6 +201,12 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 同批次的 `check-config.sh` | PASS（`lines=2139`，`sha256=e87b5969…133b`，`feeds=8`） |
 | 同批次的 `refresh-pins.sh` 只读检查 | PASS（0 项可更新、1 项按“不回退”保持不动——nikki；内核 6.6.147 已是 `win_qsdk.common.*` 最高） |
 | 同批次的 `thirdparty-feeds.sh check` | PASS（9 个链接；`passwall-selected` 7 个包） |
+| 2026-11-07 第二批（uhttpd / wireguard / 系统工具 / argon）：`defconfig` 反查 | PASS（37 个包全部 `=y`；此前 6 个包因源码未接线被静默丢弃，补齐 5 条 `package/feeds` 链接后通过） |
+| 同批次的 `check-config.sh` | PASS（`lines=2146`，`sha256=e53c9a9c…6755`，`feeds=8`）。本机 `install` 是 uutils 0.8.0，OpenWrt 的 host prereq 不认，需先 `touch staging_dir/host/.prereq-build` 跳过宿主机工具检查；这只影响本机，CI runner 是 GNU coreutils，且配置等价性（归一化 diff 为空）不受影响 |
+| 同批次的全量装配（含 `--compare`） | PASS（`FINGERPRINT_MATCH`，`deltas=829` 全部解释、`unexplained=0`；`entries=195240`，`aggregate=9931c5dc…242`，`recipe_sha256=15dd7f24…6b5`；`FEEDS_OK src-link=11 package-links=170`） |
+| 同批次的 `thirdparty-feeds.sh check` | PASS（10 个链接 + argon 仓库 HEAD `6bdb62e6` == pin，工作区干净） |
+| 同批次的 `refresh-pins.sh --apply` | PASS（1 项更新：`luci-app-oxidns` `6c432f6d` → `aac1983`，tag `v1.3.7`；1 项保持不动：nikki；内核 6.6.147 仍是 `win_qsdk.common.1.0.r*` 最高） |
+| 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
 | `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push） |
 | 新 pin 下的全量编译（含 `kmod-batman-adv`） | NOT TESTED |
 | 编译产物在真机启动/升级 | NOT TESTED |

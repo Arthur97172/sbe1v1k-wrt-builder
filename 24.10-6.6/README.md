@@ -51,8 +51,9 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 
 镜像内置 LuCI（`luci-light` 组合 + `luci-mod-admin-full`），由 `uhttpd` + `rpcd` 提供服务，
 默认监听 `0.0.0.0:80` 与 `0.0.0.0:443`（`redirect_https` 关闭）。刷机后浏览器打开
-`http://<设备地址>/` 即可；`/etc/config/luci` 的 `option lang` 为 `auto`，所有模块都装了
-`luci-i18n-*-zh-cn`，浏览器语言为中文时自动切换。
+`http://<设备地址>/` 即可；`/etc/config/luci` 的 `option lang` 为 `auto`，能拿到 `po/zh_Hans`
+的模块都装了对应的 `luci-i18n-*-zh-cn`（上游 `luci-proto-wireguard` 本身没有 po 目录，
+没有独立中文包），浏览器语言为中文时自动切换。
 
 版本（取自镜像内 `/usr/lib/opkg/status`，随 feeds 更新会变化）：
 
@@ -62,30 +63,36 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 | `luci-light` | 23.024.33244~34dee82 |
 | `luci-mod-admin-full` | 19.253.48496~3f93650 |
 
-共 63 个 `luci-*` 包，分三类：
+共 68 个 `luci-*` 包，分三类：
 
 - **核心**：`luci-base`、`luci-light`、`luci-compat`、`luci-mod-admin-full`、
   `luci-mod-network`、`luci-mod-status`、`luci-mod-system`、`luci-lib-*`、
   `luci-proto-ipv6`、`luci-proto-ppp`、`luci-app-package-manager`；
-  主题只有 `luci-theme-bootstrap`（未装 argon 等第三方主题）。
+  主题：`luci-theme-bootstrap` + 第三方 `luci-theme-argon`（v3 起设置页并入主题包，不需要 `luci-app-argon-config`）。
 - **上游应用**（feeds `luci`）：`luci-app-firewall`、`luci-app-ddns`、`luci-app-upnp`、
-  `luci-app-ttyd`。
+  `luci-app-ttyd`、`luci-app-uhttpd`、`luci-proto-wireguard`。
 - **项目与三方应用**：
   - 本项目 feeds（`sources/apps`，10 个）：`luci-app-fcc`、`luci-app-ledfancontrol`、
     `luci-app-meshassistant`、`luci-app-nssecm`、`luci-app-online-upgrade`、
     `luci-app-oxidns`、`luci-app-smartnetpilot`、`luci-app-substore`、`luci-app-tasks`、
     `luci-app-xpu-status`
   - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-bandix-plus`、`luci-app-nikki`、
-    `luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`
+    `luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、`luci-theme-argon`
   - meshassistant 的运行依赖（上游 feed）：`batctl` / `kmod-batman-adv`（`routing`）、
     `luci-proto-batman-adv`（`luci`）、`dawn` / `socat`（`packages`）、`flock`（util-linux）
   - 代理后端（`sources/passwall-selected`）：`chinadns-ng`、`dns2socks`、`ipt2socks`、
     `microsocks`、`shadowsocksr-libev`、`simple-obfs`、`tcping`；另有 `xray`、`sing-box`、
     `mihomo`、`ruby` 等运行依赖，均不带 LuCI 界面包之外的额外前端。
 
+系统工具与内核模块（文件 B 显式列出，`verify-image.sh` 逐条断言）：`openssh-client-utils`、
+`tmux`、`curl`、`tar`、`wget-ssl`、`ca-bundle`、`ca-certificates`、`kmod-br-netfilter`、
+`kmod-nft-socket`、`kmod-nft-tproxy`、`wireguard-tools`、`kmod-wireguard`。无线侧仍是
+`wpad-mesh-openssl-noextns`（见下节）。
+
 ## 无线加密模式
 
-AP（`wpad` = hostapd 2025.11.11，带 SAE / 802.11w / OWE / FILS / DPP）支持：
+AP（`wpad-mesh-openssl-noextns` = hostapd 2025.11.11，带 SAE / 802.11w / OWE / FILS / DPP；
+`wpad-mesh-openssl` 变体依赖的 `qcn-app-extns` 不在导入的 QSDK 树里，属 `SOURCE_UNAVAILABLE`）支持：
 
 | LuCI 中的模式 | `encryption` 前缀 | 说明 |
 | --- | --- | --- |
@@ -277,11 +284,11 @@ buildroot/package/feeds/thirdparty/luci-app-foo	thirdparty/luci-app-foo
 `scripts/ci/assemble-sources.sh` 的 feeds 接线步：
 
 ```sh
-[ "$nl" = 164 ] || die 4 "package/feeds 软链应有 164 条，实际 $nl"
+[ "$nl" = 170 ] || die 4 "package/feeds 软链应有 170 条，实际 $nl"
 ```
 
-加一行就改成 165，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
-（`grep -rn '164' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
+加一行就改成 171，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
+（`grep -rn '170' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
 `feeds.conf.in` 和同一步的 `[ "$nf" = 11 ]`。
 
 #### 5. 文件 B：`build/custom-packages.conf`
@@ -407,7 +414,7 @@ push 后 `sources-24.10-6.6.yml` 自动以 `publish=false` 验证；通过后手
 |---|---|---|
 | `build/thirdparty-feeds.conf` | 新仓库加 `repo`+`link`；旧仓库只加 `link` | 删 `link`；仓库不再被引用时删 `repo` |
 | `build/feeds-links.conf` | 加 `package/feeds/thirdparty/<名字>` 行（含依赖包） | 删对应行 |
-| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 164 ]` 改成新总数 | 改回去 |
+| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 170 ]` 改成新总数 | 改回去 |
 | `build/custom-packages.conf` | 加 `CUSTOM_PACKAGES="$CUSTOM_PACKAGES <名字>"` | 注释掉整行 |
 | `build/config-frozen/.config` | `make defconfig` 后整体替换 | 同左 |
 | `build/known-delta.conf` | 加 `fresh-only` 条目（新路径） | 删掉对应条目 |
