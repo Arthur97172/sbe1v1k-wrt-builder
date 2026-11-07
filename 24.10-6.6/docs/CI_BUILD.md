@@ -19,7 +19,7 @@
 | workflow | 文件 | 做什么 | 产物 |
 |---|---|---|---|
 | 🧱 Assemble | `.github/workflows/sources-24.10-6.6.yml` | 从 42 个固定提交装配源码树、比对指纹、打包 | Release `sources-vN`：**恰好 3 个**资产 |
-| 📦 Build | `.github/workflows/build-24.10-6.6.yml` | 下载源码包、六道门禁、编译、发布固件 | Release `v<run>-<attempt>-<sha8>`：**恰好 3 个**镜像 |
+| 📦 Build | `.github/workflows/build-24.10-6.6.yml` | 下载源码包、七道门禁、编译、发布固件 | Release `v<run>-<attempt>-<sha8>`：**恰好 3 个**镜像 |
 | 🔄 Refresh pins | `.github/workflows/refresh-pins-24.10-6.6.yml` | 每周把插件 pin 解析到最新、只读检测内核，开/更新 PR | 分支 `auto/pin-refresh` + 一个 PR（**不自动合并**） |
 
 改补丁/配置只需 push：装配 workflow 重新验证（可选发布新 `sources-vN`），构建 workflow 用
@@ -104,6 +104,7 @@ SOURCE_ASSEMBLY.md；任一步失败即非零退出，不会产出半成品包�
 | 4 | `render-overlay.sh` + `check-config.sh` | overlay 渲染后 `make defconfig` 归一化结果与 `build/config-frozen/.config` 逐行相等 | 包集合变了 |
 | 5 | `thirdparty-feeds.sh check`（`SBE_NO_GIT=1`） | 第三方目录与 pin/指纹一致、软链指向正确 | 第三方树装配错误 |
 | 6 | `download-preflight.sh`（`make -k download`） | 第三方 tarball 全部可取 | 输出 `DOWNLOAD_FAIL` 清单并停 |
+| 7 | `check-package-deps.sh`（`defconfig` 之后） | 选中包的运行时依赖闭包可满足，含 `EXTRA_DEPENDS` 的静态求值 | 有依赖没接线：编译能过，`package/install` 时 opkg 必失败（见下文 2026-11-07 opkg 一节） |
 
 第 2 步用 `--compare <tsv>` 而不是 JSON：tsv 是逐文件清单，能给出具体路径；聚合值在日志里另行打印。
 `known-delta.conf` 里登记两条：`PROVENANCE.md`（审计后只改了 §2.5/§2.5.1 的文档行）与
@@ -212,6 +213,14 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 修复后（`libgcrypt`/`libgpg-error` 补链）的全量装配（含 `--compare`） | PASS（`FINGERPRINT_MATCH`，`deltas=831` 全部解释、`unexplained=0`；`entries=195242`，`aggregate=73bbc8d8…a1a1`，`recipe_sha256=451119b3…362`；`FEEDS_OK src-link=11 package-links=172`）。`entries` 比上一批 +2，正是两条新软链；其余增量仍只有文档行与 `upstream-pins.conf` 注释 |
 | 修复后的 `check-config.sh` 等价性 | PASS（`lines=2147`，`sha256=0a928fce…b7e`，`feeds=8`；冻结配置新增 `CONFIG_PACKAGE_libgcrypt=y`、`CONFIG_PACKAGE_libgpg-error=y`，与装配树 `make defconfig` 结果逐行一致） |
 | 修复后的 CI 构建（run `42376212224`，`sources-v6`） | FAIL（第 1–15 步 success；第 16 步编译本体跑完——`libgcrypt` 14:01、`dawn` 14:12、`batman-adv` 14:16 均成功——随后在 `make[2] package/install` 约 14.5 秒处失败；控制台无报错文本，原因见下：`verbose.mk` 在非 `V=s` 模式丢弃子 make 输出） |
+| 同批次的 `diagnose` 步骤首次真实运行（run `42383445142`） | PASS（16:21:07 起以 `-j1 V=s` 重跑，10m24s 结束；但当时注解只是把 400 行原样发出，GitHub 4096 字上限把报错截掉，步骤日志与 artifact 匿名仍不可读） |
+| 第二轮诊断注解（run `42392676876`，head `af361ad`） | FAIL（`Build` 84m16s 后在 `package/install` 失败；注解确实发出，但 400 行整体被截到 4090 字，窗口开头全是 `Installing`/`Configuring`，真正报错仍在截断之外） |
+| 第三轮诊断注解（run `42401311130`，head `929817c`） | FAIL（`Build` 86m10s；改为“末尾 40 行 + 关键词命中”两条注解后，匿名即可读到 `cannot find dependency luci-lib-uqr for luci-proto-wireguard`、`cannot find dependency xz for tar` → `opkg_install_cmd: Cannot install package …` → `package/Makefile:99: package/install Error 255`；根因与修复见下节） |
+| 修复后全量装配（含 `--compare`） | PASS（`FINGERPRINT_MATCH`，`unexplained=0`；`entries=195244`，`aggregate=33f8c2bf…515f`，`recipe_sha256=ece17ce6…ded`；`FEEDS_OK src-link=11 package-links=174`，`SRC_DEPS_OK selected=410 checked=2`） |
+| 修复后的 `check-config.sh` 等价性 | PASS（`lines=2156`，`sha256=22c542d8…f44`，`feeds=8`；相对上一版多 11 个符号：`xz`、`xz-utils`、`liblzma`、`luci-lib-uqr` 及其默认子工具开关，与两条新软链带出的包一一对应） |
+| 新增的 `check-package-deps.sh` 对修复后的树 | PASS（`选中包 410 个，运行时依赖全部可满足（含 EXTRA_DEPENDS 静态求值）`） |
+| 同一门禁的负向回归（手工把 `CONFIG_PACKAGE_xz`、`CONFIG_PACKAGE_luci-lib-uqr` 置空） | PASS（分别精确报出 `tar 的 EXTRA_DEPENDS 依赖 xz` 与 `luci-proto-wireguard 依赖 luci-lib-uqr`，退出码 4） |
+| 修复后的 CI 构建 | NOT TESTED（修复尚未 push） |
 | 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
 | 修复后镜像内的 `/etc/config/dawn`、`usr/sbin/socat`、`batman_adv.ko` | NOT TESTED（`verify-image.sh` 的检查在编译之后，尚未跑到） |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
@@ -270,3 +279,57 @@ libgcrypt/libgpg-error 符号，构建时 staging 里自然没有库和头文件
 `SOURCE_ASSEMBLY.md` 同步改）；冻结配置按 defconfig 的实际输出补 `CONFIG_PACKAGE_libgcrypt=y`、
 `CONFIG_PACKAGE_libgpg-error=y`（在装配树上实测，这是仅有的两行差异）；`known-delta.conf` 登记
 两条 `fresh-only`，并把 `buildroot/.config` 的差异说明补上本项。
+
+### 2026-11-07：`package/install` 的 opkg 依赖失败（run `42401311130`）
+
+失败形态：`Build` 正常跑满 86 分钟（所有包都编出来了），最后在 `make[2] package/install`
+约 14 秒处失败，控制台只有 `make[2]: *** [package/Makefile:99: package/install] Error 255`
+与 `Process completed with exit code 2`，没有任何报错文本。原因是 `include/verbose.mk` 在非
+`V=s` 模式下把子 make 的输出整体丢进 `/dev/null`（fd 8/9 只留进度行）；而 `package/install`
+的真实输出是 `include/rootfs.mk` 里 `opkg install --offline-root …` 的 stderr。失败后
+`diagnose` 步骤以 `-j1 V=s` 重跑（已编译目标不会重编，约 10 分钟回到同一位置），才拿到：
+
+```
+Collected errors:
+ * pkg_hash_check_unresolved: cannot find dependency luci-lib-uqr for luci-proto-wireguard
+ * pkg_hash_check_unresolved: cannot find dependency xz for tar
+ * opkg_install_cmd: Cannot install package luci-proto-wireguard
+ * opkg_install_cmd: Cannot install package tar
+make[2]: *** [package/Makefile:99: package/install] Error 255
+```
+
+根因：装配树只软链 `build/feeds-links.conf` 里逐条列出的包，feed 目录本身不整体可见。缺的两个包
+分属两种**不同**的隐形路径：
+
+- `luci-lib-uqr` 是 `luci-proto-wireguard` 的 `DEPENDS` 里的 `+luci-lib-uqr`。kconfig 会读到它，
+  但源码没接线时只打印一行 `WARNING: … has a dependency on 'luci-lib-uqr', which does not exist`
+  然后**静默丢弃**——包照样编得出来。
+- `xz` 是 `tar` 的 `EXTRA_DEPENDS`（`EXTRA_DEPENDS:=$(if $(CONFIG_PACKAGE_TAR_XZ),xz)`）。
+  这个变量 kconfig 根本不解析，也不进 `tmp/.packageinfo`，只在生成 ipk 时写进 control。
+  所以缺它时连 defconfig 的 WARNING 都没有，`tar` 编得出来、直到 opkg 解析 ipk 依赖才失败。
+
+前一轮补 `dawn` 的 `libgcrypt` 时只盯着 `DEPENDS`，漏掉了 `EXTRA_DEPENDS` 这一类；而且那次是
+CMake 阶段失败，这次是安装阶段失败，症状完全不同。
+
+修复（四处，缺一不可）：
+
+1. `feeds-links.conf` 补 `buildroot/package/feeds/luci/luci-lib-uqr` 与
+   `buildroot/package/feeds/packages/xz` 两条软链，条数 172 → 174，`assemble-sources.sh` 的
+   断言与 `SOURCE_ASSEMBLY.md` 同步改；
+2. 冻结配置按装配树 `make defconfig` 的实际输出重生成，差异恰好 11 行：
+   `CONFIG_PACKAGE_liblzma=y`、`CONFIG_PACKAGE_luci-lib-uqr=y`、`CONFIG_PACKAGE_xz-utils=y`、
+   `CONFIG_PACKAGE_xz=y`，以及 `lzmainfo/lzmadec/xzdec/xzdiff/xzgrep/xzless/xzmore` 七个
+   `is not set`；
+3. `known-delta.conf` 登记两条 `fresh-only`，原因里写明各自属于 `DEPENDS` 还是 `EXTRA_DEPENDS`；
+4. workflow 在 `Apply custom packages` 与 `Build` 之间新增第 7 道门禁
+   `scripts/ci/check-package-deps.sh`。
+
+门禁做的事（只读本地文件，不联网、不接触设备）：以 `.config` 里 `CONFIG_PACKAGE_*=y` 为选中集合，
+解析 `tmp/.packageinfo` 的 `Package:/Depends:/Provides:`（`+PACKAGE_X:dep` 条件按 kconfig 语义求值，
+`@DRIVER_*`/`@KERNEL_*` 这类构建期条件跳过），要求每个运行时依赖要么被选中、要么被选中包
+`provides`；再遍历 `package/` 下选中包的 Makefile 原文，对 `EXTRA_DEPENDS` 里的
+`$(if $(CONFIG_X),A)` 做静态求值并检查同样的闭包。任何一条不满足就打印包名、缺失依赖和出处，
+以退出码 4 停在编译前，而不是再浪费 86 分钟到 opkg。
+
+负向回归：把冻结配置里的 `CONFIG_PACKAGE_xz` 与 `CONFIG_PACKAGE_luci-lib-uqr` 分别置空，门禁
+精确报出这两条（含 `tar` 的 Makefile 路径），证明它不是只会对修复后的树说 PASS。

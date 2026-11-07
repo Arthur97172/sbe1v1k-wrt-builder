@@ -13,7 +13,9 @@ name: 📦 Build 24.10-6.6
 #   3. TREE-FINGERPRINT.json 里的 recipe_sha256 必须等于本仓库当前配方的哈希；
 #   4. render-overlay.sh + check-config.sh：overlay 渲染后再比对冻结 .config；
 #   5. thirdparty-feeds.sh check（SBE_NO_GIT=1，源码包不带 .git）；
-#   6. download-preflight.sh：make -k download 取齐第三方 tarball。
+#   6. download-preflight.sh：make -k download 取齐第三方 tarball；
+#   7. check-package-deps.sh：defconfig 之后核对选中包的运行时依赖闭包
+#      （kconfig 对未接线的依赖只打 WARNING，编译能过、到 opkg 安装才失败）。
 #
 # 说明：
 #   - 构建不会接触任何设备，仅下载源码包与编译依赖；
@@ -186,6 +188,12 @@ jobs:
         # 应用文件 B（应用开关）并逐包反查。defconfig 对未知包是静默丢弃的，
         # 反查失败即在此停止，不进入数小时的编译。
         run: ./24.10-6.6/build/sbe1v1k-build.sh defconfig
+
+      - name: Check package dependencies
+        # defconfig 对未接线的依赖只打一行 WARNING 就丢弃：包照样编得出来，
+        # 直到 package/install 才由 opkg 报 "cannot find dependency X for Y"。
+        # 该报错又被 verbose.mk 吞进 /dev/null，等于浪费一整轮编译（run 42401311130）。
+        run: ./24.10-6.6/scripts/ci/check-package-deps.sh "$GITHUB_WORKSPACE/sources/buildroot"
 
       - name: Build
         run: |
