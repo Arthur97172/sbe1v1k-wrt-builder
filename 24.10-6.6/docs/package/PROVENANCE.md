@@ -517,12 +517,12 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 <!-- pins:begin -->
 | 仓库 | commit | 备注 |
 | --- | --- | --- |
-| `apps/luci-app-fcc` | `d4ce1abd4de62cb19cada29d32ee2ce6d85be0f9` | 1.2.0-r2（tag） |
+| `apps/luci-app-fcc` | `afafe2b0ef41098bd1e64872029f7314eb96efdb` | 1.2.1-r1（tag；PKG_VERSION 1.2.1；PKG_RELEASE 1） |
 | `apps/luci-app-ledfancontrol` | `540eefcf9dc8550f44a3a38afe84f20ec11f195f` | 1.1.0-r1（tag） |
 | `apps/luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2.6.3-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `af6f4abe6ccb4147addfd3975bd45451e13d03a6` | 1.0.0-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
-| `apps/luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | v1.3.8（tag；PKG_VERSION 1.3.8；与 v1.3.7 同一提交） |
+| `apps/luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | v1.4.9（tag；PKG_VERSION 1.4.9；与 v1.4.8 同一提交） |
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 1.1.1-r1（tag） |
