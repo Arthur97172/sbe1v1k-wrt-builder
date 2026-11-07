@@ -207,14 +207,22 @@ jobs:
           timeout 1200 ./24.10-6.6/build/sbe1v1k-build.sh -j1 V=s 2>&1 \
             | tail -n 400 | tee diagnose.log || true
           echo "=== diagnose.log 行数: $(wc -l < diagnose.log 2>/dev/null || echo 0) ==="
+          # GitHub 单条注解只保留 4096 字，所以只发末尾 40 行与错误关键行：
+          # 400 行整体发出去会被截成窗口开头，正好把报错截掉（已实测）。
           if [ -s diagnose.log ]; then
-            msg=$(tail -n 400 diagnose.log \
+            msg=$(tail -n 40 diagnose.log \
               | awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
-                  if (NR > 1) printf "%%0A"; printf "%s", $0 }')
-            echo "::error::diagnose.log 尾部：${msg}"
+                  if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 200) }')
+            echo "::error::diagnose.log 末尾 40 行：${msg}"
+            hits=$(grep -aE 'error|Error|failed|Failed|cannot|conflict|No space|postinst|Collected errors|Segmentation' diagnose.log \
+              | tail -n 20 \
+              | awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+                  if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 200) }' || true)
+            if [ -n "$hits" ]; then echo "::error::diagnose.log 关键行：${hits}"; fi
           else
             echo "::error::diagnose.log 缺失或为空"
           fi
+          exit 0
 
       - name: Verify image (static)
         if: success()
