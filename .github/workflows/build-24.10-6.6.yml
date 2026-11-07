@@ -196,6 +196,7 @@ jobs:
         run: ./24.10-6.6/scripts/ci/check-package-deps.sh "$GITHUB_WORKSPACE/sources/buildroot"
 
       - name: Build
+        id: build
         run: |
           set -o pipefail
           ./24.10-6.6/build/sbe1v1k-build.sh -j"$(nproc)" 2>&1 | tee build.log
@@ -209,7 +210,11 @@ jobs:
         # Actions 的步骤日志与 artifact 下载都要求登录，匿名只能看到 job 页上的
         # annotations；所以再把 diagnose.log 尾部压成一条 ::error:: 注解
         # （换行转义成 %0A），失败原因不必登录也能读。
-        if: failure()
+        #
+        # 只在 Build 步骤失败时重跑：门禁步骤（如 recipe 哈希不符）失败时重跑
+        # 编译没有意义——上一轮曾因此白编 5 分钟 cmake，注解里全是构建噪声，
+        # 真正的原因（配方哈希不符）反而被淹没。
+        if: failure() && steps.build.outcome == 'failure'
         run: |
           set -o pipefail
           timeout 1200 ./24.10-6.6/build/sbe1v1k-build.sh -j1 V=s 2>&1 \

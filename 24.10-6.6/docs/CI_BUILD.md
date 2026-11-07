@@ -220,7 +220,9 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 修复后的 `check-config.sh` 等价性 | PASS（`lines=2156`，`sha256=22c542d8…f44`，`feeds=8`；相对上一版多 11 个符号：`xz`、`xz-utils`、`liblzma`、`luci-lib-uqr` 及其默认子工具开关，与两条新软链带出的包一一对应） |
 | 新增的 `check-package-deps.sh` 对修复后的树 | PASS（`选中包 410 个，运行时依赖全部可满足（含 EXTRA_DEPENDS 静态求值）`） |
 | 同一门禁的负向回归（手工把 `CONFIG_PACKAGE_xz`、`CONFIG_PACKAGE_luci-lib-uqr` 置空） | PASS（分别精确报出 `tar 的 EXTRA_DEPENDS 依赖 xz` 与 `luci-proto-wireguard 依赖 luci-lib-uqr`，退出码 4） |
-| 修复后的 CI 构建 | NOT TESTED（修复尚未 push） |
+| 修复推送后的 Assemble（run `42410790030`，head `400a8b7`，`publish=false`） | PASS（10 步全过：装配、导出、release notes、上传 bundle 均 success；新配方在 CI 侧装配一致） |
+| 修复推送后的 Build（run `42410790046`，head `400a8b7`） | FAIL（第 9 步 `Verify recipe hash`：源码包 `451119b3…`（`sources-v6`）≠ 本仓库 `ece17ce6…`。属预期：配方改了但还没发新 `sources-vN`。该轮还暴露出 `Diagnose` 在门禁失败时也会跑——白编 5 分钟 cmake，注解里全是构建噪声、真正原因被淹没；已改为只在 `Build` 步骤本身失败时重跑） |
+| 修复后的 CI 构建（换用新版 `sources-vN`） | NOT TESTED（需先以 `publish=true` dispatch Assemble 发新源码包，再 dispatch Build） |
 | 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
 | 修复后镜像内的 `/etc/config/dawn`、`usr/sbin/socat`、`batman_adv.ko` | NOT TESTED（`verify-image.sh` 的检查在编译之后，尚未跑到） |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
