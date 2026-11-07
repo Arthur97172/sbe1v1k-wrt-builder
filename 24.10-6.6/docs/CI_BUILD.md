@@ -208,6 +208,11 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 2026-11-07 第三批（无线默认值改 TW / 信道 11/40/61、htmode 订正为 `EHT40`/`EHT80`、oxidns 标注 `v1.3.8`）：全量装配（含 `--compare`） | PASS（`FINGERPRINT_MATCH`，`deltas=829` 全部解释、`unexplained=0`；`entries=195240`，`aggregate=052ab61e…cea`，`recipe_sha256=a9a67b62…d51`；`FEEDS_OK src-link=11 package-links=170`）。`entries` 与上一批相同：本批改动的 `files/` 叠加层在 `fingerprint-exclude.conf` 里整体排除，且它本来就由 `build-24.10-6.6.yml:167` 的 `render-overlay.sh` 在构建阶段铺设、不经过 `assemble-sources.sh`；装配树可见的变化只有 `PROVENANCE.md`/`README.md` 两份文档行与 `upstream-pins.conf` 的 oxidns 注释（后者只进 `recipe_sha256`） |
 | 同批次的 `check-config.sh` 等价性 | PASS（冻结配置未变：`sha256=e53c9a9c…6755`，`lines=2146`；装配内 `CONFIG_OK` 同一哈希） |
 | 同批次的 `refresh-pins.sh --apply` | PASS（1 项更新：`luci-app-oxidns` `6c432f6d` → `aac1983`，tag `v1.3.7`；1 项保持不动：nikki；内核 6.6.147 仍是 `win_qsdk.common.1.0.r*` 最高） |
+| 第三批构建（run `42367249745`，head `fdd3d02`） | FAIL（第 1–15 步 success；第 16 步 `Build` 在 `dawn` 的 CMake 配置阶段约 3 秒失败，依赖 `libgcrypt` 未接线，根因与修复见下节） |
+| 修复后（`libgcrypt`/`libgpg-error` 补链）的全量装配（含 `--compare`） | PASS（`FINGERPRINT_MATCH`，`deltas=831` 全部解释、`unexplained=0`；`entries=195242`，`aggregate=73bbc8d8…a1a1`，`recipe_sha256=451119b3…362`；`FEEDS_OK src-link=11 package-links=172`）。`entries` 比上一批 +2，正是两条新软链；其余增量仍只有文档行与 `upstream-pins.conf` 注释 |
+| 修复后的 `check-config.sh` 等价性 | PASS（`lines=2147`，`sha256=0a928fce…b7e`，`feeds=8`；冻结配置新增 `CONFIG_PACKAGE_libgcrypt=y`、`CONFIG_PACKAGE_libgpg-error=y`，与装配树 `make defconfig` 结果逐行一致） |
+| 修复后的 CI 构建（新 `sources-vN`，含 `dawn`/`libgcrypt` 编译） | NOT TESTED（待发布 sources 并重跑 `build-24.10-6.6.yml`） |
+| 修复后镜像内的 `/etc/config/dawn`、`usr/sbin/socat`、`batman_adv.ko` | NOT TESTED（`verify-image.sh` 的检查在编译之后，尚未跑到） |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
 | `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push） |
 | 新 pin 下的全量编译（含 `kmod-batman-adv`） | NOT TESTED |
@@ -241,3 +246,26 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 本地装配时 `github.com:443` 不可达，`luci` 的 `03c6023b` 是用 codeload 官方 tarball 重建的本地 Git
 镜像提供的（重建树 `ea1ee2f1…` 与原 commit 相同，`hash-object` 复现出原 SHA）。这只是本机传输路径，
 CI 上仍从 `github.com` 取同一 commit；内容是否一致由上面的指纹门禁证明。
+
+### 2026-11-07：`dawn` 构建失败（run `42367249745`）
+
+失败形态：第 16 步 `Build` 在 `make[3] -C qca/feeds/packages/net/dawn compile` 之后约 3 秒报
+`ERROR: package/feeds/packages/dawn failed to build.`，随后 `make -r world: build failed ...
+Error 1`、`Process completed with exit code 2`。3 秒不足以跑完一次真正的编译，说明失败发生在
+CMake 配置阶段。第 1–15 步（含指纹、recipe、overlay 渲染、`check-config`、thirdparty pin、
+`make download`、custom packages）全部 success，失败与装配无关，是依赖没落到 staging。
+
+根因：这棵装配树只把 `build/feeds-links.conf` 里逐条列出的包软链进
+`package/feeds/packages/`，feed 目录本身不整体可见。第三批给 `luci-app-meshassistant` 接线时加了
+`dawn` 与 `socat` 的软链，但漏掉了 dawn 在 `DEPENDS` 里的硬依赖 `+libgcrypt`（连带它的
+`+libgpg-error`）。`make defconfig` 因此打印
+`WARNING: Makefile 'package/feeds/packages/dawn/Makefile' has a dependency on 'libgcrypt',
+which does not exist` 并静默丢弃这条依赖——冻结配置里 `CONFIG_PACKAGE_dawn=y`，却没有任何
+libgcrypt/libgpg-error 符号，构建时 staging 里自然没有库和头文件。装配门禁当时看不出来：它只校验
+每条链接的目标存在且含 Makefile，不校验依赖闭包；`verify-image.sh` 对 `/etc/config/dawn` 的检查
+又在编译之后，失败先一步发生了。
+
+修复：`feeds-links.conf` 补 `libgcrypt`、`libgpg-error` 两条软链（条数 170 → 172，装配断言与
+`SOURCE_ASSEMBLY.md` 同步改）；冻结配置按 defconfig 的实际输出补 `CONFIG_PACKAGE_libgcrypt=y`、
+`CONFIG_PACKAGE_libgpg-error=y`（在装配树上实测，这是仅有的两行差异）；`known-delta.conf` 登记
+两条 `fresh-only`，并把 `buildroot/.config` 的差异说明补上本项。
