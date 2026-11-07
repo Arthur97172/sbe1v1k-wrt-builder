@@ -75,8 +75,8 @@ PLAN='1  预检：工具、pin 表格式、磁盘余量
 9  校验 Wi-Fi blob：sha256sum -c files/FILES-SHA256
 10 就地叠加层：files-6.6/. → qca/src/linux-6.6/；bootloader/files/. → qca/src/u-boot-2025/
 11 构建系统补丁：build/build-fixes/SERIES（全部 tree 模式；0004/0007 空号）
-12 第三方树：passwall-selected 派生、wifihistory 稀疏检出 + 补丁、thirdparty-feeds.sh fetch
-13 feeds 接线：feeds.conf + 10 条 feeds/<name> + 156 条 package/feeds 软链（依赖上一步）
+12 第三方树：passwall-selected 派生、thirdparty-feeds.sh fetch
+13 feeds 接线：feeds.conf + 11 条 feeds/<name> + 164 条 package/feeds 软链（依赖上一步）
 14 冻结配置：.config / version / version.date + 断言
 15 文档：README.md、PROVENANCE.md
 16 树指纹：tree-fingerprint.sh（+ 与基准比对）'
@@ -123,25 +123,6 @@ count_files() { find "$1" -type f 2>/dev/null | wc -l | tr -d ' '; }
 relpath() {
 	python3 -I -c 'import os,sys; print(os.path.relpath(sys.argv[2], sys.argv[1]))' "$1" "$2"
 }
-# git_fetch_retry <仓库目录> <40 位 commit>：按 commit 浅取，最多 3 次，第三次
-# 强制 HTTP/1.1。本机到 GitHub 偶发 TLS reset / HTTP2 framing，那不是“上游不可用”；
-# 重试仍失败才由调用方判 SOURCE_UNAVAILABLE（绝不降级到分支头）。
-git_fetch_retry() {
-	local d=$1 c=$2 try=1
-	while [ "$try" -le 3 ]; do
-		if [ "$try" = 3 ]; then
-			git -c http.version=HTTP/1.1 -C "$d" fetch --quiet --depth 1 origin "$c" \
-				>>"$LOG" 2>&1 && return 0
-		else
-			git -C "$d" fetch --quiet --depth 1 origin "$c" >>"$LOG" 2>&1 && return 0
-		fi
-		[ "$try" -lt 3 ] && logmsg "  RETRY fetch 第 $((try + 1)) 次：${c:0:12} ($d)"
-		try=$((try + 1))
-		[ "$try" -le 3 ] && sleep 5
-	done
-	return 1
-}
-
 # ---------------------------------------------------------------- pin 存取
 pin_cache() {
 	printf '%s/pins/%s' "$CACHE" \
@@ -482,31 +463,7 @@ while IFS=$'\t' read -r pkg desc; do
 done < "$BUILD/passwall-selected.conf"
 [ "$nps" = 7 ] || die 4 "passwall-selected 应为 7 个包，实际 $nps"
 
-# 12c. wifihistory：稀疏检出（cone 模式，保留仓库根文件）+ 一处 Makefile 补丁
-IFS=$'\t' read -r _url _commit _vdir _mode <<< "$(tp_repo wifihistory)"
-[ -n "${_url:-}" ] || die 4 "thirdparty-feeds.conf 缺少 repo wifihistory"
-_wdir="$SRC/$_vdir"
-if [ ! -d "$_wdir/.git" ]; then
-	mkdir -p "$(dirname -- "$_wdir")"
-	git init -q "$_wdir" >>"$LOG" 2>&1 || die 4 "wifihistory git init 失败"
-	git -C "$_wdir" remote add origin "$_url" >>"$LOG" 2>&1 || die 4 "wifihistory remote add 失败"
-fi
-if ! git -C "$_wdir" cat-file -e "$_commit^{commit}" 2>/dev/null; then
-	git_fetch_retry "$_wdir" "$_commit" \
-		|| die 2 "SOURCE_UNAVAILABLE: wifihistory @ $_commit"
-fi
-git -C "$_wdir" sparse-checkout init --cone >>"$LOG" 2>&1 || die 4 "sparse-checkout init 失败"
-git -C "$_wdir" sparse-checkout set applications/luci-app-wifihistory >>"$LOG" 2>&1 \
-	|| die 4 "sparse-checkout set 失败"
-git -C "$_wdir" -c advice.detachedHead=false checkout -q --detach "$_commit" >>"$LOG" 2>&1 \
-	|| die 4 "wifihistory checkout 失败"
-[ "$(git -C "$_wdir" rev-parse HEAD)" = "$_commit" ] || die 3 "wifihistory PIN_MISMATCH"
-_wh="$BUILD/thirdparty-patches/luci-app-wifihistory.patch"
-apply_patch "$_wh" "$_wdir"
-[ "$(find "$_wdir" -path "$_wdir/.git" -prune -o -type f -print | wc -l | tr -d ' ')" = 43 ] \
-	|| die 4 "wifihistory 稀疏检出文件数应为 43"
-
-# 12d. 其余第三方仓库 + thirdparty-feed 软链
+# 12c. 其余第三方仓库 + thirdparty-feed 软链
 SBE_ROOT="$STAGE" sh "$PROJ/scripts/thirdparty-feeds.sh" fetch >>"$LOG" 2>&1 \
 	|| { tail -n 30 "$LOG" >&2; die 4 "thirdparty-feeds.sh fetch 失败"; }
 while read -r _name; do
@@ -515,7 +472,7 @@ done < <(awk '$1 == "link" || $1 == "local" {print $2}' "$TPCONF")
 logmsg "  TP_OK thirdparty-feed=$(find "$SRC/thirdparty-feed" -maxdepth 1 -type l | wc -l | tr -d ' ') links"
 
 # =============================================================== 13. feeds
-# 必须排在第三方树之后：feeds.conf 的 src-link 与 156 条 package/feeds 链接里
+# 必须排在第三方树之后：feeds.conf 的 src-link 与 164 条 package/feeds 链接里
 # 有 thirdparty/、passwall-selected/ 的目标，它们都由上一步产出。
 step "feeds 接线"
 install -m 0644 "$BUILD/feeds.conf.in" "$SRC/buildroot/feeds.conf"
@@ -540,7 +497,7 @@ while read -r kw name target; do
 	ln -sfn "$(relpath "$SRC/buildroot/feeds" "$tgt")" "$SRC/buildroot/feeds/$name"
 	nf=$((nf + 1))
 done < <(grep -E '^[[:space:]]*src-link[[:space:]]' "$BUILD/feeds.conf.in")
-[ "$nf" = 10 ] || die 4 "feeds.conf 应有 10 条 src-link，实际 $nf"
+[ "$nf" = 11 ] || die 4 "feeds.conf 应有 11 条 src-link，实际 $nf"
 ln -sfn ../package "$SRC/buildroot/feeds/base"
 
 mkdir -p "$SRC/buildroot/package/feeds"
@@ -555,7 +512,7 @@ while IFS=$'\t' read -r link target rest; do
 	[ -f "$SRC/$target/Makefile" ] || die 4 "软件包目标没有 Makefile：$target"
 	nl=$((nl + 1))
 done < "$BUILD/feeds-links.conf"
-[ "$nl" = 156 ] || die 4 "package/feeds 软链应有 156 条，实际 $nl"
+[ "$nl" = 164 ] || die 4 "package/feeds 软链应有 164 条，实际 $nl"
 logmsg "  FEEDS_OK src-link=$nf package-links=$nl base->package"
 
 # =============================================================== 14. 配置

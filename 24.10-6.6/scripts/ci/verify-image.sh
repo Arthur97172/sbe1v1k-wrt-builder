@@ -232,7 +232,7 @@ for f in \
 	usr/bin/xray usr/bin/sing-box usr/bin/chinadns-ng usr/bin/dns2socks \
 	usr/bin/ipt2socks usr/bin/microsocks usr/bin/tcping usr/bin/obfs-local \
 	usr/bin/ssr-local usr/bin/ssr-redir usr/libexec/mihomo usr/bin/bandix-plus \
-	usr/sbin/wifihistory usr/bin/ruby usr/bin/ttyd \
+	usr/bin/ruby usr/bin/ttyd \
 	etc/init.d/passwall etc/init.d/nikki etc/init.d/openclash \
 	etc/config/nikki etc/config/openclash \
 	usr/share/passwall/0_default_config \
@@ -244,6 +244,20 @@ done
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
 	[ -e "$ROOTFS/$f" ] && bad "不应存在 /$f" || ok "缺席 /$f"
+done
+
+# meshassistant 的依赖闭包（2026-11-07）：batctl-default 的可执行 + batman-adv
+# 内核模块。模块必须由 QSDK 6.6 内核源码真正编出，缺了说明 kmod-batman-adv
+# 没有生效（这正是本期唯一未验证的编译点）。
+[ -e "$ROOTFS/usr/libexec/batctl-default" ] \
+	&& ok "存在 /usr/libexec/batctl-default" \
+	|| bad "缺少 /usr/libexec/batctl-default（batctl-default 未安装）"
+bmod=$(find "$ROOTFS/lib/modules" -name 'batman_adv.ko*' -print -quit 2>/dev/null || true)
+[ -n "$bmod" ] \
+	&& ok "存在 batman_adv 内核模块（${bmod#"$ROOTFS"/}）" \
+	|| bad "缺少 batman_adv 内核模块（kmod-batman-adv 未编出）"
+for f in etc/config/dawn usr/sbin/socat; do
+	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f（meshassistant 依赖未落地）"
 done
 
 if [ -f "$ROOTFS/usr/lib/opkg/status" ]; then

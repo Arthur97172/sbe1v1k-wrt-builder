@@ -1,7 +1,8 @@
 # CI 构建流水线（24.10-6.6）
 
-本文件说明 GitHub Actions 上的两个 workflow 各自做什么、用什么证明“编译的就是已审计的源码”，
-以及出问题时应先看哪一道门禁。装配配方本身见 [SOURCE_ASSEMBLY.md](SOURCE_ASSEMBLY.md)。
+本文件说明 GitHub Actions 上的三个 workflow 各自做什么、用什么证明“编译的就是已审计的源码”，
+以及出问题时应先看哪一道门禁。装配配方本身见 [SOURCE_ASSEMBLY.md](SOURCE_ASSEMBLY.md)；
+第三个 workflow（插件 pin 巡检）只开 PR，不参与产线。
 
 > 状态：装配 workflow 已发布 `sources-v3`（run `40183767687`，PASS，恰好 3 个资产；
 > 指纹文件与本地导出的逐字节相同）。上一轮 Build（run `40176273728`）在 `sysupgrade-helper`
@@ -10,18 +11,40 @@
 > 21 个构建步骤 + release job 全绿，`verify-image.sh` 静态校验通过，Release `v16-1-5dda9f3b`
 > 恰好 3 个资产。**镜像产物在真机上的启动、升级与以太网行为仍为 `NOT TESTED`。**
 
-## 1. 为什么是两个 workflow
+## 1. 为什么是三个 workflow
 
 单次编译约 3 小时、需要 25 GB 以上磁盘；装配同样要克隆 4.6 GB 上游、生成 2.2 GB 源码树。
-拆成两段后：
+拆成三段后（前两个负责产线，第三个负责插件版本巡检）：
 
 | workflow | 文件 | 做什么 | 产物 |
 |---|---|---|---|
-| 🧱 Assemble | `.github/workflows/sources-24.10-6.6.yml` | 从 37 个固定提交装配源码树、比对指纹、打包 | Release `sources-vN`：**恰好 3 个**资产 |
+| 🧱 Assemble | `.github/workflows/sources-24.10-6.6.yml` | 从 42 个固定提交装配源码树、比对指纹、打包 | Release `sources-vN`：**恰好 3 个**资产 |
 | 📦 Build | `.github/workflows/build-24.10-6.6.yml` | 下载源码包、六道门禁、编译、发布固件 | Release `v<run>-<attempt>-<sha8>`：**恰好 3 个**镜像 |
+| 🔄 Refresh pins | `.github/workflows/refresh-pins-24.10-6.6.yml` | 每周把插件 pin 解析到最新、只读检测内核，开/更新 PR | 分支 `auto/pin-refresh` + 一个 PR（**不自动合并**） |
 
 改补丁/配置只需 push：装配 workflow 重新验证（可选发布新 `sources-vN`），构建 workflow 用
 `source_tag=auto` 自动取最新可用的源码包。**不再需要人工上传任何文件。**
+
+### 1.1 插件“跟最新”的闭环
+
+`refresh-pins-24.10-6.6.yml`（每周一 04:23 UTC + 手动）跑 `scripts/ci/refresh-pins.sh`
+`--apply`：按用户 2026-11-07 选定的口径把 10 个自维护插件与 7 个第三方仓库解析到
+**最新 release tag**（无版本 tag 的退回默认分支头；最新 tag 相对当前 pin 是
+behind/diverged 时保持不动，**绝不回退**），只改写 commit 字段与 `PROVENANCE.md`
+的 pin 快照，然后 force-push 到固定分支 `auto/pin-refresh` 并创建一个 PR（已存在则
+原地更新同一 PR）。PR 正文第一段是内核结论：
+
+- 内核**只检测**：比对 CodeLinaro `linux-ipq-6.6` 的 `win_qsdk.common.*` 分支
+  SUBLEVEL 与当前 pin，有更高版本只写“需人工评估”，脚本从不改写内核 pin；
+  真要升级走 `scripts/check-kernel.sh`（会重做整轮审计）。
+- **不自动合并**：pin 变化可能带进新依赖或坏版本，合并前必须让装配门禁在 PR 上
+  跑一遍。合并后 push 命中 `24.10-6.6/build/**` 自动触发装配验证；发布
+  `sources-vN` 仍需手动 `publish=true`。
+- 权限只用仓库内置 `GITHUB_TOKEN`（`contents: write`、`pull-requests: write`），
+  不需要 PAT，也不把任何令牌写进文件或 URL。
+- 插件树在指纹里按 `known-delta.conf` 的 `any` 白名单整树放宽（理由与补偿控制写在
+  该文件注释里），因此 pin 刷新 PR 不需要重建十万条审计基线。
+
 
 ## 2. 装配：`sources-24.10-6.6.yml`
 
@@ -174,6 +197,12 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 修复后的 `make download` 在 runner 上 | PASS（`Download third-party tarballs` success；此前只在本地跑过、`NOT TESTED` 的这条现已在 runner 上验证） |
 | 修复后的 `sysupgrade-helper` | PASS（`Apply custom packages` + `Build` 均 success，不再出现 `tools-only`） |
 | Release `v16-1-5dda9f3b` 资产数 | PASS（恰好 3 个：`fit-uImage.itb` 5,887,728 B、`initramfs-fit-uImage.itb` 92,900,880 B、`squashfs-sysupgrade.bin` 73,923,366 B；`published_at` 11:37:59Z） |
+| 2026-11-07 插件批次：全量装配（本地，新 pin/新包集合，oxidns `v1.3.5`） | PASS（`FINGERPRINT_MATCH`，`deltas=512` 全部由 `known-delta.conf` 解释、`unexplained=0`；`entries=194923`，`aggregate=2db99e40…`，`recipe_sha256=d8837aa6…`） |
+| 同批次的 `check-config.sh` | PASS（`lines=2139`，`sha256=e87b5969…133b`，`feeds=8`） |
+| 同批次的 `refresh-pins.sh` 只读检查 | PASS（0 项可更新、1 项按“不回退”保持不动——nikki；内核 6.6.147 已是 `win_qsdk.common.*` 最高） |
+| 同批次的 `thirdparty-feeds.sh check` | PASS（9 个链接；`passwall-selected` 7 个包） |
+| `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push） |
+| 新 pin 下的全量编译（含 `kmod-batman-adv`） | NOT TESTED |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
 

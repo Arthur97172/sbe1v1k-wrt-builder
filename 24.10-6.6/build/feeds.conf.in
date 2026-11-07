@@ -16,6 +16,8 @@ src-link nss qca/feeds/nss
 src-link wlan_open qca/feeds/wlan-open/mac80211
 src-link wlan_hostapd qca/feeds/wlan-hostapd
 src-link packages qca/feeds/packages
+# G3.10 (2026-11-07) — batman-adv / batctl for luci-app-meshassistant.
+src-link routing qca/feeds/routing
 src-link luci ../luci
 src-link sbe1v1k_apps ../apps
 # G3.9 (2026-10-22) — third-party apps, pinned per-repo symlinks and the

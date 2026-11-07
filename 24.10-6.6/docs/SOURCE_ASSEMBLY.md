@@ -16,7 +16,7 @@
 | # | 步骤 | 输入 | 断言 |
 |---|---|---|---|
 | 1 | 预检 | 工具、`upstream-pins.conf` 格式、磁盘 ≥ 25 GiB | pin 必须是 40 位 SHA、mode ∈ base/replace/overlay、恰好 1 个 base |
-| 2 | 取上游 | 37 个 pin | `git init` + `fetch --depth 1 <commit>` + `checkout --detach`；`rev-parse HEAD` 必须等于 pin |
+| 2 | 取上游 | 42 个 pin | `git init` + `fetch --depth 1 <commit>` + `checkout --detach`；`rev-parse HEAD` 必须等于 pin |
 | 3 | 铺基座 | `everything411/qsdk@21a8d133` | `buildroot/Makefile` 存在；不带 `.git` |
 | 4 | 剪裁 | `build/prune.conf` | 删除后路径确实不存在；**允许为空**，当前即为空（理由见 §3） |
 | 5 | 替换组件 | pins 的 `replace`/`overlay` 行 | 按路径深度从浅到深 `rsync -a --delete`；files-6.6 = 504 文件、patches-6.6 = 1219 |
@@ -27,8 +27,8 @@
 | 10 | 就地叠加 | `files-6.6/.` → `qca/src/linux-6.6/`；`bootloader/files/.` → `qca/src/u-boot-2025/` | 与两个包 Makefile 在解析期的 `cp` 一致；DTS 与 rtl8261n 落地；u-boot 叠加后恰好多出 381 个文件且无覆盖，`tools/sysupgrade.c` 在位 |
 | 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 全部 `tree` 模式；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
 | 11b | LuCI 补丁 | `build/luci-patches/SERIES` | `tree` 模式，目标是 `sources/luci`（第 5 步整树替换之后）；`0018` 五条、`luci-patches/0001` 四条 grep 断言，其中一条断言 `rsn_override_key_mgmt` 的赋值行号早于 override 元素的发出行号 |
-| 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` + `thirdparty-patches/` | passwall-selected 7 个包；wifihistory 稀疏检出 43 文件 + 一处补丁；`thirdparty-feed` 无悬空链接 |
-| 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 10 条 `src-link`、156 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
+| 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` | passwall-selected 7 个包从新的 pin 重新派生；`thirdparty-feed` 9 个链接无悬空。2026-11-07 起装配不再打任何第三方补丁（wifihistory 专用补丁随应用删除） |
+| 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 11 条 `src-link`、164 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
 | 14 | 冻结配置 | `build/config-frozen/` | `.config` 哈希；8 个 `CONFIG_FEED_*=y`；无 `uboot-2025`；`version.date=1792557977`；**选中包用到的 `qca/src` 本地树都在**（`MISSING_IMPLICIT`/`MISSING_EXPLICIT` 必须为 0） |
 | 15 | 文档 | `docs/package/` | 拷成 `sources/README.md`、`sources/PROVENANCE.md` |
 | 16 | 指纹 | `build/fingerprint-exclude.conf` | `--compare build/fingerprint/audited-24.10-6.6.tsv.zst`；未解释差异必须为 0 |
@@ -57,7 +57,7 @@
 
 | 文件 | 作用 | 规模 |
 |---|---|---|
-| `build/upstream-pins.conf` | 37 个上游仓库的 dest/url/commit/mode | 每行一个 40 位 SHA，没有分支名、没有 latest、没有镜像回退 |
+| `build/upstream-pins.conf` | 42 个上游仓库的 dest/url/commit/mode | 每行一个 40 位 SHA，没有分支名、没有 latest、没有镜像回退 |
 | `build/prune.conf` | 装配时整棵删除的路径 | 当前为空；曾删 `qca/src/u-boot-2025/`，2026-10-25 撤回（见 §3） |
 | `build/assembly-map.conf` | 仓库内文件/目录 → 装配树位置 | rtl8261n、SBE DTS、base-files、本地包、6 个 blob、bandix-plus |
 | `build/p-b/SERIES` | 板级补丁（镜像定义、DTS 注册、pwm） | 3 条，`tree` |
@@ -65,20 +65,26 @@
 | `build/build-fixes/SERIES` | 构建系统补丁 | 16 条，全部 `tree`（0004、0007 空号，见文件头） |
 | `build/luci-patches/SERIES` | LuCI 树补丁（`sources/luci`） | 1 条，`tree`；`build-fixes` 的 `tree` 目标是 `buildroot`，够不到 luci |
 | `build/openwrt-patches/package/system/procd/patches/0002-*.patch` | 替换上游同名补丁（rcS 上下文重排） | 1 个文件，由 `assembly-map.conf` 整文件覆盖 |
-| `build/feeds.conf.in` | 10 条相对 `src-link` | 不含宿主路径 |
-| `build/feeds-links.conf` | 156 条 `package/feeds/<feed>/<名字>` 软链 | 记**解析后**的目标，不记链接文本 |
+| `build/feeds.conf.in` | 11 条相对 `src-link` | 不含宿主路径 |
+| `build/feeds-links.conf` | 164 条 `package/feeds/<feed>/<名字>` 软链 | 记**解析后**的目标，不记链接文本 |
 | `build/passwall-selected.conf` | 从 passwall-packages 复制的 7 个包 | 纯拷贝，无 `.git` |
-| `build/thirdparty-patches/luci-app-wifihistory.patch` | wifihistory 的 `include` 改写 | 1 行 |
-| `build/config-frozen/{.config,version,version.date}` | 冻结配置 | 4,811 行；`version.date=1792557977` |
+| `scripts/ci/refresh-pins.sh` | 把插件 pin 解析到最新 tag/分支头并只读检测内核；**不改内核 pin** | 每周由 `refresh-pins-24.10-6.6.yml` 运行，只开 PR 不合并 |
+| `build/config-frozen/{.config,version,version.date}` | 冻结配置 | 4,808 行；`version.date=1792557977` |
 | `build/local-packages/` | `sbe1v1k-defaults`、`sbe-wifi-firmware`（仅文本） | 6 个 blob 不提交 |
 | `build/local-relayout/bandix-plus/` | 人工重排的 bandix-plus | 6 个文件 |
 | `build/fingerprint-exclude.conf` | 指纹与导出共用的排除规则 | 133 条，逐条带注释 |
 | `build/fingerprint/audited-24.10-6.6.tsv.zst` | 已审计树的逐文件指纹 | 194,808 条；压缩后 6.7 MB |
 
-`build/known-delta.conf` 是允许保留的差异白名单。目前登记两条：`PROVENANCE.md`
-（审计后对 §2.5/§2.5.1 的文档订正，差异只在文档行）与
+`build/known-delta.conf` 是允许保留的差异白名单。逐文件登记的有三条：`PROVENANCE.md`
+（审计后对 §2.5/§2.5.1 的文档订正，差异只在文档行）、`README.md`（只是
+`docs/package/README.md` 的装配副本，2026-11-07 把 apps/ 由五个订正为十个）与
 `buildroot/openwrt-patches/package/utils/busybox/busybox.mk`（0017 注释掉 QSDK 的
-busybox 配置覆盖，理由见 §3）；**任何未登记的差异都判失败**。
+busybox 配置覆盖，理由见 §3）。2026-11-07 另按 `any` 方向整树放宽了**插件树**
+（`apps/*`、`thirdparty/*`、`thirdparty-feed/*`、`passwall-selected/*`、两条
+`package/feeds` 软链前缀）：这些树不参与 QSDK/Wi-Fi/LuCI 的安全审计，完整性由
+pin 文件里的 40 位 commit SHA 与 PR 评审保证，逐字节基线不再覆盖它们（理由与
+补偿控制写在 `known-delta.conf` 的注释里）；QSDK 侧门禁一条没有放宽。
+**任何未登记的差异都判失败**。
 打包时写进包根的 `TREE-FINGERPRINT.json`/`.tsv` 不需要登记——指纹的默认子树清单
 （`DEFAULT_SUBTREES`）本来就不含包根这两个文件名，它们由 `export-sources.sh` 的
 tar 清单断言单独保证。
@@ -171,7 +177,7 @@ path <TAB> mode <TAB> type <TAB> sha256 <TAB> - <TAB> 解析后的软链目标
 > 新基线与旧基线（156,069 条）逐行相同。
 
 排除清单不是“随便写几个 glob”：`tree-fingerprint.sh --check-exclusions` 会拿干净
-上游（37 个 pin 中除基座外的 36 个，按各自 dest 前缀）跑一遍，**任何一条规则命中干净源码即
+上游（42 个 pin 中除基座外的 41 个，按各自 dest 前缀）跑一遍，**任何一条规则命中干净源码即
 `EXCLUSION_TOO_BROAD`**。当前 133 条规则、`too_broad=0`。这条闸门保证 `*.pem`
 （selftests 签名键）、`*.map`、`*.scr`、`lib/test_fortify/` 这类“看起来像产物、
 其实是源码”的文件不会被误排。

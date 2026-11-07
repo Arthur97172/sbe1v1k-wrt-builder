@@ -29,7 +29,6 @@ LIST=$(
 		printf '%s\n' build/fingerprint-exclude.conf
 		printf '%s\n' build/known-delta.conf
 		find build/build-fixes build/luci-patches build/openwrt-patches build/target-feed-fixes \
-			build/thirdparty-patches \
 			build/config-frozen build/local-packages build/local-relayout build/p-b \
 			-type f
 		find scripts/ci -maxdepth 1 -type f \

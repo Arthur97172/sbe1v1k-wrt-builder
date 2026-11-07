@@ -3,7 +3,7 @@ name: 🧱 Assemble 24.10-6.6 sources
 # 从公开上游 + 本仓库的装配输入重建 24.10-6.6 的源码树，并（可选）发布成
 # sources-vN。这是“把代码放到 GitHub 让 Actions 自己生产源码包”的那一半：
 # 仓库只提交几 MB 文本（钉定表、补丁、配置、指纹基线），Actions 自己去
-# CodeLinaro / GitHub 取 37 个固定提交，装配、验证、打包。
+# CodeLinaro / GitHub 取 42 个固定提交，装配、验证、打包。
 #
 # 三条硬约束：
 #   - 只按 40 位 commit 取，取不到即 SOURCE_UNAVAILABLE，绝不降级到分支头；

@@ -1,0 +1,108 @@
+name: 🔄 Refresh 24.10-6.6 plugin pins
+
+# 每周把 10 个自维护插件与 7 个第三方仓库的 pin 解析到“最新版本”，有变化就
+# 提交到固定分支 auto/pin-refresh 并开/更新同一个 PR。同时只读检测 CodeLinaro
+# 6.6 内核是否有高于当前 pin 的 SUBLEVEL。
+#
+# 三条硬约束（与 refresh-pins.sh 一致，用户 2026-11-07 选定）：
+#   - **不自动合并**：pin 变了就可能带进新的构建依赖或坏版本，装配门禁必须在
+#     PR 上跑一遍，人看过再合；
+#   - **不改内核 pin**：内核属于审计对象，升级等于重做静态审计，脚本只报告；
+#   - **不回退**：最新 tag 相对当前 pin 是 behind/diverged 时保持不动。
+#
+# 合并本 PR 后：push 命中 24.10-6.6/build/** → sources-24.10-6.6.yml 自动装配
+# 验证（publish=false）；通过后仍需**手动** dispatch 并 publish=true 发
+# sources-vN，build-24.10-6.6.yml 的 source_tag=auto 才会用到新 pin。
+#
+# 只需要仓库内置的 GITHUB_TOKEN（contents/pull-requests 写权限），不需要 PAT。
+
+on:
+  schedule:
+    # 每周一 04:23 UTC（错开正点，避开 Actions 高峰）
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-pins-24.10-6.6
+  cancel-in-progress: false
+
+env:
+  TZ: UTC
+  LC_ALL: C
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: true   # 需要 push auto/pin-refresh
+
+      - name: Refresh pins
+        id: refresh
+        run: |
+          set -o pipefail
+          rc=0
+          ./24.10-6.6/scripts/ci/refresh-pins.sh --apply \
+            --report "$RUNNER_TEMP/report.md" 2>&1 | tee refresh-pins.log || rc=$?
+          # 0 = 无变化或已应用；3 = 内核检测读不到远端（BLOCKED，不影响 pin 刷新）
+          if [ "$rc" != 0 ] && [ "$rc" != 3 ]; then
+            echo "refresh-pins.sh 失败，退出码 $rc" >&2
+            exit "$rc"
+          fi
+          if git diff --quiet; then
+            echo "no-changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no-changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push auto/pin-refresh
+        if: steps.refresh.outputs.no-changes == 'false'
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B auto/pin-refresh
+          git add -A
+          git commit -m "24.10 插件：自动刷新 pin（$(date -u +%F)）"
+          git push --force origin auto/pin-refresh
+
+      - name: Open or update pull request
+        if: steps.refresh.outputs.no-changes == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head auto/pin-refresh --state open \
+                 --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" \
+              --title "24.10 插件：pin 自动刷新（$(date -u +%F)）" \
+              --body-file "$RUNNER_TEMP/report.md"
+            echo "已更新 PR #$pr"
+          else
+            gh pr create --base main --head auto/pin-refresh \
+              --title "24.10 插件：pin 自动刷新（$(date -u +%F)）" \
+              --body-file "$RUNNER_TEMP/report.md"
+          fi
+
+      - name: Nothing to do
+        if: steps.refresh.outputs.no-changes == 'true'
+        run: echo "所有 pin 已是最新，内核检测结论见日志；未创建分支、未动 PR。"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-pins-log
+          path: |
+            refresh-pins.log
+            ${{ runner.temp }}/report.md
+          if-no-files-found: ignore
+          retention-days: 30

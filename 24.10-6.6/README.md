@@ -41,6 +41,7 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
         ├── check-config.sh      冻结 .config 等价门禁
         ├── download-preflight.sh  make -k download 预检
         ├── recipe-hash.sh       装配输入哈希
+        ├── refresh-pins.sh      插件 pin 解析到最新 tag/分支头 + 只读内核检测（只开 PR）
         ├── prepare-tree.sh      仅 CI：重建 host-bin、固定时间戳、残留断言
         ├── verify-image.sh      从最终 sysupgrade 镜像解出 rootfs 做静态校验
         └── export-sources.sh    把装配 stage 打成源码包（tar.zst + SHA256SUMS + 指纹）
@@ -61,7 +62,7 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 | `luci-light` | 23.024.33244~34dee82 |
 | `luci-mod-admin-full` | 19.253.48496~3f93650 |
 
-共 51 个 `luci-*` 包，分三类：
+共 63 个 `luci-*` 包，分三类：
 
 - **核心**：`luci-base`、`luci-light`、`luci-compat`、`luci-mod-admin-full`、
   `luci-mod-network`、`luci-mod-status`、`luci-mod-system`、`luci-lib-*`、
@@ -70,11 +71,14 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 - **上游应用**（feeds `luci`）：`luci-app-firewall`、`luci-app-ddns`、`luci-app-upnp`、
   `luci-app-ttyd`。
 - **项目与三方应用**：
-  - 本项目 feeds（`sources/apps`）：`luci-app-fcc`、`luci-app-ledfancontrol`、
-    `luci-app-nssecm`、`luci-app-online-upgrade`、`luci-app-substore`
-  - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-bandix-plus`、`luci-app-cpu-status`、
-    `luci-app-nikki`、`luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、
-    `luci-app-wifihistory`
+  - 本项目 feeds（`sources/apps`，10 个）：`luci-app-fcc`、`luci-app-ledfancontrol`、
+    `luci-app-meshassistant`、`luci-app-nssecm`、`luci-app-online-upgrade`、
+    `luci-app-oxidns`、`luci-app-smartnetpilot`、`luci-app-substore`、`luci-app-tasks`、
+    `luci-app-xpu-status`
+  - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-bandix-plus`、`luci-app-nikki`、
+    `luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`
+  - meshassistant 的运行依赖（上游 feed）：`batctl` / `kmod-batman-adv`（`routing`）、
+    `luci-proto-batman-adv`（`luci`）、`dawn` / `socat`（`packages`）、`flock`（util-linux）
   - 代理后端（`sources/passwall-selected`）：`chinadns-ng`、`dns2socks`、`ipt2socks`、
     `microsocks`、`shadowsocksr-libev`、`simple-obfs`、`tcping`；另有 `xray`、`sing-box`、
     `mihomo`、`ruby` 等运行依赖，均不带 LuCI 界面包之外的额外前端。
@@ -161,7 +165,7 @@ local <feed-name> <path>
 ```
 
 - `mode=git`：干净单仓库，可 `fetch` 自动对齐固定提交；
-  `mode=manual`：人工剪裁/带补丁（如 wifihistory），只校验不改写。
+  `mode=manual`：人工剪裁/带补丁，只校验 HEAD、不改写（本项目当前没有 manual 仓库）。
 - `sources/thirdparty-feed/*` 全是**相对软链**，脚本只维护这些软链和
   `thirdparty/<repo>` 目录，**不改** `buildroot/feeds.conf`，也**不跑**
   `scripts/feeds update`（它会产生绝对路径，CI 的 `prepare-tree.sh` 规则不允许）。
@@ -184,7 +188,20 @@ local <feed-name> <path>
 `audited-only` 差异把与审计基线的偏离全部列出来。少量、可解释的改动按
 `known-delta.conf` 的规矩逐条登记（reason 写清原因，并在装配脚本里有对应断言）；
 差异成规模时（等于换了上游版本）就不该用白名单糊过去，而应重新审计、出新基线——
-那是审计动作，需要单独批准。
+那是审计动作，需要单独批准。**插件树**（`apps/*`、`thirdparty/*` 等）自 2026-11-07
+起整树按 `any` 放宽，不参与这条逐文件基线。
+
+日常的“跟最新”不用手改：`refresh-pins-24.10-6.6.yml` 每周跑
+`scripts/ci/refresh-pins.sh --apply`，把最新 tag/分支头写进两个 pin 文件并开 PR；
+本地也可以先看一眼它会改成什么（只读、不改文件）：
+
+```sh
+./24.10-6.6/scripts/ci/refresh-pins.sh                  # old→new 表 + 内核结论
+./24.10-6.6/scripts/ci/refresh-pins.sh --no-kernel      # 跳过 GitLab 内核查询
+```
+
+口径：有版本 tag 取版本序最大者，**不回退**（比当前 pin 旧/分叉就保持不动）；
+无版本 tag 退回默认分支头。内核只报告不改，升级仍走 `scripts/check-kernel.sh`。
 
 第 5 步不能省：**CI 编译用的是源码包，不是本地 `sources/`**，只改文件 A
 不会影响 CI。装配输入（`build/**`、四个装配脚本、25.12 的 Wi-Fi blob）一有 push，
@@ -237,8 +254,8 @@ link luci-app-foo      foo        .
 
 - `vendor-dir` 相对 `sources/`，惯例是 `thirdparty/<仓库名>`；
 - `mode=git`：要求工作区干净，`fetch` 可自动对齐 pin；人工剪裁或带补丁的用 `manual`
-  （脚本只校验 HEAD、不改写）。注意装配第 12c 步的补丁应用目前是**为 wifihistory
-  硬编码**的；新仓库要带补丁，得在那一步照葫芦画瓢加一段，否则补丁不会生效；
+  （脚本只校验 HEAD、不改写）。装配脚本对 manual 仓库**不施加任何补丁**：需要在
+  装配时改写的仓库必须在 `build/build-fixes/SERIES` 里登记补丁（tree 模式）；
 - `<feed-name>` 必须等于包目录名；`<subdir>` 是包在仓库里的相对路径，在仓库根就写 `.`；
 - 同一仓库的第二个包只加 `link`，不要再写一条 `repo`。
 
@@ -260,12 +277,12 @@ buildroot/package/feeds/thirdparty/luci-app-foo	thirdparty/luci-app-foo
 `scripts/ci/assemble-sources.sh` 的 feeds 接线步：
 
 ```sh
-[ "$nl" = 156 ] || die 4 "package/feeds 软链应有 156 条，实际 $nl"
+[ "$nl" = 164 ] || die 4 "package/feeds 软链应有 164 条，实际 $nl"
 ```
 
-加一行就改成 157，并同步改该步上方的注释、`docs/SOURCE_ASSEMBLY.md`（第 64 行的 156）
-与 `docs/CI_BUILD.md` 里出现的条数。如果新增了新的 `src-link` 源，还要改
-`feeds.conf.in` 和同一步的 `[ "$nf" = 10 ]`。
+加一行就改成 165，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
+（`grep -rn '164' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
+`feeds.conf.in` 和同一步的 `[ "$nf" = 11 ]`。
 
 #### 5. 文件 B：`build/custom-packages.conf`
 
@@ -390,7 +407,7 @@ push 后 `sources-24.10-6.6.yml` 自动以 `publish=false` 验证；通过后手
 |---|---|---|
 | `build/thirdparty-feeds.conf` | 新仓库加 `repo`+`link`；旧仓库只加 `link` | 删 `link`；仓库不再被引用时删 `repo` |
 | `build/feeds-links.conf` | 加 `package/feeds/thirdparty/<名字>` 行（含依赖包） | 删对应行 |
-| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 156 ]` 改成新总数 | 改回去 |
+| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 164 ]` 改成新总数 | 改回去 |
 | `build/custom-packages.conf` | 加 `CUSTOM_PACKAGES="$CUSTOM_PACKAGES <名字>"` | 注释掉整行 |
 | `build/config-frozen/.config` | `make defconfig` 后整体替换 | 同左 |
 | `build/known-delta.conf` | 加 `fresh-only` 条目（新路径） | 删掉对应条目 |
@@ -483,12 +500,20 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 
 ## CI
 
-两个 workflow，避免把几小时的编译和装配挤在一次运行里：
+三个 workflow，避免把几小时的编译和装配挤在一次运行里：
 
 | workflow | 触发 | 产物 |
 |---|---|---|
 | `sources-24.10-6.6.yml` 🧱 | `build/**`、`docs/**`、四个装配脚本变更 / 手动 | Release `sources-vN`：源码包 + `SHA256SUMS` + 指纹（恰好 3 个） |
 | `build-24.10-6.6.yml` 📦 | `24.10-6.6/**` 变更 / 手动（可指定 `source_tag`） | Release `v<run>-<attempt>-<sha8>`：三个固件（恰好 3 个） |
+| `refresh-pins-24.10-6.6.yml` 🔄 | 每周一 04:23 UTC / 手动 | 分支 `auto/pin-refresh` + 一个 PR：插件 pin 的 old→new 表与内核检测结论；**从不自动合并** |
+
+插件怎么“跟最新”：`refresh-pins.sh` 把 10 个自维护插件与 7 个第三方仓库解析到
+最新 release tag（无版本 tag 的退回默认分支头，比当前 pin 旧/分叉则保持不动），
+改写 `upstream-pins.conf` / `thirdparty-feeds.conf` 的 commit 字段与
+`PROVENANCE.md` 的 pin 快照，再开 PR。合并后 push 自动触发装配验证；发
+`sources-vN` 仍为手动 `publish=true`。内核**只检测不改**——要升级仍走
+`scripts/check-kernel.sh`（见上文）。
 
 构建流程：`source_tag=auto` 挑最新的 `sources-vN`（N≥2、资产数恰好 3；`sources-v1` 是含
 `dl/` 的 legacy，跳过）→ `sha256sum -c` → 解包 → 树指纹比对（未解释差异必须为 0）→
