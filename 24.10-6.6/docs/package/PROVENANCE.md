@@ -340,7 +340,7 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | `luci-app-tasks` | `luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 2026-10-25T14:30:18Z | `Add interface screenshot to READMEs` | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 1.1 MB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 2026-10-27T12:09:18Z | `feat: show the current LAN settings in the PPPoE and DH…` | GPL-3.0-only（`LICENSE`） | 1.6 MB |
 | `luci-app-xpu-status` | `luci-app-xpu-status` | `14e7d81a75cf864396f308d1a8e83bcc1d5d53d6` | 2026-11-07T06:44:16Z | `luci-app-xpu-status 1.0.3-r1：README 增加截图并调整章节顺序` | GPL-3.0-only（`LICENSE`） | 920 KB |
-| `luci-app-oxidns` | `luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | 2026-11-07T09:38:03Z | `docs: show screenshot and install steps before feature list`（tag `v1.3.7`，`PKG_VERSION 1.3.8`） | GPL-3.0-or-later（`LICENSE`） | 2.9 MB |
+| `luci-app-oxidns` | `luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | 2026-11-07T09:38:03Z | `docs: show screenshot and install steps before feature list`（tag `v1.3.8`，`PKG_VERSION 1.3.8`；`v1.3.8` 与 `v1.3.7` 指向同一提交） | GPL-3.0-or-later（`LICENSE`） | 2.9 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2026-11-07T03:37:47Z | `Move Load and Link Rate next to the Interface column` | GPL-3.0-only（`LICENSE`） | 1.1 MB |
 
 十个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。五个新应用
@@ -522,7 +522,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2.6.3-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `af6f4abe6ccb4147addfd3975bd45451e13d03a6` | 1.0.0-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
-| `apps/luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | v1.3.7（tag；PKG_VERSION 1.3.8） |
+| `apps/luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | v1.3.8（tag；PKG_VERSION 1.3.8；与 v1.3.7 同一提交） |
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 1.1.1-r1（tag） |
@@ -563,10 +563,11 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | 文件 | 来源 | 大小 | SHA-256 | 装配位置 |
 |---|---|---|---|---|
 | `banner` | 用户提供 | 1,041 B | `d649da4e4a286b0b66c3558cb0b5c3f756d33f64e320051d93756ca56bbc4011` | `sources/buildroot/files/etc/banner`（覆盖 `base-files` 的 `/etc/banner`） |
-| `99-wireless-defaults` | 用户提供的首次启动无线策略脚本；2026-10-22 按用户指示将 `is_supported_board()` 白名单改为**仅 `spectrum,sbe1v1k`**（原 Airoha/Gemtek/Nokia 板型全部移除），并同步修改文件头注释、失败提示语与幂等标记（`MARKER` 改为 `system.@system[0].spectrum_wireless_defaults`） | 10,455 B | `6b49b1b9675bc7d7b074b4478fbbd79fc5ab401de95a7e809a1df7271e4ec293` | `sources/buildroot/files/etc/uci-defaults/99-wireless-defaults`（模式 0755，首次启动执行后由 `/etc/init.d/boot` 删除） |
+| `99-wireless-defaults`（实现本体） | 用户提供的无线默认值策略脚本。2026-10-22 将 `is_supported_board()` 白名单改为**仅 `spectrum,sbe1v1k`**（原 Airoha/Gemtek/Nokia 板型全部移除），并同步修改文件头注释、失败提示语与幂等标记（`MARKER` 改为 `system.@system[0].spectrum_wireless_defaults`）。2026-11-07 用户更新默认值：国家 `US→TW`；2.4G 信道 6→11、`HE40→HET40`；5G 36→40、`EHT160→EHT60`；6G 37→61（`EHT320` 不变）；三频 txpower 28/28/23→23/23/23。逻辑未改（与旧版相比仅 1 个 diff hunk） | 10,456 B | `e6d52efb5098e6a43aa86469e0e3b2a53f8bf6065d092320cae6767ab3fec459` | `sources/buildroot/files/usr/lib/sbe1v1k/wireless-defaults`（模式 0755，由 `/etc/init.d/wireless-defaults` 与首启入口调用） |
+| `99-wireless-defaults`（首启入口） | 项目自有的 459 B 壳脚本，只调用上面的实现本体。因为 `/etc/init.d/boot` 以 `.`（source）方式执行本文件，壳内不得使用 `set -e`/`exit`；实现本体以子进程运行，不受此限 | 459 B | `9f4f0c25e45e13a9e9bb795211bcab2a23becab006c0a64c11bf5c79568c16b0` | `sources/buildroot/files/etc/uci-defaults/99-wireless-defaults`（模式 0755，首次启动成功后被 boot 删除） |
 
 复核：`cmp <仓库根>/banner sources/buildroot/files/etc/banner`、
-`cmp <仓库根>/99-wireless-defaults sources/buildroot/files/etc/uci-defaults/99-wireless-defaults` 均返回 0。
+`cmp <仓库根>/files/etc/uci-defaults/99-wireless-defaults sources/buildroot/files/usr/lib/sbe1v1k/wireless-defaults` 均返回 0。
 覆盖机制与已知限制（该脚本的板型白名单**仅含** `spectrum,sbe1v1k`，默认口令
 `12345678`，属于已知弱口令，首次启动后必须由用户修改）见
 `docs/BUILD_TREE_ASSEMBLY.md` §10.3。
