@@ -227,7 +227,10 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 同批次全量装配（含 `--compare`） | PASS（`FINGERPRINT_MATCH`，`unexplained=0`；`entries=195244`，`aggregate=ac5f6831…`，`recipe_sha256=a6e0d217…`；`FEEDS_OK package-links=174`。）`entries` 不变、`aggregate` 变，正是两个 app 的文件内容变了而文件数没变 |
 | 同批次的 `check-config.sh` 等价性 | PASS（`lines=2156`，`sha256=22c542d8…f44`，`feeds=8`——插件升版没有改变包集合）。本机此前靠 `touch staging_dir/host/.prereq-build` 跳过宿主机检查，连带跳过了 `SetupHostCommand` 生成的 `staging_dir/host/bin/g++`，Kconfig 的 `check-hostcxx.sh` 判否、丢掉了 `CONFIG_MOLD=y`；补上该软链（指向 `/usr/bin/g++`）后与冻结配置一致。CI 上 prereq 会真的执行并生成这个软链，不受影响 |
 | 同批次的依赖闭包门禁 | PASS（`选中包 410 个，运行时依赖全部可满足`；fcc 的新依赖 `luci-compat`/`luci-lib-httpclient`/`curl`/`ca-bundle`/`tmux` 与 oxidns 的 `rpcd`/`jsonfilter`/`uclient-fetch`/`ca-bundle` 均已选中，无需新接线） |
-| 新 pin 下的 CI 构建 | NOT TESTED（push 触发的 Assemble 会验证装配；Build 需等新 `sources-vN` 发布） |
+| 同批次的 CI 装配（push 触发的 run `42424092025`） | 被取消（`concurrency` 的 `cancel-in-progress`：同一提交紧接着来了一个 `workflow_dispatch` 装配，push 那次让位） |
+| 同批次以 `publish=true` dispatch 的装配（run `42424441419`） | PASS（`assemble` 与 `publish` 两个 job 全过：`Assert exactly 3 assets`、`Create release`、`Verify published assets` 均 success） |
+| 发布 `sources-v7` 的资产与指纹 | PASS（恰好 3 个资产：bundle 269,788,616 B、`SHA256SUMS` 100 B、`TREE-FINGERPRINT.json` 2276 B；`entries=195244`、`aggregate=ac5f6831…`、`recipe=a6e0d217…` 与本地装配逐项一致） |
+| 新 pin 下的 CI 构建 | NOT TESTED（已由本次 push 触发，`source_tag=auto` 会选中 `sources-v7`；结果见下一次更新） |
 | 修复后的 CI 构建（换用新版 `sources-vN`） | NOT TESTED（需先以 `publish=true` dispatch Assemble 发新源码包，再 dispatch Build） |
 | 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
 | 修复后镜像内的 `/etc/config/dawn`、`usr/sbin/socat`、`batman_adv.ko` | NOT TESTED（`verify-image.sh` 的检查在编译之后，尚未跑到） |
