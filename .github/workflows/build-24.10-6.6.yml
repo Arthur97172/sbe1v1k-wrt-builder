@@ -192,6 +192,18 @@ jobs:
           set -o pipefail
           ./24.10-6.6/build/sbe1v1k-build.sh -j"$(nproc)" 2>&1 | tee build.log
 
+      - name: Diagnose build failure
+        # OpenWrt 的 include/verbose.mk 在非 V=s 模式下把子 make 的输出整体丢进
+        # /dev/null（fd 8/9 只留进度行），所以构建失败时控制台只有
+        # "make[2] package/install" 之类的行、没有报错。失败后用 -j1 V=s 重跑：
+        # 已编译的目标不会重编，只会把卡住的那一步的真实输出打出来。
+        if: failure()
+        run: |
+          set -o pipefail
+          timeout 1200 ./24.10-6.6/build/sbe1v1k-build.sh -j1 V=s 2>&1 \
+            | tail -n 400 | tee diagnose.log || true
+          echo "=== diagnose.log 行数: $(wc -l < diagnose.log 2>/dev/null || echo 0) ==="
+
       - name: Verify image (static)
         if: success()
         env:
@@ -229,6 +241,7 @@ jobs:
           name: build-log-${{ github.run_number }}
           path: |
             build.log
+            diagnose.log
             download.log
             download-fail.txt
             check-config.log

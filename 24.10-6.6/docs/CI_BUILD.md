@@ -211,7 +211,8 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 第三批构建（run `42367249745`，head `fdd3d02`） | FAIL（第 1–15 步 success；第 16 步 `Build` 在 `dawn` 的 CMake 配置阶段约 3 秒失败，依赖 `libgcrypt` 未接线，根因与修复见下节） |
 | 修复后（`libgcrypt`/`libgpg-error` 补链）的全量装配（含 `--compare`） | PASS（`FINGERPRINT_MATCH`，`deltas=831` 全部解释、`unexplained=0`；`entries=195242`，`aggregate=73bbc8d8…a1a1`，`recipe_sha256=451119b3…362`；`FEEDS_OK src-link=11 package-links=172`）。`entries` 比上一批 +2，正是两条新软链；其余增量仍只有文档行与 `upstream-pins.conf` 注释 |
 | 修复后的 `check-config.sh` 等价性 | PASS（`lines=2147`，`sha256=0a928fce…b7e`，`feeds=8`；冻结配置新增 `CONFIG_PACKAGE_libgcrypt=y`、`CONFIG_PACKAGE_libgpg-error=y`，与装配树 `make defconfig` 结果逐行一致） |
-| 修复后的 CI 构建（新 `sources-vN`，含 `dawn`/`libgcrypt` 编译） | NOT TESTED（待发布 sources 并重跑 `build-24.10-6.6.yml`） |
+| 修复后的 CI 构建（run `42376212224`，`sources-v6`） | FAIL（第 1–15 步 success；第 16 步编译本体跑完——`libgcrypt` 14:01、`dawn` 14:12、`batman-adv` 14:16 均成功——随后在 `make[2] package/install` 约 14.5 秒处失败；控制台无报错文本，原因见下：`verbose.mk` 在非 `V=s` 模式丢弃子 make 输出） |
+| 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
 | 修复后镜像内的 `/etc/config/dawn`、`usr/sbin/socat`、`batman_adv.ko` | NOT TESTED（`verify-image.sh` 的检查在编译之后，尚未跑到） |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
 | `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push） |
