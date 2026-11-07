@@ -197,12 +197,24 @@ jobs:
         # /dev/null（fd 8/9 只留进度行），所以构建失败时控制台只有
         # "make[2] package/install" 之类的行、没有报错。失败后用 -j1 V=s 重跑：
         # 已编译的目标不会重编，只会把卡住的那一步的真实输出打出来。
+        #
+        # Actions 的步骤日志与 artifact 下载都要求登录，匿名只能看到 job 页上的
+        # annotations；所以再把 diagnose.log 尾部压成一条 ::error:: 注解
+        # （换行转义成 %0A），失败原因不必登录也能读。
         if: failure()
         run: |
           set -o pipefail
           timeout 1200 ./24.10-6.6/build/sbe1v1k-build.sh -j1 V=s 2>&1 \
             | tail -n 400 | tee diagnose.log || true
           echo "=== diagnose.log 行数: $(wc -l < diagnose.log 2>/dev/null || echo 0) ==="
+          if [ -s diagnose.log ]; then
+            msg=$(tail -n 400 diagnose.log \
+              | awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+                  if (NR > 1) printf "%%0A"; printf "%s", $0 }')
+            echo "::error::diagnose.log 尾部：${msg}"
+          else
+            echo "::error::diagnose.log 缺失或为空"
+          fi
 
       - name: Verify image (static)
         if: success()
