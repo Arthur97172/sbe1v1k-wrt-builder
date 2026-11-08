@@ -1,0 +1,11 @@
+--- a/qca/src/linux-6.6/scripts/Makefile.lib
++++ b/qca/src/linux-6.6/scripts/Makefile.lib
+@@ -562,7 +562,7 @@
+                      $(size_append); } > $@
+
+ quiet_cmd_xzmisc = XZMISC  $@
+-      cmd_xzmisc = cat $(real-prereqs) | $(XZ) --check=crc32 --lzma2=dict=1MiB > $@
++      cmd_xzmisc = cat $(real-prereqs) | $(XZ) -9e --check=crc32 --lzma2=dict=128MiB > $@
+
+ # ZSTD
+ # ---------------------------------------------------------------------------

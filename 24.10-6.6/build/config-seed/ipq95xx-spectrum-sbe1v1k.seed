@@ -2,6 +2,10 @@ CONFIG_TARGET_ipq95xx=y
 CONFIG_TARGET_ipq95xx_generic=y
 CONFIG_TARGET_ipq95xx_generic_DEVICE_spectrum_sbe1v1k=y
 CONFIG_TARGET_DEVICE_PACKAGES_ipq95xx_generic_DEVICE_spectrum_sbe1v1k=""
+# 恢复模式 RAM 镜像：Kconfig 默认是 NONE（未压缩 cpio），Image-initramfs 会到 249 MB，
+# 超过 U-Boot 的 bootm 解压上限。固定用 XZ（内核端见 build-fixes/0019）。
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y
 # Stage 3 / G3.1 — NSS datapath base (see docs/STAGE3_INTEGRATION_PLAN.md)
 CONFIG_PACKAGE_kmod-qca-ssdk-nohnat=y
 CONFIG_PACKAGE_qca-ssdk-shell=y
