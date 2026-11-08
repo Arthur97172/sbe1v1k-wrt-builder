@@ -238,11 +238,34 @@ jobs:
           exit 0
 
       - name: Verify image (static)
+        id: verify
         if: success()
         env:
           # CI 镜像必须带厂商 Wi-Fi 固件（LICENSE_REVIEW_REQUIRED，已获准公开分发）。
           SBE_EXPECT_WIFI_FIRMWARE: '1'
-        run: ./24.10-6.6/scripts/ci/verify-image.sh "$GITHUB_WORKSPACE"
+        run: |
+          set -o pipefail
+          ./24.10-6.6/scripts/ci/verify-image.sh "$GITHUB_WORKSPACE" 2>&1 | tee verify.log
+
+      - name: Diagnose image verification
+        # 与 Diagnose build failure 同理：步骤日志和 artifact 匿名不可读，
+        # 把 FAIL 行与末尾压成 ::error:: 注解，失败原因不必登录也能看。
+        if: failure() && steps.verify.outcome == 'failure'
+        run: |
+          if [ -s verify.log ]; then
+            hits=$(grep -aE '^FAIL|失败|缺少|错误|Error|error|Traceback' verify.log \
+              | tail -n 30 \
+              | awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+                  if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 300) }' || true)
+            if [ -n "$hits" ]; then echo "::error::verify.log 失败行：${hits}"; fi
+            msg=$(tail -n 60 verify.log \
+              | awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+                  if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 200) }')
+            echo "::error::verify.log 末尾 60 行：${msg}"
+          else
+            echo "::error::verify.log 缺失或为空（脚本可能在输出前就退出了）"
+          fi
+          exit 0
 
       - name: Collect release assets
         if: success()
@@ -279,6 +302,7 @@ jobs:
             download-fail.txt
             check-config.log
             config-diff.txt
+            verify.log
             fp.json
           if-no-files-found: warn
           retention-days: 7

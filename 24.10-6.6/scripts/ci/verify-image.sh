@@ -56,7 +56,8 @@ ok()   { printf 'PASS   %s\n' "$*"; }
 bad()  { printf 'FAIL   %s\n' "$*"; fail=1; }
 
 # 先渲染 overlay（幂等），保证下面比对的是本次构建实际会写进镜像的文件。
-SBE_ROOT="$ROOT" SBE_BUILDROOT="$BR" "$PROJ/scripts/render-overlay.sh"
+SBE_ROOT="$ROOT" SBE_BUILDROOT="$BR" "$PROJ/scripts/render-overlay.sh" \
+	|| { bad "render-overlay.sh 失败：镜像里的 files/ 叠加层无法比对"; exit 1; }
 
 IMG="$OUT/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin"
 FIT="$OUT/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb"
@@ -70,7 +71,8 @@ for f in "$IMG" "$FIT" "$INITRAMFS"; do
 		bad "缺少或为空：$f"
 	fi
 done
-[ -s "$IMG" ] || exit 1
+# 静默 exit 1 曾让 CI 上只看到“步骤失败”而不知道哪一步（2026-11-08）。
+[ -s "$IMG" ] || { bad "sysupgrade 镜像缺失或为空，后续检查无法进行：$IMG"; exit 1; }
 
 SIZE=$(stat -c %s "$IMG")
 if [ "$SIZE" -lt $((96 * 1024 * 1024)) ]; then
@@ -123,7 +125,8 @@ fi
 # ---- 从最终镜像里解出 squashfs 根文件系统 ----------------------------------
 
 say "[verify] 从 sysupgrade 镜像提取 squashfs"
-tar -xf "$IMG" -C "$TMP" sysupgrade-spectrum_sbe1v1k/root
+tar -xf "$IMG" -C "$TMP" sysupgrade-spectrum_sbe1v1k/root \
+	|| { bad "sysupgrade 镜像里没有 sysupgrade-spectrum_sbe1v1k/root（tar 容器格式变了）"; exit 1; }
 
 UNSQ="$BR/staging_dir/host/bin/unsquashfs4"
 [ -x "$UNSQ" ] || { bad "缺少 $UNSQ"; exit 1; }

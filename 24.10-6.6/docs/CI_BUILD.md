@@ -230,8 +230,9 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 同批次的 CI 装配（push 触发的 run `42424092025`） | 被取消（`concurrency` 的 `cancel-in-progress`：同一提交紧接着来了一个 `workflow_dispatch` 装配，push 那次让位） |
 | 同批次以 `publish=true` dispatch 的装配（run `42424441419`） | PASS（`assemble` 与 `publish` 两个 job 全过：`Assert exactly 3 assets`、`Create release`、`Verify published assets` 均 success） |
 | 发布 `sources-v7` 的资产与指纹 | PASS（恰好 3 个资产：bundle 269,788,616 B、`SHA256SUMS` 100 B、`TREE-FINGERPRINT.json` 2276 B；`entries=195244`、`aggregate=ac5f6831…`、`recipe=a6e0d217…` 与本地装配逐项一致） |
-| 新 pin 下的 CI 构建 | NOT TESTED（已由本次 push 触发，`source_tag=auto` 会选中 `sources-v7`；结果见下一次更新） |
-| 修复后的 CI 构建（换用新版 `sources-vN`） | NOT TESTED（需先以 `publish=true` dispatch Assemble 发新源码包，再 dispatch Build） |
+| 新 pin 下的 CI 构建（run `42426101091`，head `e025128`，`source_tag=auto` → `sources-v7`） | 部分 PASS / 部分 FAIL：第 1–16 步全过——`Verify recipe hash` 通过说明选中的是 `sources-v7`；新增的 `Check package dependencies` 1 秒通过；`Build` 85m44s **success**，`package/install` 这一关已经过了（`luci-lib-uqr`/`xz` 接线修复得到验证）。第 19 步 `Verify image (static)` 在 2 秒内失败，当时脚本与步骤都不可匿名读，没有留下原因 |
+| 同轮 `Verify image` 失败的诊断改进 | 已加入 workflow：脚本里三处静默退出（`render-overlay.sh` 失败、镜像缺失、tar 成员缺失）现在都会打印原因；步骤输出 `tee verify.log`，失败后以 `::error::` 注解发出 FAIL 行与末尾 60 行；artifact 也带上 `verify.log`。下一次运行即可定位 |
+| 修复后的 CI 构建（换用新版 `sources-vN`） | 进行中（同上 run `42426101091`：编译已 PASS，仅静态镜像校验未过，原因待下一轮注解给出） |
 | 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
 | 修复后镜像内的 `/etc/config/dawn`、`usr/sbin/socat`、`batman_adv.ko` | NOT TESTED（`verify-image.sh` 的检查在编译之后，尚未跑到） |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
