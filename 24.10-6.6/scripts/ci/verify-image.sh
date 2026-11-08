@@ -252,16 +252,28 @@ done
 # meshassistant 的依赖闭包（2026-11-07）：batctl-default 的可执行 + batman-adv
 # 内核模块。模块必须由 QSDK 6.6 内核源码真正编出，缺了说明 kmod-batman-adv
 # 没有生效（这正是本期唯一未验证的编译点）。
+# 模块文件名按 routing feed 的 KernelPackage/batman-adv 定义：FILES 指向
+# net/batman-adv/batman-adv.ko、AutoProbe 也是 batman-adv，所以落盘名是
+# batman-adv.ko（连字符）。两种拼写都接受，避免上游改名后误报。
 [ -e "$ROOTFS/usr/libexec/batctl-default" ] \
 	&& ok "存在 /usr/libexec/batctl-default" \
 	|| bad "缺少 /usr/libexec/batctl-default（batctl-default 未安装）"
-bmod=$(find "$ROOTFS/lib/modules" -name 'batman_adv.ko*' -print -quit 2>/dev/null || true)
+bmod=$(find "$ROOTFS/lib/modules" -name 'batman*adv.ko*' -print -quit 2>/dev/null || true)
 [ -n "$bmod" ] \
-	&& ok "存在 batman_adv 内核模块（${bmod#"$ROOTFS"/}）" \
-	|| bad "缺少 batman_adv 内核模块（kmod-batman-adv 未编出）"
-for f in etc/config/dawn usr/sbin/socat; do
+	&& ok "存在 batman-adv 内核模块（${bmod#"$ROOTFS"/}）" \
+	|| bad "缺少 batman-adv 内核模块（kmod-batman-adv 未编出）"
+for f in etc/config/dawn lib/netifd/proto/batadv.sh; do
 	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f（meshassistant 依赖未落地）"
 done
+# socat 由 packages feed 装到 /usr/bin（Makefile: INSTALL_BIN ... $(1)/usr/bin/），
+# 不是 /usr/sbin；两个位置都接受，避免打包路径漂移后误报。
+socat_bin=""
+for p in usr/bin/socat usr/sbin/socat; do
+	if [ -e "$ROOTFS/$p" ]; then socat_bin=$p; break; fi
+done
+[ -n "$socat_bin" ] \
+	&& ok "存在 /$socat_bin" \
+	|| bad "缺少 socat 可执行（usr/bin / usr/sbin 都没有）"
 
 # 2026-11-07 第二批（用户清单）：WireGuard 内核模块、GNU wget/tar 的 alternatives
 # 目标、openssh 客户端工具、Argon 主题（设置页已并入主题包，不再是独立

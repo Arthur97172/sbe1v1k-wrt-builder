@@ -232,12 +232,12 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 发布 `sources-v7` 的资产与指纹 | PASS（恰好 3 个资产：bundle 269,788,616 B、`SHA256SUMS` 100 B、`TREE-FINGERPRINT.json` 2276 B；`entries=195244`、`aggregate=ac5f6831…`、`recipe=a6e0d217…` 与本地装配逐项一致） |
 | 新 pin 下的 CI 构建（run `42426101091`，head `e025128`，`source_tag=auto` → `sources-v7`） | 部分 PASS / 部分 FAIL：第 1–16 步全过——`Verify recipe hash` 通过说明选中的是 `sources-v7`；新增的 `Check package dependencies` 1 秒通过；`Build` 85m44s **success**，`package/install` 这一关已经过了（`luci-lib-uqr`/`xz` 接线修复得到验证）。第 19 步 `Verify image (static)` 在 2 秒内失败，当时脚本与步骤都不可匿名读，没有留下原因 |
 | 同轮 `Verify image` 失败的诊断改进 | 已加入 workflow：脚本里三处静默退出（`render-overlay.sh` 失败、镜像缺失、tar 成员缺失）现在都会打印原因；步骤输出 `tee verify.log`，失败后以 `::error::` 注解发出 FAIL 行与末尾 60 行；artifact 也带上 `verify.log`。下一次运行即可定位 |
-| 修复后的 CI 构建（换用新版 `sources-vN`） | 进行中（同上 run `42426101091`：编译已 PASS，仅静态镜像校验未过，原因待下一轮注解给出） |
+| `b76a0fb` 的 CI 构建（run `42441800640`，head `b76a0fb`，`source_tag=auto` → `sources-v7`） | 部分 PASS / 部分 FAIL：`Build` success（03:13:55→04:51:43），失败只发生在第 19 步 `Verify image (static)`（2 秒）。这一轮注解与 `verify.log` 已可匿名读到，拿到两条 FAIL（根因见下一节） |
 | 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
-| 修复后镜像内的 `/etc/config/dawn`、`usr/sbin/socat`、`batman_adv.ko` | NOT TESTED（`verify-image.sh` 的检查在编译之后，尚未跑到） |
+| 镜像内的 `/etc/config/dawn`、socat、batman-adv 模块 | 部分 PASS / 部分 FAIL，且 FAIL 是断言写错：`/etc/config/dawn` PASS；`usr/sbin/socat` 与 `batman_adv.ko` 两条 FAIL 都源于脚本路径假设错误（socat 实际装到 `/usr/bin/socat`，模块实际叫 `batman-adv.ko`），不是产物缺失。断言已改，待下一轮复验 |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
 | `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push） |
-| 新 pin 下的全量编译（含 `kmod-batman-adv`） | NOT TESTED |
+| 新 pin 下的全量编译（含 `kmod-batman-adv`） | PASS（`Build` 在 run `42441800640` 中 success；模块是否真的装进镜像，待下一轮的修正断言确认） |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
 
@@ -345,3 +345,42 @@ CMake 阶段失败，这次是安装阶段失败，症状完全不同。
 
 负向回归：把冻结配置里的 `CONFIG_PACKAGE_xz` 与 `CONFIG_PACKAGE_luci-lib-uqr` 分别置空，门禁
 精确报出这两条（含 `tar` 的 Makefile 路径），证明它不是只会对修复后的树说 PASS。
+
+### 2026-11-08：`verify-image.sh` 的两条断言路径写错（run `42441800640`）
+
+这一轮的 `Verify image (static)` 只跑 2 秒就失败，但 `b76a0fb` 让它留下了完整输出
+（`tee verify.log` + 失败注解）。381 条断言里只有两条 FAIL，都是脚本自己写错了期望路径：
+
+```
+FAIL   缺少 batman_adv 内核模块（kmod-batman-adv 未编出）
+FAIL   缺少 /usr/sbin/socat（meshassistant 依赖未落地）
+```
+
+**batman**：routing feed 的 `KernelPackage/batman-adv` 定义是
+
+```
+FILES:=$(PKG_BUILD_DIR)/net/batman-adv/batman-adv.$(LINUX_KMOD_SUFFIX)
+AUTOLOAD:=$(call AutoProbe,batman-adv)
+```
+
+即模块落盘名是 `batman-adv.ko`（连字符），`AutoProbe` 也是 `batman-adv`。脚本却按
+`batman_adv.ko` 找——那是内核模块的 `MODULE_NAME`（`batman_adv`），不是文件名。
+
+**socat**：packages feed 的 `Package/socat/install` 是 `$(INSTALL_BIN)
+$(PKG_INSTALL_DIR)/usr/bin/socat $(1)/usr/bin/`，即 `/usr/bin/socat`；脚本查的是
+`/usr/sbin/socat`。
+
+修复（只改 `verify-image.sh`，不动配方）：
+
+1. 模块查找改成 `find … -name 'batman*adv.ko*'`，两种拼写都接受，上游改名也不会误报；
+2. socat 依次尝试 `usr/bin/socat` 与 `usr/sbin/socat`，命中即 PASS；
+3. 原来的“kmod 包已装”旁证不能用 `/etc/config/batman-adv`——上游 `conffiles` 里写了它，
+   但 `files/` 根本没带这个文件（opkg 不会凭空创建）。改用 kmod 包真正携带的
+   `lib/netifd/proto/batadv.sh`（来自 `files/lib/netifd/proto/`）。
+
+`verify-image.sh` 不在 `recipe-hash.sh` 的输入清单里（该脚本只覆盖装配输入），所以这次修改
+**不需要重发 `sources-vN`**，push 后会直接复用 `sources-v7` 重跑 `Build`。
+
+同时确认的事实：这一轮 `Build` 从 03:13:55 跑到 04:51:43 全程 success，`kmod-batman-adv`
+在 QSDK 6.6 内核上编译通过（本期唯一的编译风险点已经过去）；模块是否装进镜像仍待下一轮
+断言复验，在此之前按 `NOT TESTED` 处理。
