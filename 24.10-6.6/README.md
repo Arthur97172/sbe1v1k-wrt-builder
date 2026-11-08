@@ -72,10 +72,10 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 - **上游应用**（feeds `luci`）：`luci-app-firewall`、`luci-app-ddns`、`luci-app-upnp`、
   `luci-app-ttyd`、`luci-app-uhttpd`、`luci-proto-wireguard`。
 - **项目与三方应用**：
-  - 本项目 feeds（`sources/apps`，10 个）：`luci-app-fcc`、`luci-app-ledfancontrol`、
-    `luci-app-meshassistant`、`luci-app-nssecm`、`luci-app-online-upgrade`、
-    `luci-app-oxidns`、`luci-app-smartnetpilot`、`luci-app-substore`、`luci-app-tasks`、
-    `luci-app-xpu-status`
+  - 本项目 feeds（`sources/apps`，10 个）：`luci-app-corestatus`、`luci-app-fcc`、
+    `luci-app-ledfancontrol`、`luci-app-meshassistant`、`luci-app-nssecm`、
+    `luci-app-online-upgrade`、`luci-app-oxidns`、`luci-app-smartnetpilot`、
+    `luci-app-substore`、`luci-app-tasks`
   - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-bandix-plus`、`luci-app-nikki`、
     `luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、`luci-theme-argon`
   - meshassistant 的运行依赖（上游 feed）：`batctl` / `kmod-batman-adv`（`routing`）、

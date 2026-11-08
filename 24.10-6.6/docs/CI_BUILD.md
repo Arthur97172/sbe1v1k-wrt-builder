@@ -230,14 +230,16 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 同批次的 CI 装配（push 触发的 run `42424092025`） | 被取消（`concurrency` 的 `cancel-in-progress`：同一提交紧接着来了一个 `workflow_dispatch` 装配，push 那次让位） |
 | 同批次以 `publish=true` dispatch 的装配（run `42424441419`） | PASS（`assemble` 与 `publish` 两个 job 全过：`Assert exactly 3 assets`、`Create release`、`Verify published assets` 均 success） |
 | 发布 `sources-v7` 的资产与指纹 | PASS（恰好 3 个资产：bundle 269,788,616 B、`SHA256SUMS` 100 B、`TREE-FINGERPRINT.json` 2276 B；`entries=195244`、`aggregate=ac5f6831…`、`recipe=a6e0d217…` 与本地装配逐项一致） |
+| 重复发布的 `sources-v8`（run `42433401048`，head `b76a0fb`） | PASS，但内容与 v7 相同（`recipe` 仍为 `a6e0d217…`，bundle 同为 269,788,616 B）：同一配方的再次发布，不改变构建选源，无副作用 |
 | 新 pin 下的 CI 构建（run `42426101091`，head `e025128`，`source_tag=auto` → `sources-v7`） | 部分 PASS / 部分 FAIL：第 1–16 步全过——`Verify recipe hash` 通过说明选中的是 `sources-v7`；新增的 `Check package dependencies` 1 秒通过；`Build` 85m44s **success**，`package/install` 这一关已经过了（`luci-lib-uqr`/`xz` 接线修复得到验证）。第 19 步 `Verify image (static)` 在 2 秒内失败，当时脚本与步骤都不可匿名读，没有留下原因 |
 | 同轮 `Verify image` 失败的诊断改进 | 已加入 workflow：脚本里三处静默退出（`render-overlay.sh` 失败、镜像缺失、tar 成员缺失）现在都会打印原因；步骤输出 `tee verify.log`，失败后以 `::error::` 注解发出 FAIL 行与末尾 60 行；artifact 也带上 `verify.log`。下一次运行即可定位 |
 | `b76a0fb` 的 CI 构建（run `42441800640`，head `b76a0fb`，`source_tag=auto` → `sources-v7`） | 部分 PASS / 部分 FAIL：`Build` success（03:13:55→04:51:43），失败只发生在第 19 步 `Verify image (static)`（2 秒）。这一轮注解与 `verify.log` 已可匿名读到，拿到两条 FAIL（根因见下一节） |
 | 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
-| 镜像内的 `/etc/config/dawn`、socat、batman-adv 模块 | 部分 PASS / 部分 FAIL，且 FAIL 是断言写错：`/etc/config/dawn` PASS；`usr/sbin/socat` 与 `batman_adv.ko` 两条 FAIL 都源于脚本路径假设错误（socat 实际装到 `/usr/bin/socat`，模块实际叫 `batman-adv.ko`），不是产物缺失。断言已改，待下一轮复验 |
+| 镜像内的 `/etc/config/dawn`、socat、batman-adv 模块 | PASS（run `42449400629`，head `8faddba`）：修正断言后 `Verify image (static)` 2 秒通过，`batman-adv.ko`、`/usr/bin/socat`、`/lib/netifd/proto/batadv.sh` 均在镜像中 |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
 | `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push） |
-| 新 pin 下的全量编译（含 `kmod-batman-adv`） | PASS（`Build` 在 run `42441800640` 中 success；模块是否真的装进镜像，待下一轮的修正断言确认） |
+| 新 pin 下的全量编译（含 `kmod-batman-adv`） | PASS（`Build` 在 run `42441800640` 中 success；run `42449400629` 的静态校验确认 `batman-adv.ko` 已装进镜像） |
+| 端到端出固件（run `42449400629`，head `8faddba`） | PASS：全部 49 步 success——`Build` 86m57s、`Verify image (static)` 2s、`Collect release assets`、`Upload firmware artifact`、Release job 全过；发布 `v42-1-8faddba7`，**恰好 3 个固件资产**（fit-uImage 5,887,724 B / initramfs 96,576,444 B / sysupgrade 76,933,926 B）。这是本项目首次端到端产出可下载固件 |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
 

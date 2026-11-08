@@ -322,13 +322,15 @@ DPP 事件脚本等）。
 > SHA-256 `089f36da…`，206 个已安装包（详见
 > `docs/STAGE3_INTEGRATION_PLAN.md` §5.8）。
 
-### 2.7 ★ `sources/apps/` —— 十个用户自编 LuCI 应用（G3.7 起，2026-10-21；2026-11-07 扩到十个）
+### 2.7 ★ `sources/apps/` —— 十个用户自编 LuCI 应用（G3.7 起，2026-10-21；2026-11-07 扩到十个；2026-11-08 以 `luci-app-corestatus` 替换 `luci-app-xpu-status`）
 
 用户在 2026-10-21 明确要求把以下应用装进固件，并说明这些应用由用户本人
 编写/维护，因此**按用户授权作为 `docs/BUILD_DESIGN.md` §"第三方应用禁止"
 条款的限定例外**引入（例外范围仅限下列十个仓库；`luci-app-store` 等第三方
 应用源仍在禁止之列）。2026-11-07 用户要求再加五个（tasks、smartnetpilot、
 xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 release tag。
+2026-11-08 用户要求移除 `luci-app-xpu-status`，改由同一维护者仓库
+`luci-app-corestatus`（状态页 CPU 占用/温度面板）取而代之，仓库总数仍为十个。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
@@ -339,7 +341,7 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | `luci-app-nssecm` | `luci-app-nssecm` | `af6f4abe6ccb4147addfd3975bd45451e13d03a6` | 2026-10-24T05:02:52Z | `README: reorder sections, merge backend-name note into …` | GPL-3.0-only（`LICENSE`） | 428 KB |
 | `luci-app-tasks` | `luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 2026-10-25T14:30:18Z | `Add interface screenshot to READMEs` | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 1.1 MB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 2026-10-27T12:09:18Z | `feat: show the current LAN settings in the PPPoE and DH…` | GPL-3.0-only（`LICENSE`） | 1.6 MB |
-| `luci-app-xpu-status` | `luci-app-xpu-status` | `14e7d81a75cf864396f308d1a8e83bcc1d5d53d6` | 2026-11-07T06:44:16Z | `luci-app-xpu-status 1.0.3-r1：README 增加截图并调整章节顺序` | GPL-3.0-only（`LICENSE`） | 920 KB |
+| `luci-app-corestatus` | `luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | 2026-11-08T06:11:22Z | `Makefile: bump PKG_VERSION to 1.0.2`（tag `v1.0.2`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 334 KB |
 | `luci-app-oxidns` | `luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | 2026-11-07T09:38:03Z | `docs: show screenshot and install steps before feature list`（tag `v1.3.8`，`PKG_VERSION 1.3.8`；`v1.3.8` 与 `v1.3.7` 指向同一提交） | GPL-3.0-or-later（`LICENSE`） | 2.9 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2026-11-07T03:37:47Z | `Move Load and Link Rate next to the Interface column` | GPL-3.0-only（`LICENSE`） | 1.1 MB |
 
@@ -355,7 +357,7 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | 本地目录 | `sources/apps/<repo>`；**保留 `.git`**：`luci.mk` 的 `findrev` 在未显式固定 `PKG_PO_VERSION` 的包上从 `git log` 取翻译包版本，删掉 `.git` 会退化为文件 mtime、不可复现 |
 | 接入方式 | `feeds.conf` 追加 `src-link sbe1v1k_apps /home/arthur/claude/sbe1v1k-build/sources/apps`；`scripts/feeds update sbe1v1k_apps` + `install -p sbe1v1k_apps -a`（日志 `logs/feeds_update_g37.log`、`logs/feeds_install_g37_apps.log`） |
 | 构建期联网 | **无**。`Build/Prepare`/`Configure`/`Compile` 均为空或只调用本机 `po2lmo`/`jsmin`；不下载任何运行期组件 |
-| 运行期联网（应用自身功能，非构建行为） | `luci-app-fcc` 在用户点击安装时从 `raw.githubusercontent.com`、`pypi.org`、`unofficial-builds.nodejs.org` 等下载 Python/Node/agent；`luci-app-online-upgrade` 从 GitHub Release 下载固件后调用 `sysupgrade`；`luci-app-substore` 访问用户配置的订阅 URL；`luci-app-oxidns`（2026-11-07 加入）在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置）；`luci-app-meshassistant` 只操作本机 batman-adv/dawn；`luci-app-tasks`、`luci-app-smartnetpilot`、`luci-app-xpu-status` 无外部联网。均记录于 `docs/SECURITY_FINDINGS.md` §7.7/§7.11 与 `docs/RISKS_AND_BLOCKERS.md` R-21…R-24、R-39/R-40 |
+| 运行期联网（应用自身功能，非构建行为） | `luci-app-fcc` 在用户点击安装时从 `raw.githubusercontent.com`、`pypi.org`、`unofficial-builds.nodejs.org` 等下载 Python/Node/agent；`luci-app-online-upgrade` 从 GitHub Release 下载固件后调用 `sysupgrade`；`luci-app-substore` 访问用户配置的订阅 URL；`luci-app-oxidns`（2026-11-07 加入）在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置）；`luci-app-meshassistant` 只操作本机 batman-adv/dawn；`luci-app-tasks`、`luci-app-smartnetpilot`、`luci-app-corestatus`（2026-11-08 起替换 xpu-status，运行期文件无 http/socket 调用）无外部联网。均记录于 `docs/SECURITY_FINDINGS.md` §7.7/§7.11 与 `docs/RISKS_AND_BLOCKERS.md` R-21…R-24、R-39/R-40 |
 | 依赖闭包新增 | luci feed：`luci-lua-runtime`、`luci-compat`、`luci-lib-httpclient`、`luci-lib-httpprotoutils`、`luci-lib-jsonc`、`luci-lib-ip`、`luci-lib-nixio`、`luci-lib-base`、`ucode-mod-lua`；树内：`lua`、`libubus-lua`、`liblucihttp-lua`、`jsonfilter`；`packages` feed 手工符号链接：`curl`（8.12.1, MIT）、`tmux`（3.5a, ISC）。curl 的 `Config.in` 默认 `LIBCURL_NGHTTP2=y`，会把 `libcurl4` 依赖到树内未接入的 `libnghttp2` 包；已在种子中显式 `# CONFIG_LIBCURL_NGHTTP2 is not set`（HTTP/1.1 足够这五个应用的发布页拉取，避免为一个无功能收益的依赖再引入一个上游源码；配置见 `build/config-seed/ipq95xx-spectrum-sbe1v1k.seed`，决定记录见 `docs/STAGE3_INTEGRATION_PLAN.md` §5.9） |
 | 依赖闭包新增（2026-11-07） | `luci-app-meshassistant` 的 `LUCI_DEPENDS`：`+luci-base +kmod-cfg80211 +batctl-default +kmod-batman-adv +dawn +bash +luci-proto-batman-adv +socat +flock +iw`。为此新增 `routing` feed（`src-link routing qca/feeds/routing`，只链接 `batctl`、`batman-adv` 两个包），并在 `package/feeds/` 下补 `routing/{batctl,batman-adv}`、`packages/{dawn,socat}`、`luci/luci-proto-batman-adv` 五条软链；`flock` 由基座的 `util-linux` 提供，`iw` 由 `iw-full` 的 PROVIDES 满足。`kmod-batman-adv` 要针对 QSDK 6.6 内核编译，**编译结果本期未验证**（本地未跑内核模块编译；CI 构建后见 `verify-image.sh`） |
 | 供应链结论 | 来源为公开 GitHub 仓库、逐提交固定、完整历史可复核；许可证全部为 GPL 系（与镜像内其他 GPL 组件并存，不构成链接冲突）。用户声明为自编代码，但**运行期行为仍未在设备上验证**（`NOT TESTED`） |
@@ -506,7 +508,7 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 | 接入方式 | `feeds.conf` 追加 `src-link thirdparty …/sources/thirdparty-feed` 与 `src-link passwall_selected …/sources/passwall-selected`；2026-11-07 又追加 `src-link routing qca/feeds/routing`（只为 meshassistant 的 batctl/kmod-batman-adv）。`thirdparty-feed` 只含 10 个指向固定 clone 的符号链接，避免把 `openwrt-passwall-packages` 的 60 多个包（含同名 `xray-core`/`sing-box`）索引进 feed |
 | `feeds/packages` 路径 | 新建 `sources/buildroot/feeds/packages -> ../qca/feeds/packages` 软链，满足第三方包的 `include $(TOPDIR)/feeds/packages/lang/{golang,rust}/…` 与 luci 的 `findrev`；`packages` feed 仍未建立索引，包通过 `package/feeds/packages/` 手工符号链接可见 |
 | 构建期联网 | 首次下载各包 `PKG_SOURCE`/`PKG_MIRROR_HASH` 对应的 tarball 或 git 镜像；其中 **`chinadns-ng` 与 `bandix-plus` 下载的是 GitHub Release 的 aarch64 预编译二进制**（`chinadns-ng+wolfssl_noasm@aarch64…`、`bandix-plus-0.1.3-aarch64.tar.gz`，`PKG_HASH 42ddd494…` / `46de71c3…`）；`mihomo-meta`、`xray-core`、`sing-box`、`yq` 首次需构建 `golang/host` |
-| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、xpu-status 无外部联网；`luci-theme-argon` 3.1.3 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
+| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、corestatus（2026-11-08 起替换 xpu-status）无外部联网；`luci-theme-argon` 3.1.3 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
 | 本地修改 | 无。`wifihistory` 原先的一行 include 改写随该应用一起删除（2026-11-07）；其余 7 个 clone `git status --porcelain` 为空 |
 | 供应链结论 | 全部公开 GitHub、逐 commit 固定；许可证以 GPL 系为主，`chinadns-ng`/`ipt2socks` 为 **AGPL**，`chinadns-ng` 与 `bandix-plus` 为预编译二进制（`LICENSE_REVIEW_REQUIRED`）；运行期一律 `NOT TESTED` |
 
@@ -526,7 +528,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 1.1.1-r1（tag） |
-| `apps/luci-app-xpu-status` | `14e7d81a75cf864396f308d1a8e83bcc1d5d53d6` | v1.0.3（tag） |
+| `apps/luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | v1.0.2（tag；PKG_VERSION 1.0.2；PKG_RELEASE 1） |
 | `repo argon` | `6bdb62e6f9839f0faf69c86b2a0c0506e66359b6` | thirdparty/luci-theme-argon |
 | `repo bandix-core` | `fba9704300f2900451e00a1645e11b1f179204b8` | thirdparty/openwrt-bandix-plus |
 | `repo bandix-luci` | `c4f002f74f3a0f4aeb79fb5d35f5a7bbd3392a1f` | thirdparty/luci-app-bandix-plus |
