@@ -519,23 +519,23 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 <!-- pins:begin -->
 | 仓库 | commit | 备注 |
 | --- | --- | --- |
-| `apps/luci-app-fcc` | `afafe2b0ef41098bd1e64872029f7314eb96efdb` | 1.2.1-r1（tag；PKG_VERSION 1.2.1；PKG_RELEASE 1） |
+| `apps/luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | v1.0.2（tag；PKG_VERSION 1.0.2；PKG_RELEASE 1） |
+| `apps/luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 1.2.1-r1（tag；PKG_VERSION 1.2.1；PKG_RELEASE 1） |
 | `apps/luci-app-ledfancontrol` | `540eefcf9dc8550f44a3a38afe84f20ec11f195f` | 1.1.0-r1（tag） |
-| `apps/luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2.6.3-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
+| `apps/luci-app-meshassistant` | `1084f5e52a18fd71f90fce2b14be1ebf08388047` | 2.6.3-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `af6f4abe6ccb4147addfd3975bd45451e13d03a6` | 1.0.0-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
 | `apps/luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | v1.4.9（tag；PKG_VERSION 1.4.9；与 v1.4.8 同一提交） |
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 1.1.1-r1（tag） |
-| `apps/luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | v1.0.2（tag；PKG_VERSION 1.0.2；PKG_RELEASE 1） |
 | `repo argon` | `6bdb62e6f9839f0faf69c86b2a0c0506e66359b6` | thirdparty/luci-theme-argon |
 | `repo bandix-core` | `fba9704300f2900451e00a1645e11b1f179204b8` | thirdparty/openwrt-bandix-plus |
 | `repo bandix-luci` | `c4f002f74f3a0f4aeb79fb5d35f5a7bbd3392a1f` | thirdparty/luci-app-bandix-plus |
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
 | `repo passwall` | `0b969d5a49743a9725c8dc283b01753c5217dd0d` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `da712cf06cf4e6fd39e147fb36e6ec936003fcc9` | thirdparty/openwrt-passwall-packages |
+| `repo passwall-packages` | `84ef7a62fc8647b21ae67b0c5e50cfcb63faa39d` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
