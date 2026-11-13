@@ -1,0 +1,28 @@
+#!/bin/sh
+# SBE1V1K local default: populate /etc/opkg/distfeeds.conf.
+#
+# The build sets CONFIG_OPKG_NO_DISTFEEDS=y (build-fixes/0011, 0012), so the
+# image ships an empty distfeeds.conf on purpose: every feed in this build
+# comes from local src-link trees and there is no official ipq95xx target in
+# the 24.10 release feeds.  Without any distfeeds the LuCI "OPKG
+# configuration" page looks broken and `opkg update` has nothing to fetch.
+#
+# We point opkg at the official 24.10-SNAPSHOT package feed for
+# aarch64_cortex-a53, but do NOT add that arch to /etc/opkg.conf: only
+# arch-independent packages (LuCI JS apps, translation packs, scripts) are
+# installable; a53/a73 binaries and kmods stay rejected as "no valid
+# architecture".  That keeps the fixed, audited package set as the baseline
+# while making `opkg update` and arch-all installs work again.
+#
+# The file is only written when it has no src/gz lines, so an operator's
+# edited feed list is preserved across upgrades.
+[ -f /etc/opkg/distfeeds.conf ] && grep -q '^src/gz ' /etc/opkg/distfeeds.conf && exit 0
+
+cat > /etc/opkg/distfeeds.conf <<'EOF'
+src/gz openwrt_base https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/base
+src/gz openwrt_luci https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/luci
+src/gz openwrt_packages https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/packages
+src/gz openwrt_routing https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/routing
+src/gz openwrt_telephony https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/telephony
+EOF
+exit 0

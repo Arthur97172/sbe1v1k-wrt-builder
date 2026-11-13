@@ -344,14 +344,14 @@ grep -q 'sdhc_1' "$_dts" || die 4 "DTS 缺少 sdhc_1（eMMC）"
 # 源文件不一致都算装配漏项，而不是“可以接受的差异”。
 _dts_src="$REPO/24.10-6.6/build/p-b/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts"
 cmp -s "$_dts_src" "$_dts" || die 4 "files-6.6 的 SBE DTS 与 build/p-b/files 源文件不一致"
-# 首启默认值包：两个 uci-defaults 都必须装配进来，且 Makefile 都要安装
+# 首启默认值包：每个 uci-defaults 都必须装配进来，且 Makefile 都要安装
 # （少装一个不会报错，只会在设备上悄悄缺一项默认值，所以在这里挡）。
 _dfl="$SRC/buildroot/package/sbe1v1k-defaults"
-for _f in 99-ttyd-disable 99-allow-luci-wan; do
+for _f in 99-ttyd-disable 99-allow-luci-wan 99-allow-ssh-wan 99-opkg-distfeeds; do
 	[ -f "$_dfl/files/$_f" ] || die 4 "sbe1v1k-defaults 缺少 $_f"
 	grep -q "files/$_f" "$_dfl/Makefile" || die 4 "sbe1v1k-defaults/Makefile 未安装 $_f"
 done
-logmsg "  SBE_DEFAULTS_OK 99-ttyd-disable + 99-allow-luci-wan"
+logmsg "  SBE_DEFAULTS_OK ttyd-disable + allow-luci-wan + allow-ssh-wan + opkg-distfeeds"
 logmsg "  SBE_DTS_OK 与 build/p-b/files 源文件逐字节一致"
 _mmc="$SRC/buildroot/target/linux/feeds/ipq95xx/base-files/lib/upgrade/mmc.sh"
 [ -f "$_mmc" ] || die 4 "mmc.sh 缺失"
@@ -455,6 +455,19 @@ grep -q "o.depends('encryption', 'sae-compat')" "$_ljs" \
 grep -q "'sae-mixed', 'sae-compat'\] });" "$_ljs" \
 	|| die 4 "LuCI 补丁未生效：802.11r 快速漫游开关未覆盖 sae-compat"
 logmsg "  SAE_COMPAT_OK luci wireless.js"
+
+# 0002 让无线射频对话框正确处理 QSDK 的 band-split section（radioX_bandN）：
+# iwinfo 对这类 section 只会返回 wiphy 的首个 band，旧表单因此拿不到正确频段，
+# setValues() 重建选项后又丢选择，保存时把 band/channel 写成空值——uci.set 的
+# '' 语义是删除选项，射频随即起不来。三处改动缺一即停：频段表改读 section 自身
+# channels、重建后恢复所选 band、空值不落盘。
+grep -qF 'const qsdk_split_channels =' "$_ljs" \
+	|| die 4 "0002 未生效：LuCI 未按 radioX_bandN section 的 channels 构建频段表"
+grep -qF 'setValues() rebuilt the Band options and dropped the selection' "$_ljs" \
+	|| die 4 "0002 未生效：band 选择在 setValues() 重建后未被恢复"
+grep -qF 'configured option instead of deleting it' "$_ljs" \
+	|| die 4 "0002 未生效：空 band/channel 仍会删除配置选项"
+logmsg "  QSDK_BAND_SPLIT_OK luci wireless.js"
 
 # =============================================================== 12. 第三方
 step "第三方树"

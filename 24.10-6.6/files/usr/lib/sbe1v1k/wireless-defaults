@@ -112,6 +112,101 @@ set_if_changed() {
 }
 
 ###############################################################################
+# QSDK band-split radios
+###############################################################################
+#
+# /sbin/wifi config (QSDK mac80211.uc) turns the single wiphy into one
+# wifi-device per hardware band, named radioX_bandN, each carrying
+# `option band` plus that band's channel list in `option channels`.
+#
+# LuCI's radio dialog cannot round-trip those sections: iwinfo only knows the
+# wiphy ifname and returns the first band for every section name, so the Band
+# select ends up empty (or wrong), and uci.set(section, 'band', '') deletes
+# the option when the dialog is saved.  The radio then fails to come up until
+# `band` is restored.  The repair below runs on every boot and only touches a
+# section whose band is missing; a configured band is never rewritten.
+
+all_wifi_devices() {
+	uci -q show wireless 2>/dev/null |
+		sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'
+}
+
+band_from_channels() {
+	local rng hi max=""
+
+	for rng in $1; do
+		case "$rng" in
+			*-*) hi="${rng##*-}" ;;
+			*) hi="$rng" ;;
+		esac
+
+		case "$hi" in
+			''|*[!0-9]*) continue ;;
+		esac
+
+		if [ -z "$max" ] || [ "$hi" -gt "$max" ]; then
+			max="$hi"
+		fi
+	done
+
+	[ -n "$max" ] || return 1
+
+	if [ "$max" -le 14 ]; then
+		printf '2g\n'
+	elif [ "$max" -le 196 ]; then
+		printf '5g\n'
+	else
+		printf '6g\n'
+	fi
+}
+
+default_channel_for_band() {
+	case "$1" in
+		2g) printf '%s\n' "$WIFI_2G_CHANNEL" ;;
+		5g) printf '%s\n' "$WIFI_5G_CHANNEL" ;;
+		6g) printf '%s\n' "$WIFI_6G_CHANNEL" ;;
+	esac
+}
+
+repair_band_splits() {
+	local radio band channel changed=0
+
+	for radio in $(all_wifi_devices); do
+		case "$radio" in
+			radio*_band*) ;;
+			*) continue ;;
+		esac
+
+		band="$(get_uci_value "wireless.$radio.band")"
+
+		if [ -z "$band" ]; then
+			band="$(band_from_channels "$(get_uci_value "wireless.$radio.channels")" || true)"
+			[ -n "$band" ] || continue
+
+			uci -q set "wireless.$radio.band"="$band"
+			changed=1
+			logger -t wireless-defaults "restored band=$band on $radio"
+
+			# The band and channel were deleted together by the same LuCI
+			# save; restore the policy channel when it is missing too, but
+			# never rewrite a channel on a section whose band was intact.
+			if [ -z "$(get_uci_value "wireless.$radio.channel")" ]; then
+				channel="$(default_channel_for_band "$band")"
+
+				if [ -n "$channel" ]; then
+					uci -q set "wireless.$radio.channel"="$channel"
+				fi
+			fi
+		fi
+	done
+
+	if [ "$changed" -eq 1 ]; then
+		uci -q commit wireless
+		wifi reload >/dev/null 2>&1 || true
+	fi
+}
+
+###############################################################################
 # Wireless discovery completeness
 ###############################################################################
 
@@ -298,6 +393,20 @@ apply_6g_policy() {
 # Apply complete wireless policy
 ###############################################################################
 
+# The QSDK generator writes `disabled='1'` into every radio it creates (the
+# operator is expected to enable them from LuCI).  Our policy enables the APs,
+# so the device-level flag has to go as well; otherwise every network renders
+# as 已禁用 and `wifi up` keeps the radios down until someone toggles them.
+enable_radios() {
+	local band radio
+
+	for band in 2g 5g 6g; do
+		for radio in $(radios_for_band "$band"); do
+			delete_if_present "wireless.$radio.disabled"
+		done
+	done
+}
+
 apply_policy() {
 	if ! is_supported_board; then
 		return 1
@@ -306,6 +415,7 @@ apply_policy() {
 	apply_2g_policy
 	apply_5g_policy
 	apply_6g_policy
+	enable_radios
 
 	uci -q commit wireless
 	uci -q set "$MARKER"='1'
@@ -319,6 +429,10 @@ apply_policy() {
 if ! is_supported_board; then
 	exit 0
 fi
+
+# Runs before the marker check: a band lost to a LuCI radio-dialog save must
+# be restored even on an installation whose policy was applied long ago.
+repair_band_splits
 
 if [ "$(get_uci_value "$MARKER")" = "1" ]; then
 	exit 0
@@ -343,6 +457,10 @@ while :; do
 
 	if wireless_is_complete; then
 		if apply_policy; then
+			# Radios were created disabled by the QSDK generator, so the
+			# `wifi up` that ran earlier in boot skipped them.  Re-apply the
+			# committed configuration now that the device flags are gone.
+			wifi reload >/dev/null 2>&1 || true
 			exit 0
 		fi
 	fi

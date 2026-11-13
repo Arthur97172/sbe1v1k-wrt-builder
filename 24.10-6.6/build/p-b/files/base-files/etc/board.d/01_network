@@ -41,7 +41,12 @@ ipq95xx_setup_interfaces()
 		# reload cannot reset RTL8261N/dp1.
 		#   eth0 / PPE port 6 / RTL8261N 10G -> unmanaged LAN bridge port
 		#   eth1 / PPE port 5 / QCA8081 2.5G -> WAN
-		ucidef_set_interfaces_lan_wan "eth2 eth3" "eth1"
+		#
+		# eth0 is listed here so /etc/board.json advertises it and LuCI's
+		# port-status page shows all four ports.  netifd must not own it,
+		# so 99-spectrum-eth0-unmanaged-lan (uci-defaults, runs after
+		# config_generate) strips it back out of the generated br-lan ports.
+		ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"
 		;;
 	qcom,ipq9574-ap-al01-c1 |\
 	qcom,ipq9574-ap-al02-c1 |\

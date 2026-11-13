@@ -241,7 +241,9 @@ for f in \
 	usr/share/passwall/0_default_config \
 	etc/uci-defaults/luci-app-passwall \
 	etc/uci-defaults/99-ttyd-disable \
-	etc/uci-defaults/99-allow-luci-wan
+	etc/uci-defaults/99-allow-luci-wan \
+	etc/uci-defaults/99-allow-ssh-wan \
+	etc/uci-defaults/99-opkg-distfeeds
 do
 	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f"
 done
@@ -268,6 +270,60 @@ if [ -f "$LWAN" ]; then
 	else
 		bad "首启默认 Allow-LuCI-WAN 缺字段:$lwan_miss"
 	fi
+fi
+
+# WAN 侧 SSH：Allow-SSH-WAN（tcp 22 → ACCEPT）。用户在 bug 报告里明确要求
+# WAN 口可 SSH，字段同 Allow-LuCI-WAN 一样逐项静态核对。
+SWAN="$ROOTFS/etc/uci-defaults/99-allow-ssh-wan"
+if [ -f "$SWAN" ]; then
+	swan_miss=
+	for kv in \
+		"set firewall.allow_ssh_wan=rule" \
+		"allow_ssh_wan.name='Allow-SSH-WAN'" \
+		"allow_ssh_wan.src='wan'" \
+		"allow_ssh_wan.proto='tcp'" \
+		"allow_ssh_wan.dest_port='22'" \
+		"allow_ssh_wan.target='ACCEPT'" \
+		"commit firewall"
+	do
+		grep -qF -- "$kv" "$SWAN" || swan_miss="$swan_miss [$kv]"
+	done
+	if [ -z "$swan_miss" ]; then
+		ok "首启默认 Allow-SSH-WAN 规则字段齐全"
+	else
+		bad "首启默认 Allow-SSH-WAN 缺字段:$swan_miss"
+	fi
+fi
+
+# opkg 源：CONFIG_OPKG_NO_DISTFEEDS=y 让镜像出厂 distfeeds.conf 为空，首启脚本
+# 负责写入官方 24.10-SNAPSHOT 的 aarch64_cortex-a53 五条源。这里核对五条都在，
+# 且没有把 a53 加进 /etc/opkg.conf（否则 a53/a73 二进制会混入固定包集）。
+ODF="$ROOTFS/etc/uci-defaults/99-opkg-distfeeds"
+if [ -f "$ODF" ]; then
+	odf_miss=
+	for feed in base luci packages routing telephony; do
+		grep -qF -- "src/gz openwrt_$feed https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/$feed" "$ODF" \
+			|| odf_miss="$odf_miss [$feed]"
+	done
+	if [ -z "$odf_miss" ]; then
+		ok "首启默认 opkg 官方源五条齐全"
+	else
+		bad "首启默认 opkg 源缺:$odf_miss"
+	fi
+fi
+if [ -f "$ROOTFS/etc/opkg.conf" ] && grep -qE '^arch aarch64_cortex-a53 ' "$ROOTFS/etc/opkg.conf"; then
+	bad "/etc/opkg.conf 不应把 aarch64_cortex-a53 加入 arch 列表"
+else
+	ok "/etc/opkg.conf 未加 a53 arch（二进制/kmod 仍被拒）"
+fi
+
+# 4 个网口显示：board.d 把 eth0（10G，unmanaged）列进 LAN 才会出现在
+# /etc/board.json 与 LuCI 端口状态页；netifd 侧由 99-spectrum-eth0-unmanaged-lan
+# 再摘除。board.json 是启动时生成的，这里只能核对生成它的源文件。
+if grep -qF 'ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"' "$ROOTFS/etc/board.d/01_network"; then
+	ok "board.d 01_network 的 SBE LAN 端口含 eth0（10G）"
+else
+	bad "board.d 01_network 未把 eth0 列入 SBE LAN 端口"
 fi
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
@@ -402,6 +458,36 @@ if [ -f "$ROOTFS/lib/netifd/netifd-wireless.sh" ]; then
 	fi
 else
 	bad "镜像缺少 /lib/netifd/netifd-wireless.sh"
+fi
+
+# ---- 无线 band-split：首启启用射频 + band 丢失自愈 ---------------------------
+# QSDK 生成器给每个射频写 disabled='1'，旧脚本只开了 iface，射频层仍禁用，
+# 三个网络在 LuCI 里都显示"已禁用"；LuCI 的射频对话框在 radioX_bandN 上取不到
+# band，保存时会把 band/channel 删掉。两处修复都必须在镜像里：
+#   wireless-defaults 首启清射频级 disabled、每次开机修复缺失的 band；
+#   LuCI 侧按 section 的 channels 建频段表，且空值不落盘（minify 后按正则字面量查）。
+WD="$ROOTFS/usr/lib/sbe1v1k/wireless-defaults"
+if [ -f "$WD" ]; then
+	grep -qF 'repair_band_splits' "$WD" \
+		&& ok "wireless-defaults 含 band-split 自愈入口" \
+		|| bad "wireless-defaults 缺 repair_band_splits（band 丢失后无法自愈）"
+	grep -qF 'delete_if_present "wireless.$radio.disabled"' "$WD" \
+		&& ok "wireless-defaults 首启清除射频级 disabled" \
+		|| bad "wireless-defaults 未清除射频级 disabled（网络会一直显示已禁用）"
+	grep -qF 'wifi reload' "$WD" \
+		&& ok "wireless-defaults 应用后 reload wifi" \
+		|| bad "wireless-defaults 应用后未 reload wifi（射频仍停在 disabled 状态）"
+else
+	bad "镜像缺少 /usr/lib/sbe1v1k/wireless-defaults"
+fi
+
+LJS="$ROOTFS/www/luci-static/resources/view/network/wireless.js"
+if [ -f "$LJS" ]; then
+	grep -qF '^radio\d+_band\d+$' "$LJS" \
+		&& ok "LuCI 无线对话框识别 radioX_bandN section（minify 后）" \
+		|| bad "LuCI 缺 band-split 处理（luci 补丁 0002 未进镜像）"
+else
+	bad "镜像缺少 LuCI wireless.js"
 fi
 
 exit "$fail"

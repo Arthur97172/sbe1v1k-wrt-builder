@@ -11,3 +11,4 @@
 # 文件，装配脚本另有断言确认补丁确实落盘（不能只靠白名单盖掉差异）。
 
 0001-luci-wireless-sae-compat.patch	tree	luci	LuCI 增加 WPA2-PSK/WPA3-SAE Compatibility Mode 选项
+0002-luci-wireless-qsdk-band-split.patch	tree	luci	QSDK band-split 射频（radioX_bandN）的频率/频段选择改读 section 自身 channels，保存表单不再删掉 band/channel

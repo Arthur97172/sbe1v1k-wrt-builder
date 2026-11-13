@@ -55,17 +55,69 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 的模块都装了对应的 `luci-i18n-*-zh-cn`（上游 `luci-proto-wireguard` 本身没有 po 目录，
 没有独立中文包），浏览器语言为中文时自动切换。
 
-首启会在 `/etc/config/firewall` 里追加一条 `Allow-LuCI-WAN` 规则（section 名固定为
-`allow_luci_wan`：`src=wan`、`proto=tcp`、`dest_port='80 443'`、`target=ACCEPT`），
-刷机后可直接从 WAN 侧打开 LuCI；其余 wan 入站仍按 zone 默认策略 REJECT（fw4 把用户
-规则排在 zone 默认拒绝之前）。写入动作在项目自有包 `sbe1v1k-defaults` 的
-`/etc/uci-defaults/99-allow-luci-wan` 里，section 已存在则不覆盖。首启成功后脚本被
-删除，同一次安装内不再重跑；但 sysupgrade 只保留 `/etc/config` 等配置，刷入新镜像
-后首启脚本会再跑一遍——如果之前把这条 section 删了，它会被重新加回，要彻底去掉得在
-升级后再删一次。**代价是管理界面默认暴露在上行链路**：若上行不是运营商 NAT 之内的
-私网，请先在 LuCI 里设好 root 密码，再按需收紧这条规则（加 `src_ip`、改 `dest_port`
-或删除）。这条规则的运行时行为记为 `NOT TESTED`——设备上的同类规则只做过手工建立与
-观察，未经本镜像首启流程实测。
+首启会在 `/etc/config/firewall` 里追加两条 wan 入站放行规则，均写在项目自有包
+`sbe1v1k-defaults` 的 `/etc/uci-defaults/` 下，section 已存在则不覆盖：
+
+- `Allow-LuCI-WAN`（`99-allow-luci-wan`，section `allow_luci_wan`）：`src=wan`、
+  `proto=tcp`、`dest_port='80 443'`、`target=ACCEPT`，刷机后可直接从 WAN 侧打开 LuCI；
+- `Allow-SSH-WAN`（`99-allow-ssh-wan`，section `allow_ssh_wan`）：`src=wan`、
+  `proto=tcp`、`dest_port='22'`、`target=ACCEPT`，WAN 侧可直接 ssh 登录。
+
+其余 wan 入站仍按 zone 默认策略 REJECT（fw4 把用户规则排在 zone 默认拒绝之前）。首启
+成功后脚本被删除，同一次安装内不再重跑；但 sysupgrade 只保留 `/etc/config` 等配置，
+刷入新镜像后首启脚本会再跑一遍——如果之前把某条 section 删了，它会被重新加回，要彻底
+去掉得在升级后再删一次。**代价是管理界面与 SSH 默认暴露在上行链路**：若上行不是运营商
+NAT 之内的私网，请先在 LuCI 里设好 root 密码，再按需收紧这两条规则（加 `src_ip`、改
+`dest_port` 或删除）；root 密码为空时，`Allow-SSH-WAN` 等于把免密 root 登录开给整个
+上行网段。
+
+`Allow-LuCI-WAN` 已在 A 机实测 PASS（2026-11-13，镜像 sha `8920ecd3…`）：`sysupgrade
+-F -n` 后首启自动建立，nft `input_wan` 链中位于 reject 之前、LAN/WAN 双侧 HTTP+HTTPS
+均 200；重启一次后规则来自持久配置（`/etc/config/firewall` 哈希不变、
+`/etc/uci-defaults` 为空），仍然生效。`Allow-SSH-WAN` 是同一时期手工建过并验证过登录的
+规则的脚本化（字段逐项一致），但 8920ecd3 镜像不含该脚本，它的首启行为记为
+NOT TESTED。
+
+### opkg 源
+
+构建带 `CONFIG_OPKG_NO_DISTFEEDS=y`（`build-fixes/0011`、`0012`），所以镜像出厂的
+`/etc/opkg/distfeeds.conf` 是空的——本构建的包都来自本地 `src-link`，官方 24.10 也没有
+ipq95xx 目标。空文件会让 LuCI「OPKG 配置」页看起来是坏的、`opkg update` 无事可做，
+因此首启脚本 `99-opkg-distfeeds` 写入官方 24.10-SNAPSHOT 的五条源：
+
+```
+src/gz openwrt_base      https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/base
+src/gz openwrt_luci      https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/luci
+src/gz openwrt_packages  https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/packages
+src/gz openwrt_routing   https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/routing
+src/gz openwrt_telephony https://downloads.openwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/telephony
+```
+
+注意 `aarch64_cortex-a53` **没有**加进 `/etc/opkg.conf` 的 arch 列表（本机是
+`aarch64_cortex-a73_neon-vfpv4`），所以只有架构无关（`all`）的包可装——LuCI JS 应用
+与中文语言包可以，a53/a73 二进制与 kmod 仍会被拒为 "no valid architecture"，固定包集
+不受影响。`distfeeds.conf` 已有 `src/gz` 行时脚本不再覆盖，手工改过的源列表在升级后
+保留。该脚本的首启效果记为 NOT TESTED：A 机当前镜像（8920ecd3）仍出厂空源，
+也就是用户报告的「OPKG 配置页为空」现象本身；下一次刷机后再验证 `opkg update`
+五条源与 arch-all 包安装。
+
+### 端口状态（四个网口）
+
+板级 `board.d/01_network` 的 SBE 分支把 eth0 也写进 LAN 端口表
+（`ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"`），这样生成的
+`/etc/board.json` 里有四个口，LuCI「状态 → 概况 → 端口状态」会全部列出：
+
+| 口 | PPE 端口 | PHY | 角色 |
+| --- | --- | --- | --- |
+| `eth0` | 6 | RTL8261N 10G | LAN（unmanaged，由 `eth0-lan-attach` 挂进 br-lan） |
+| `eth1` | 5 | QCA8081 2.5G | WAN |
+| `eth2` | 3 | qca8075 1G | LAN |
+| `eth3` | 4 | qca8075 1G | LAN |
+
+eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp1 打进 10G
+假环回。所以 board.json 只负责“显示”，首启脚本 `99-spectrum-eth0-unmanaged-lan`
+会在 `config_generate` 之后把它从生成的 `network.<br-lan>.ports` 里再删掉，
+桥接由 `/usr/sbin/eth0-lan-attach`（procd 服务）在 netifd 之外完成。
 
 版本（取自镜像内 `/usr/lib/opkg/status`，随 feeds 更新会变化）：
 
@@ -133,6 +185,31 @@ SAE 走单独的 RSN Override 元素（`rsn_override_key_mgmt=SAE`、`rsn_overri
 `src/utils/build_features.h` 的编译期表里却没有 `"11be"` 分支，探针恒为 exit 1。
 补丁只加 4 行 `#ifdef CONFIG_IEEE80211BE` 分支，不引入新的编译能力；装配脚本断言
 该分支存在且确实受 `#ifdef` 约束。
+
+### 三频射频与 LuCI 无线对话框（QSDK band-split）
+
+QSDK 的 `/sbin/wifi config` 把一颗 wiphy（`phy00`，PCI `0001:01:00.0`）按硬件频段
+拆成三个 `wifi-device` section：`radio0_band0/1/2`（`band` = `2g`/`5g`/`6g`，各自
+带 `channels` 范围）。由此有两个与上游 OpenWrt 不同的行为，镜像里都做了处理：
+
+- **射频默认禁用**：生成器给每个射频写 `disabled='1'`（原厂默认由操作者到 LuCI 里
+  开启）。`/usr/lib/sbe1v1k/wireless-defaults` 首启应用策略时连同射频级 `disabled`
+  一起清除，并 `wifi reload` 让射频真正起来；否则三个网络在 LuCI 概览里都显示
+  “已禁用”，手动点“启用”之前射频一直不起。
+- **LuCI 射频对话框会删 `band`**：频段下拉的数据源是 `iwinfo freqlist <section>`，
+  iwinfo 不认识 `radio0_band2` 这类 section 名（只认 phy/ifname），对每个 section
+  都返回 wiphy 的**第一个** band；再加上 `setValues()` 重建选项会丢掉当前选择，保存
+  对话框时下拉值为空，而 `uci.set(..., '')` 的语义是**删除**选项，于是 `option band`
+  （以及 `option channel`）被删掉，射频随即起不来、日志里是
+  `Wireless device 'radio0_band2' setup failed` 与 hostapd
+  `Invalid interface name/radio identifier/link id 'phy00.2'`。
+
+修复分两层：`build/luci-patches/0002` 让 band-split section 直接按自身
+`band`/`channels` 构建频段表、重建后恢复所选 band、空值不落盘；`wireless-defaults`
+另在**每次开机**（marker 检查之前）自愈——仅当 section 缺 `band` 时按 `channels`
+范围推断（≤14 → `2g`、≤196 → `5g`、其余 → `6g`）补回并补默认信道，已有 `band` 的
+section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函数分别断言，
+`verify-image.sh` 也在镜像内复查。
 
 ## 本机构建
 

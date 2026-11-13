@@ -1,0 +1,32 @@
+#!/bin/sh
+# SBE1V1K local default: allow SSH from the WAN side.
+#
+# Same rationale as 99-allow-luci-wan: the box is managed over the provider
+# uplink, so tcp 22 on the wan zone is accepted by default.  Everything else
+# on wan keeps the stock policy (zone input REJECT, established/related
+# already allowed by fw4).
+#
+# Equivalent to the rule created by hand during bring-up:
+#   firewall.allow_ssh_wan: name='Allow-SSH-WAN'  src='wan'  proto='tcp'
+#                           dest_port='22'        target='ACCEPT'
+# fw4 emits user rules ahead of the zone's default REJECT in input_wan, so
+# this ACCEPT wins regardless of where in /etc/config/firewall it lands.
+#
+# The section name is fixed and the guard keeps an existing one untouched:
+# an operator edit (or deletion) made after first boot is never undone, and
+# the section is not duplicated on later runs of this script.
+#
+# /etc/init.d/boot sources this file in a subshell and deletes it only on
+# success; a non-zero exit keeps it for the next boot to retry.
+[ -f /etc/config/firewall ] || exit 0
+[ -n "$(uci -q get firewall.allow_ssh_wan)" ] && exit 0
+
+uci -q batch <<EOF && uci -q commit firewall || exit 1
+set firewall.allow_ssh_wan=rule
+set firewall.allow_ssh_wan.name='Allow-SSH-WAN'
+set firewall.allow_ssh_wan.src='wan'
+set firewall.allow_ssh_wan.proto='tcp'
+set firewall.allow_ssh_wan.dest_port='22'
+set firewall.allow_ssh_wan.target='ACCEPT'
+EOF
+exit 0

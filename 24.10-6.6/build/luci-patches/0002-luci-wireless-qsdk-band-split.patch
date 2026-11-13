@@ -1,0 +1,124 @@
+Subject: [PATCH] luci-mod-network: fix the radio dialog for QSDK band-split radios
+
+/sbin/wifi config on QSDK (mac80211.uc) exposes the single wiphy once per
+hardware band as radioX_band0/1/2, each wifi-device carrying its own
+`option band` and per-band `option channels` list.  LuCI's frequency
+selector asks iwinfo for the section name, which iwinfo does not know: it
+answers with the wiphy's first band for every section, so the Band select
+never offered the configured band, and after setValues() rebuilt the
+options any selection was lost.  On save, the empty select value reached
+uci.set(), which treats '' as "delete the option", so editing a network
+from its dialog silently removed `band` (and `channel`) from the radio.
+
+Three changes:
+
+ - build the frequency list from the section's own `channels` range when
+   the section is radioX_bandN with a configured band, instead of relying
+   on iwinfo, which cannot report per-section bands;
+ - re-apply the configured band after the option list is rebuilt, so an
+   untouched dialog submits the band it was opened with;
+ - never write an empty band/channel value: an unresolvable widget must
+   leave the configured options untouched, not delete them.
+
+The channel numbers of a band-split section are that band's own numbers
+(6 GHz uses 1-233), so they are mapped with the section's band prefix.
+---
+--- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
++++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
+@@ -313,7 +313,38 @@
+ 			const wifidevs = data[0];
+ 			const freqlist = data[1];
+ 
+-			freqlist.forEach(freq => {
++			/* QSDK band-split radios (radioX_bandN) expose the same wiphy once
++			 * per hardware band.  iwinfo only knows the wiphy ifname and returns
++			 * its first band for such a section name, so the frequency list was
++			 * useless here and left the Band select without the section's band;
++			 * saving the dialog then wrote an empty value, and uci.set() with ''
++			 * deletes the option, breaking the radio.  Build the channel list
++			 * from the section's own `channels` range instead. */
++			const qsdk_split_band = /^radio\d+_band\d+$/.test(section_id)
++				? uci.get('wireless', section_id, 'band') : null;
++			const qsdk_split_channels = /^radio\d+_band\d+$/.test(section_id)
++				? uci.get('wireless', section_id, 'channels') : null;
++
++			if (qsdk_split_band && /^(2g|5g|6g)$/.test(qsdk_split_band) && qsdk_split_channels) {
++				const base_mhz = (qsdk_split_band == '2g') ? 2407
++					: (qsdk_split_band == '5g') ? 5000 : 5950;
++
++				for (const range of qsdk_split_channels.split(/\s+/).filter(r => r)) {
++					const m = range.match(/^(\d+)(?:-(\d+))?$/);
++					if (!m)
++						continue;
++
++					const lo = +m[1], hi = m[2] ? +m[2] : lo;
++
++					for (let c = lo; c <= hi && c - lo < 512; c++)
++						this.channels[qsdk_split_band].push(
++							String(c),
++							'%d (%d Mhz)'.format(c, base_mhz + 5 * c),
++							{ available: true }
++						);
++				}
++			}
++			else freqlist.forEach(freq => {
+ 				if (!freq.band)
+ 					return;
+ 
+@@ -491,19 +522,24 @@
+ 
+ 		this.toggleWifiMode(elem);
+ 
+-		if (hwval != null) {
+-			this.useBandOption = false;
++		const bandsel = (hwval != null) ? (/a/.test(hwval) ? '5g' : '2g') : bandval;
+ 
+-			band.value = /a/.test(hwval) ? '5g': '2g';
+-		}
+-		else {
+-			this.useBandOption = true;
+-
+-			band.value = bandval;
+-		}
++		this.useBandOption = (hwval == null);
+ 
+ 		this.toggleWifiBand(elem);
+ 
++		/* setValues() rebuilt the Band options and dropped the selection
++		 * made above; re-apply the configured band and rebuild the channel
++		 * list for it.  Without this an untouched dialog submits the first
++		 * option (2.4 GHz) or an empty value for every band. */
++		if (bandsel != null)
++			for (let i = 0; i < band.options.length; i++)
++				if (band.options[i].value == bandsel) {
++					band.value = bandsel;
++					this.toggleWifiChannel(elem);
++					break;
++				}
++
+ 		bwdt.value = htval;
+ 		chan.value = chval ?? (chan.options[0] ? chan.options[0].value : 'auto');
+ 
+@@ -582,11 +618,19 @@
+ 	write: function(section_id, value) {
+ 		uci.set('wireless', section_id, 'htmode', value[0] || null);
+ 
+-		this.useBandOption ?
+-			uci.set('wireless', section_id, 'band', value[1]) : 
++		/* An empty select value means the widget could not resolve the band
++		 * (iwinfo has no usable data for QSDK band-split radios).  Keep the
++		 * configured option instead of deleting it. */
++		if (this.useBandOption) {
++			if (value[1])
++				uci.set('wireless', section_id, 'band', value[1]);
++		}
++		else {
+ 			uci.set('wireless', section_id, 'hwmode', (value[1] == '2g') ? '11g' : '11a');
++		}
+ 
+-		uci.set('wireless', section_id, 'channel', value[2]);
++		if (value[2])
++			uci.set('wireless', section_id, 'channel', value[2]);
+ 	}
+ });
+ 
