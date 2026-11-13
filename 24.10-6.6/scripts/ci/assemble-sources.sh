@@ -338,6 +338,21 @@ _dts="$FEEDS6/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts"
 [ -f "$_dts" ] || die 4 "DTS 缺失"
 grep -q 'model = "Spectrum SBE1V1K"' "$_dts" || die 4 "DTS 的 model 不符"
 grep -q 'sdhc_1' "$_dts" || die 4 "DTS 缺少 sdhc_1（eMMC）"
+# DTS 的单一来源是 build/p-b/files 里那一份（1e06ae4 起带 edma ring-map/中断、
+# xo 频率、删 cpu OPP；已在 v55 真机上 PASS）。known-delta 对装配树里两处副本
+# 登记 changed，这里的逐字节断言就是那条白名单的可执行证明：任何一处副本与
+# 源文件不一致都算装配漏项，而不是“可以接受的差异”。
+_dts_src="$REPO/24.10-6.6/build/p-b/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts"
+cmp -s "$_dts_src" "$_dts" || die 4 "files-6.6 的 SBE DTS 与 build/p-b/files 源文件不一致"
+# 首启默认值包：两个 uci-defaults 都必须装配进来，且 Makefile 都要安装
+# （少装一个不会报错，只会在设备上悄悄缺一项默认值，所以在这里挡）。
+_dfl="$SRC/buildroot/package/sbe1v1k-defaults"
+for _f in 99-ttyd-disable 99-allow-luci-wan; do
+	[ -f "$_dfl/files/$_f" ] || die 4 "sbe1v1k-defaults 缺少 $_f"
+	grep -q "files/$_f" "$_dfl/Makefile" || die 4 "sbe1v1k-defaults/Makefile 未安装 $_f"
+done
+logmsg "  SBE_DEFAULTS_OK 99-ttyd-disable + 99-allow-luci-wan"
+logmsg "  SBE_DTS_OK 与 build/p-b/files 源文件逐字节一致"
 _mmc="$SRC/buildroot/target/linux/feeds/ipq95xx/base-files/lib/upgrade/mmc.sh"
 [ -f "$_mmc" ] || die 4 "mmc.sh 缺失"
 # 审计树里 mmc.sh 是 744（组可执行），但 git 只记录 644/755，检出后再经
@@ -362,6 +377,8 @@ KERNEL="$SRC/buildroot/qca/src/linux-6.6"
 [ -d "$KERNEL" ] || die 4 "内核树缺失：$KERNEL"
 cp -a "$FEEDS6/." "$KERNEL/" >>"$LOG" 2>&1 || die 4 "内核叠加失败"
 [ -f "$KERNEL/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" ] || die 4 "叠加后内核树没有 SBE DTS"
+cmp -s "$_dts_src" "$KERNEL/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
+	|| die 4 "内核树里的 SBE DTS 与 build/p-b/files 源文件不一致"
 [ -f "$KERNEL/drivers/net/phy/rtl8261n/Makefile" ] || die 4 "叠加后内核树没有 rtl8261n"
 logmsg "  OVERLAY_OK $(count_files "$KERNEL") files"
 
