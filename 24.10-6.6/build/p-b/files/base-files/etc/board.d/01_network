@@ -22,9 +22,12 @@
 # from the vendor rootfs (extracted/rootfs/etc/board.d/01_network) so that the
 # interface topology of the first P-B image reproduces the shipped one.
 
-[ -e /etc/config/network ] && exit 0
-
-touch /etc/config/network
+# This script only writes the network block of /etc/board.json; the network
+# config itself is generated later by /bin/config_generate.  Keep populating
+# board.json when /etc/config/network survives a sysupgrade, otherwise the
+# SBE branch below is skipped and 99-default_network writes "lan": "eth0",
+# which makes LuCI's Port status drop eth2/eth3/eth0.
+[ -e /etc/config/network ] || touch /etc/config/network
 
 CFG=/etc/board.json
 

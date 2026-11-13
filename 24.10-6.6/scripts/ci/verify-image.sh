@@ -325,6 +325,14 @@ if grep -qF 'ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"' "$ROOTFS/etc
 else
 	bad "board.d 01_network 未把 eth0 列入 SBE LAN 端口"
 fi
+# sysupgrade 保留 /etc/config/network 后，顶层守卫若仍是 `&& exit 0`，
+# SBE 分支整段跳过，board.json 会落到 99-default_network 的 "lan": "eth0"，
+# 端口面板反而只剩两个口。守卫必须是 `|| touch` 形式。
+if grep -qF '[ -e /etc/config/network ] || touch /etc/config/network' "$ROOTFS/etc/board.d/01_network"; then
+	ok "board.d 01_network 升级路径仍写 board.json 网络段"
+else
+	bad "board.d 01_network 保留了 && exit 0 守卫：升级后端口面板只会显示 eth0/eth1"
+fi
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
 	[ -e "$ROOTFS/$f" ] && bad "不应存在 /$f" || ok "缺席 /$f"

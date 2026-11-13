@@ -119,6 +119,14 @@ eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp
 会在 `config_generate` 之后把它从生成的 `network.<br-lan>.ports` 里再删掉，
 桥接由 `/usr/sbin/eth0-lan-attach`（procd 服务）在 netifd 之外完成。
 
+注意 sysupgrade 路径：`/etc/config/network` 会被保留，而 `01_network` 早先以
+`[ -e /etc/config/network ] && exit 0` 开头，升级后 SBE 分支整段被跳过，
+board.json 网络段改由 `99-default_network` 写成 `"lan": "eth0"`，端口面板
+反而只剩 eth0/eth1。现在守卫只挡 `touch`（`[ -e ... ] || touch ...`），
+board.json 网络段在升级路径下照常写入；`verify-image.sh` 对该守卫形式有断言。
+A 机升级刷入后删除 board.json 重跑 `board_detect`，已确认
+`lan.ports = [eth2, eth3, eth0]`（真机 PASS，2026-11-13）。
+
 版本（取自镜像内 `/usr/lib/opkg/status`，随 feeds 更新会变化）：
 
 | 组件 | 版本 |
