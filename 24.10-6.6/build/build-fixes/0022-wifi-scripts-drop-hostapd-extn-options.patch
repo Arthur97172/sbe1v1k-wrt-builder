@@ -1,0 +1,55 @@
+Subject: [PATCH] wifi-scripts: stop emitting hostapd options only qcn-app-extns understands
+
+The QCA wifi-scripts (qca/feeds/wlan-open/mac80211/wifi-scripts) generate
+the per-phy hostapd configuration and unconditionally append two settings
+after set_default has given them a non-empty value:
+
+    disable_iface_during_cac=0
+    athnewind=0
+
+Both are parsed only by the QCA wifi extensions (qcn-app-extns: 
+ap_config_extn.c handles "athnewind" and "disable_iface_during_cac").
+This build ships the wpad-*-noextns variant on purpose (qcn-app-extns is
+not part of the imported QCA source drop, see custom-packages.conf), so
+the hostapd binary contains no extension parser. hostapd's config reader
+then reports
+
+    Line N: unknown configuration item 'disable_iface_during_cac'
+    Line N: unknown configuration item 'athnewind'
+    2 errors found in configuration file '/var/run/hostapd-phy00.X.conf'
+    uc_hostapd_add_iface: add interface X: phy00.X-0, ret:-1
+    hostapd.add_iface failed for phy phy00.X ifname=phy00.X-0
+
+and refuses to instantiate any BSS. netifd has already created the vdev,
+so the netdev stays DOWN, no beacon is transmitted, and LuCI's wireless
+overview correctly renders every network as "disabled" while the edit
+dialog shows the uci state (enabled). All three band-split radios are
+affected identically.
+
+Neither option can do anything without the extensions: their defaults in
+ap_config_extn.c are exactly false/0, the same values the scripts emit.
+Dropping the two appends therefore keeps behaviour identical for this
+build and lets hostapd load the config.
+
+---
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh	2026-11-13 12:58:17.455869472 +0000
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh	2026-11-13 12:58:17.472354721 +0000
+@@ -1390,14 +1390,15 @@
+ 	[ -n "$disable_csa_dfs" ] && append base_cfg "disable_csa_dfs=$disable_csa_dfs" "$N"
+ 	[ -n "$uplink_csa" ] && append base_cfg "uplink_csa=$uplink_csa" "$N"
+ 	[ -n "$CSwOpts" ] && append base_cfg "CSwOpts=$CSwOpts" "$N"
+-	[ -n "$disable_iface_during_cac" ] && append base_cfg "disable_iface_during_cac=$disable_iface_during_cac" "$N"
++	# disable_iface_during_cac 与 athnewind 只由 qcn-app-extns 解析；本构建
++	# 只导入 noextns 变体（qcn-app-extns 不在导入里），这两行会让
++	# hostapd 报 "unknown configuration item" 并拒绝 add_iface。
++	# 不发出等同于扩展默认值：disable_iface_during_cac=0、athnewind=0。
+ 	[ -n "$discard_6g_awgn_event" ] && append base_cfg "discard_6g_awgn_event=$discard_6g_awgn_event" "$N"
+ 	[ -n "$atfstrictsched" ] && append base_cfg "atfstrictsched=$atfstrictsched" "$N"
+ 	[ -n "$downgrade_320mhz_opclass" ] && append base_cfg "downgrade_320mhz_opclass=$downgrade_320mhz_opclass" "$N"
+ 	[ "$use_driver_vendor_addr" = "1" ] && append base_cfg "use_driver_vendor_addr=1" "$N"
+ 	[ "$rpt_max_phy" = "1" ] && append base_cfg "rpt_max_phy=1" "$N"
+-	config_get athnewind mac80211 athnewind 0
+-	[ -n "$athnewind" ] && append base_cfg "athnewind=$athnewind" "$N"
+ 
+ 	config_get same_ssid_disable mac80211 same_ssid_disable
+ 	# If same_ssid_disable is 1, override same_ssid_repeater to 0

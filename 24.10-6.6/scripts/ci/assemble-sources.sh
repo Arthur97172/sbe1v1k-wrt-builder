@@ -442,6 +442,20 @@ grep -A2 '^#ifdef CONFIG_IEEE80211BE$' "$_bf" | grep -q 'strcmp(feat, "11be")' \
 	|| die 4 "0021 未生效：build_features.h 缺 CONFIG_IEEE80211BE 下的 11be 分支"
 logmsg "  BUILD_FEATURES_11BE_OK hostapd（has_feature 报 11be）"
 
+# 0022 去掉 mac80211.sh 里两行无条件 append：disable_iface_during_cac 与
+# athnewind 只有 qcn-app-extns 解析，而镜像用 noextns 变体，hostapd 会把它们
+# 当 unknown configuration item，整份配置 2 errors 后 add_iface 失败，三个
+# radio 的 BSS 全部起不来（LuCI 无线页整页“已禁用”）。两行必须一条都不剩；
+# 其余 QCA 专有项本来就是空值不发出，不受影响。
+_ws22="$SRC/buildroot/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh"
+if grep -q 'append base_cfg "disable_iface_during_cac=' "$_ws22"; then
+	die 4 "0022 未生效：mac80211.sh 仍向 hostapd 配置发 disable_iface_during_cac"
+fi
+if grep -q 'append base_cfg "athnewind=' "$_ws22"; then
+	die 4 "0022 未生效：mac80211.sh 仍向 hostapd 配置发 athnewind"
+fi
+logmsg "  HOSTAPD_EXTN_OPTS_OK wifi-scripts（配置不再带 noextns 不认识的扩展项）"
+
 # =============================================================== 11b. luci
 step "LuCI 补丁（build/luci-patches/SERIES）"
 apply_series "$BUILD/luci-patches/SERIES"

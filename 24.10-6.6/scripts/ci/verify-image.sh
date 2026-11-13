@@ -333,6 +333,17 @@ if grep -qF '[ -e /etc/config/network ] || touch /etc/config/network' "$ROOTFS/e
 else
 	bad "board.d 01_network 保留了 && exit 0 守卫：升级后端口面板只会显示 eth0/eth1"
 fi
+# QCA wifi-scripts 原本无条件向 hostapd 配置发 disable_iface_during_cac 与
+# athnewind，这两项只有 qcn-app-extns 解析；镜像用 noextns 变体，hostapd 把
+# 它们当 unknown configuration item，整份配置 2 errors 后 add_iface 失败，
+# 三个 radio 的 BSS 全部起不来（LuCI 无线页整页“已禁用”、只剩一条 DOWN 的
+# phy00.1-0）。build-fixes/0022 删掉这两行 append。
+if grep -q 'append base_cfg "disable_iface_during_cac=' "$ROOTFS/lib/netifd/wireless/mac80211.sh" ||
+   grep -q 'append base_cfg "athnewind=' "$ROOTFS/lib/netifd/wireless/mac80211.sh"; then
+	bad "mac80211.sh 仍向 hostapd 发 noextns 不认识的扩展项：所有 BSS 会起不来"
+else
+	ok "mac80211.sh 不再发 disable_iface_during_cac/athnewind"
+fi
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
 	[ -e "$ROOTFS/$f" ] && bad "不应存在 /$f" || ok "缺席 /$f"

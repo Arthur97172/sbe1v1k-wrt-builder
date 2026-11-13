@@ -219,6 +219,19 @@ QSDK 的 `/sbin/wifi config` 把一颗 wiphy（`phy00`，PCI `0001:01:00.0`）�
 section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函数分别断言，
 `verify-image.sh` 也在镜像内复查。
 
+- **hostapd 拒载配置（所有 Wi-Fi 显示“已禁用”的真根因）**：QCA 的
+  `wifi-scripts` 生成 `hostapd-phy00.X.conf` 时无条件追加
+  `disable_iface_during_cac=0` 与 `athnewind=0`，而这两项只有
+  `qcn-app-extns` 解析。本镜像按导入范围只编 `wpad-mesh-openssl-noextns`，
+  hostapd 于是报 `unknown configuration item`、`2 errors found`、
+  `add_iface failed`，三个 radio 的 BSS 全都不起——`ip link` 里只剩一条
+  DOWN 的 `phy00.1-0`，LuCI 无线页整页“已禁用”，而编辑对话框读的是 uci，
+  仍显示“无线网络已启用”。这不是 LuCI 的显示 bug，也不能靠
+  `wireless-defaults` 修掉。`build-fixes/0022` 删掉这两行 append：扩展
+  默认值本就是 0，行为不变；装配脚本断言两行都消失，`verify-image.sh`
+  在镜像里复查。真机验证：A 机 2026-11-13 PASS（三个 BSS 起来、SSID
+  广播，LuCI 概览显示“无线未关联”）。
+
 ## 本机构建
 
 装配树位于 `<工作区>/sources/buildroot`（本目录的上一级目录里）。
