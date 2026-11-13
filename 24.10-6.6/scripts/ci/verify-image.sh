@@ -14,7 +14,7 @@
 #      且 /etc/rc.d/S95wireless-defaults 开机链接存在并指向正确目标；
 #   5. 关键二进制/配置存在；本次明确不打包的 geoview、v2ray-plugin 缺席；
 #      /etc/config/passwall 由上游 uci-defaults 在首启时从 0_default_config 生成，
-#      故检查来源文件而非该运行期文件；
+#      故检查来源文件而非该运行期文件；首启默认的 Allow-LuCI-WAN 规则字段齐全；
 #   6. opkg 状态文件里的包数量；
 #   7. 设置了 SBE_EXPECT_WIFI_FIRMWARE=1 时（CI 使用）：sbe-wifi-firmware
 #      已安装，且 6 个厂商固件/BDF 与装配树里的包逐字节一致；
@@ -240,10 +240,35 @@ for f in \
 	etc/config/nikki etc/config/openclash \
 	usr/share/passwall/0_default_config \
 	etc/uci-defaults/luci-app-passwall \
-	etc/uci-defaults/99-ttyd-disable
+	etc/uci-defaults/99-ttyd-disable \
+	etc/uci-defaults/99-allow-luci-wan
 do
 	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f"
 done
+
+# WAN 侧 LuCI：镜像默认带一条 Allow-LuCI-WAN（tcp 80/443 → ACCEPT），设备靠
+# 运营商上行管理，这条规则丢了就意味着刷新后从 WAN 再也进不了 LuCI。这里只
+# 静态核对首启脚本里的字段（不执行镜像里的脚本），任何一项被删都算失败。
+LWAN="$ROOTFS/etc/uci-defaults/99-allow-luci-wan"
+if [ -f "$LWAN" ]; then
+	lwan_miss=
+	for kv in \
+		"set firewall.allow_luci_wan=rule" \
+		"allow_luci_wan.name='Allow-LuCI-WAN'" \
+		"allow_luci_wan.src='wan'" \
+		"allow_luci_wan.proto='tcp'" \
+		"allow_luci_wan.dest_port='80 443'" \
+		"allow_luci_wan.target='ACCEPT'" \
+		"commit firewall"
+	do
+		grep -qF -- "$kv" "$LWAN" || lwan_miss="$lwan_miss [$kv]"
+	done
+	if [ -z "$lwan_miss" ]; then
+		ok "首启默认 Allow-LuCI-WAN 规则字段齐全"
+	else
+		bad "首启默认 Allow-LuCI-WAN 缺字段:$lwan_miss"
+	fi
+fi
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
 	[ -e "$ROOTFS/$f" ] && bad "不应存在 /$f" || ok "缺席 /$f"

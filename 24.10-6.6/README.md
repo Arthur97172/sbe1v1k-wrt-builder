@@ -55,6 +55,18 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 的模块都装了对应的 `luci-i18n-*-zh-cn`（上游 `luci-proto-wireguard` 本身没有 po 目录，
 没有独立中文包），浏览器语言为中文时自动切换。
 
+首启会在 `/etc/config/firewall` 里追加一条 `Allow-LuCI-WAN` 规则（section 名固定为
+`allow_luci_wan`：`src=wan`、`proto=tcp`、`dest_port='80 443'`、`target=ACCEPT`），
+刷机后可直接从 WAN 侧打开 LuCI；其余 wan 入站仍按 zone 默认策略 REJECT（fw4 把用户
+规则排在 zone 默认拒绝之前）。写入动作在项目自有包 `sbe1v1k-defaults` 的
+`/etc/uci-defaults/99-allow-luci-wan` 里，section 已存在则不覆盖。首启成功后脚本被
+删除，同一次安装内不再重跑；但 sysupgrade 只保留 `/etc/config` 等配置，刷入新镜像
+后首启脚本会再跑一遍——如果之前把这条 section 删了，它会被重新加回，要彻底去掉得在
+升级后再删一次。**代价是管理界面默认暴露在上行链路**：若上行不是运营商 NAT 之内的
+私网，请先在 LuCI 里设好 root 密码，再按需收紧这条规则（加 `src_ip`、改 `dest_port`
+或删除）。这条规则的运行时行为记为 `NOT TESTED`——设备上的同类规则只做过手工建立与
+观察，未经本镜像首启流程实测。
+
 版本（取自镜像内 `/usr/lib/opkg/status`，随 feeds 更新会变化）：
 
 | 组件 | 版本 |
@@ -548,6 +560,8 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 - `/etc/rc.d/S95wireless-defaults` 由 `include/rootfs.mk` 的 `prepare_rootfs`
   自动生成，条件是 `etc/init.d/wireless-defaults` 首行**精确**为
   `#!/bin/sh /etc/rc.common` 且权限 0755。
-- `/etc/uci-defaults/*` 由 `/etc/init.d/boot` 以 `.` 方式加载，成功后删除，
-  因此那里的包装脚本不能 `exec`、`exit` 或 `set -e`。
+- `/etc/uci-defaults/*` 由 `/etc/init.d/boot` 以 `( . file )`（子 shell 内 source）
+  加载，成功才删除、失败保留到下次开机重试。本仓库的约定仍是不用 `set -e`，退出
+  一律显式写：overlay 里的入口用调用脚本的返回码，包内脚本（如
+  `sbe1v1k-defaults`）用 `exit 0` / `exit 1` 表达“已应用”/“保留重试”。
 - 构建与校验过程不接触任何设备；产物未经真机验证前记为 `UNVERIFIED`。

@@ -551,7 +551,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `libwebsockets-full` | qca 树内 `libs/libwebsockets` | 4.3.3 | MIT；`PKG_HASH 6fd33527b410a37ebc91bb64ca51bdabab12b076bc99d153d7c5dd405e4bdf90`，ttyd 的强依赖 |
 | `libuv` | qca 树内 `libs/libuv` | 见 feed Makefile | MIT；ttyd 依赖 |
 | `block-mount` | 树内 `package/system/fstools`（与 `fstools`、`snapshot-tool`、`blockd` 同一 Makefile） | 2024.07.14~408c2cc4 | GPL-2.0；提供 `/sbin/block`、`/etc/init.d/fstab`、`/etc/config/fstab`，是 LuCI “挂载点”页面（`luci-mod-system` 的 `admin/system/mounts`，受 `"fs": {"/sbin/block": "executable"}` 门控）显示的前提 |
-| `sbe1v1k-defaults`（**本项目自有**） | `build/local-packages/sbe1v1k-defaults/`，构建时复制进 `sources/buildroot/package/` | 1-r1 | MIT；只安装 `/etc/uci-defaults/99-ttyd-disable`，把 `ttyd.ttyd.enable` 置 0。原因：树内 `ttyd.init` 的校验规则是 `'enable:bool:1'`，配置缺省即视为启用，会在 `@lan` 上以 `/bin/login` 监听 7681 |
+| `sbe1v1k-defaults`（**本项目自有**） | `build/local-packages/sbe1v1k-defaults/`，构建时复制进 `sources/buildroot/package/` | 1-r2 | MIT；安装两个首启脚本：`/etc/uci-defaults/99-ttyd-disable` 把 `ttyd.ttyd.enable` 置 0（树内 `ttyd.init` 的校验规则是 `'enable:bool:1'`，配置缺省即视为启用，会在 `@lan` 上以 `/bin/login` 监听 7681）；`/etc/uci-defaults/99-allow-luci-wan` 追加防火墙规则 `allow_luci_wan`（`Allow-LuCI-WAN`：`src=wan`、`proto=tcp`、`dest_port='80 443'`、`ACCEPT`），让设备经运营商上行仍能打开 LuCI，section 已存在则不覆盖（r2，2026-11-13） |
 
 构建期联网：`ddns-scripts`/`luci-app-ddns`/`block-mount` 均无下载；`ttyd`、`libwebsockets`、`libuv` 首次构建时按 `PKG_SOURCE_URL` + `PKG_HASH` 下载源码 tarball（哈希已在树内固定）。
 
