@@ -134,6 +134,12 @@ grep -q 'IMAGE/sysupgrade.bin/squashfs := .*sysupgrade-tar' \
 grep -q 'fstools_ignore_partname=1' \
 	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
 	|| { echo "补丁应用不完整：设备树没有 fstools_ignore_partname=1" >&2; exit 1; }
+# 端口角色只在 board.json 里声明：02_network 没有本板分支时 99-default_network
+# 会写 lan=eth0 / wan=eth1（少两个口且角色反了），LuCI 概览的端口面板只显示两个
+# 网口。检查必须在编译前失败，而不是等 3 小时后在镜像里发现。
+grep -q 'ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"' \
+	"$BR/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network" \
+	|| { echo "补丁应用不完整：02_network 没有 spectrum,sbe1v1k 的 LAN/WAN 端口映射" >&2; exit 1; }
 
 echo "[prepare] 安装项目自带软件包"
 for d in "$PROJ"/build/local-packages/*/; do

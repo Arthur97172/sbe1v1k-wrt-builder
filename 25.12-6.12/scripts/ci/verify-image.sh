@@ -198,6 +198,14 @@ do
 	fi
 done
 
+# 每次开机的自愈逻辑（2026-11-13 从 24.10-6.6 移植）：缺了它们，射频被
+# 生成器写成 disabled=1 或固件没有 6 GHz 信道时，“全部已禁用”会复发。
+for fn in repair_band_macaddrs repair_6g_availability heal_generated_ifaces; do
+	grep -q "^$fn()" "$ROOTFS/usr/lib/sbe1v1k/wireless-defaults" \
+		&& ok "wireless-defaults 含 $fn（开机自愈）" \
+		|| bad "wireless-defaults 缺少 $fn（自愈逻辑缺失）"
+done
+
 if grep -Eq '%[VCRD]|VERXXXX|WRTVERSIONINFO' "$ROOTFS/etc/banner"; then
 	bad "镜像内 /etc/banner 仍含未替换的占位符"
 else
@@ -231,6 +239,34 @@ fi
 [ -f "$ROOTFS/etc/uci-defaults/99-ttyd-disable" ] \
 	&& ok "首启入口 /etc/uci-defaults/99-ttyd-disable 在镜像中（ttyd 默认关闭）" \
 	|| bad "镜像缺少 /etc/uci-defaults/99-ttyd-disable（ttyd 会默认开启）"
+
+# WAN 侧放行规则（2026-11-13 从 24.10-6.6 移植）：fw4 的 wan zone 默认
+# input REJECT，没有这两条规则时运营商上行链路上无法再进 LuCI/SSH。
+# 逐字节比对本仓库的脚本，防止包内文件被替换而包名仍对。
+DEFAULTS_FILES="$PROJ/build/local-packages/sbe1v1k-defaults/files"
+for f in 99-allow-luci-wan 99-allow-ssh-wan; do
+	if [ ! -f "$ROOTFS/etc/uci-defaults/$f" ]; then
+		bad "镜像缺少 /etc/uci-defaults/$f（WAN 侧将无法访问 LuCI/SSH）"
+	elif cmp -s "$DEFAULTS_FILES/$f" "$ROOTFS/etc/uci-defaults/$f"; then
+		ok "/etc/uci-defaults/$f 与 sbe1v1k-defaults 源文件逐字节一致"
+	else
+		bad "/etc/uci-defaults/$f 与 sbe1v1k-defaults 源文件不一致"
+	fi
+done
+
+# ---- 端口角色：board.json 必须声明四个网口 -------------------------------
+# LuCI 的状态→概览→端口状态读 board.json 的 network 段。没有本板分支时
+# 99-default_network 写 lan=eth0 / wan=eth1：少两个口且 LAN/WAN 角色反了。
+# 补丁 0023 在 02_network 里声明 eth0=WAN、eth1/eth2/eth3=LAN。
+BOARDD_NET="$ROOTFS/etc/board.d/02_network"
+if [ ! -f "$BOARDD_NET" ]; then
+	bad "镜像缺少 /etc/board.d/02_network（board.json 会落到默认端口表）"
+elif grep -q '^[[:space:]]*spectrum,sbe1v1k)' "$BOARDD_NET" &&
+     grep -qF 'ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"' "$BOARDD_NET"; then
+	ok "/etc/board.d/02_network 声明 eth0=WAN、eth1-eth3=LAN（端口面板四个口）"
+else
+	bad "/etc/board.d/02_network 没有 spectrum,sbe1v1k 端口映射（端口面板只会显示 eth0/eth1 且角色相反）"
+fi
 
 # ---- LuCI 基础栈 ------------------------------------------------------------
 for f in etc/config/uhttpd etc/init.d/uhttpd www/cgi-bin/luci; do

@@ -1,0 +1,30 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qualcommbe: ipq95xx: declare Spectrum SBE1V1K LAN/WAN ports
+
+Without a spectrum,sbe1v1k case, board.d/02_network falls through to
+"Unsupported hardware" and package/base-files' 99-default_network
+writes lan=eth0 / wan=eth1.  That is both incomplete (two of the four
+ports) and wrong: on this board eth0 is the RTL8261N 10G WAN and
+eth1/eth2/eth3 are the QCA8081/QCA8075 LAN ports (see patches/0011).
+
+LuCI builds the status -> overview port panel from the board.json
+network section (luci-mod-status 29_ports.js): it reads lan.ports[]
+and wan.device, so the fallback leaves two ports showing with the
+roles reversed.  ucidef_set_interfaces_lan_wan() emits a
+space-separated LAN list as a "ports" array, which is exactly the
+shape 29_ports.js expects.
+
+Status: static only, NOT TESTED on hardware.
+---
+--- a/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network
++++ b/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network
+@@ -17,6 +17,9 @@
+ 	qcom,ipq9574-ap-al02-c7)
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 lan5" "wan"
+ 		;;
++	spectrum,sbe1v1k)
++		ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"
++		;;
+ 	*)
+ 		echo "Unsupported hardware. Network interfaces not initialized"
+ 		;;

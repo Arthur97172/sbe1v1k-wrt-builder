@@ -1,16 +1,24 @@
 #!/bin/sh
-# Apply wireless defaults once, after all radios exist on the target platform.
+# Apply the SBE1V1K wireless policy once, after all radios exist, and repair
+# the configurations that must keep working on every boot.
 #
 # Supported boards:
 #   - spectrum,sbe1v1k
 #
 # Design:
 #   1. Check whether the current board is supported.
-#   2. Wait for OpenWrt/mac80211 to discover all available radios/interfaces.
-#   3. Dynamically configure only the bands that actually exist.
-#   4. Protect discovered 6 GHz interfaces before applying the final policy.
-#   5. Commit wireless configuration.
-#   6. Mark the policy as applied only after successful configuration.
+#   2. Every boot, before the marker check: repair per-band Wi-Fi MACs (only
+#      when the phys themselves report placeholder/duplicate addresses) and
+#      the 6 GHz availability (firmware without 6 GHz channels for the
+#      configured country keeps that radio disabled instead of failing).
+#   3. Wait for OpenWrt/mac80211 to discover all available radios/interfaces.
+#   4. Dynamically configure only the bands that actually exist.
+#   5. Protect discovered 6 GHz interfaces until the policy decides about them.
+#   6. Commit wireless configuration and mark the policy as applied only after
+#      successful configuration.
+#   7. On later boots, re-apply the policy to any AP iface that the generator
+#      re-created with its disabled=1 default (a phy appearing after a firmware
+#      update, a lost /etc/config/wireless), without touching operator changes.
 
 set -eu
 
@@ -41,6 +49,19 @@ WIFI_6G_TXPOWER="${WIFI_6G_TXPOWER:-23}"
 WIFI_6G_SSID="${WIFI_6G_SSID:-WiFi_6G}"
 
 WIFI_KEY="${WIFI_KEY:-12345678}"
+
+# Some ath12k firmware builds report one placeholder MAC (00:03:7f:12:34:56)
+# for the wiphy and for every entry of the per-radio address list, so band vifs
+# are created with identical MACs and only the first one can be brought up.  A
+# band iface whose macaddr is still missing or the placeholder gets one derived
+# from the lowest Ethernet MAC, offset by band (2.4G +0x10, 5G +0x11,
+# 6G +0x12) so the three bands stay distinct and away from the Ethernet
+# addresses.  The repair only runs when the phys actually show the placeholder
+# or duplicate addresses: with sane firmware addresses no macaddr is written.
+WIFI_MAC_PLACEHOLDER_PREFIX='00:03:7f:'
+WIFI_MAC_OFFSET_2G=16
+WIFI_MAC_OFFSET_5G=17
+WIFI_MAC_OFFSET_6G=18
 
 ###############################################################################
 # Board detection
@@ -89,6 +110,11 @@ ifaces_for_radio() {
 			-e "s/^wireless\.\([^.=]*\)\.device=$1$/\1/p"
 }
 
+all_wifi_devices() {
+	uci -q show wireless 2>/dev/null |
+		sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'
+}
+
 ###############################################################################
 # UCI helpers
 ###############################################################################
@@ -109,6 +135,185 @@ set_if_changed() {
 	current="$(get_uci_value "$option")"
 
 	[ "$current" = "$value" ] || uci -q set "$option"="$value"
+}
+
+# Set by the repair helpers below; committed and reloaded once, at the end.
+WIRELESS_CHANGED=0
+
+mark_wireless_changed() {
+	WIRELESS_CHANGED=1
+}
+
+###############################################################################
+# Per-band Wi-Fi MAC repair
+###############################################################################
+
+# Lowest non-placeholder Ethernet MAC.  Fixed-width lowercase hex strings sort
+# in MAC order, so `sort` yields the numerically lowest address; eth0 carries
+# the board's base MAC and br-lan is only a fallback.
+wifi_base_mac() {
+	local mac best="" brlan
+
+	for mac in $(for f in /sys/class/net/eth*/address; do
+		[ -r "$f" ] && cat "$f"
+	done | tr 'A-F' 'a-f' | sort); do
+		[ "$mac" != "00:00:00:00:00:00" ] || continue
+		best="$mac"
+		break
+	done
+
+	if [ -z "$best" ] && [ -r /sys/class/net/br-lan/address ]; then
+		brlan="$(tr 'A-F' 'a-f' < /sys/class/net/br-lan/address)"
+		[ "$brlan" != "00:00:00:00:00:00" ] && best="$brlan"
+	fi
+
+	[ -n "$best" ] || return 1
+	printf '%s\n' "$best"
+}
+
+# mac_add_offset <mac> <offset>: add offset to the last octet, carrying left.
+mac_add_offset() {
+	local mac="$1" offset="$2"
+	local o1 o2 o3 o4 o5 o6 carry
+	local IFS=:
+
+	set -- $mac
+	[ $# -eq 6 ] || return 1
+
+	o1=$((0x$1)); o2=$((0x$2)); o3=$((0x$3))
+	o4=$((0x$4)); o5=$((0x$5)); o6=$((0x$6))
+
+	o6=$((o6 + offset)); carry=$((o6 / 256)); o6=$((o6 % 256))
+	o5=$((o5 + carry)); carry=$((o5 / 256)); o5=$((o5 % 256))
+	o4=$((o4 + carry)); carry=$((o4 / 256)); o4=$((o4 % 256))
+	o3=$((o3 + carry)); carry=$((o3 / 256)); o3=$((o3 % 256))
+	o2=$((o2 + carry)); carry=$((o2 / 256)); o2=$((o2 % 256))
+	o1=$((o1 + carry)); o1=$((o1 % 256))
+
+	printf '%02x:%02x:%02x:%02x:%02x:%02x\n' \
+		"$o1" "$o2" "$o3" "$o4" "$o5" "$o6"
+}
+
+band_mac_offset() {
+	case "$1" in
+		2g) printf '%s\n' "$WIFI_MAC_OFFSET_2G" ;;
+		5g) printf '%s\n' "$WIFI_MAC_OFFSET_5G" ;;
+		6g) printf '%s\n' "$WIFI_MAC_OFFSET_6G" ;;
+		*) return 1 ;;
+	esac
+}
+
+# True when at least one phy reports an all-zero/placeholder address, or two
+# phys report the same address.  Upstream mac80211.uc creates one iface per
+# hardware radio; identical addresses are the only situation in which the
+# per-band MAC has to be derived here.
+phys_need_mac_fix() {
+	local addr first="" addrs
+
+	addrs="$(cat /sys/class/ieee80211/phy*/macaddress 2>/dev/null || true)"
+	[ -n "$addrs" ] || return 1
+
+	for addr in $addrs; do
+		addr="$(printf '%s' "$addr" | tr 'A-F' 'a-f')"
+
+		case "$addr" in
+			''|00:00:00:00:00:00)
+				continue
+				;;
+			"$WIFI_MAC_PLACEHOLDER_PREFIX"*)
+				return 0
+				;;
+		esac
+
+		if [ -z "$first" ]; then
+			first="$addr"
+		elif [ "$addr" = "$first" ]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+repair_band_macaddrs() {
+	local base band offset wanted radio iface current
+
+	phys_need_mac_fix || return 0
+
+	base="$(wifi_base_mac)" || return 0
+
+	for band in 2g 5g 6g; do
+		offset="$(band_mac_offset "$band")" || continue
+		wanted="$(mac_add_offset "$base" "$offset")" || continue
+		[ -n "$wanted" ] || continue
+
+		for radio in $(radios_for_band "$band"); do
+			for iface in $(ifaces_for_radio "$radio"); do
+				current="$(get_uci_value "wireless.$iface.macaddr")"
+
+				# Only replace an address that was never set or that is
+				# still the ath12k placeholder; a configured MAC wins.
+				case "$current" in
+					''|'00:00:00:00:00:00')
+						;;
+					"$WIFI_MAC_PLACEHOLDER_PREFIX"*)
+						;;
+					*)
+						continue
+						;;
+				esac
+
+				uci -q set "wireless.$iface.macaddr"="$wanted"
+				mark_wireless_changed
+				logger -t wireless-defaults \
+					"assigned MAC $wanted to $iface ($band)"
+			done
+		done
+	done
+}
+
+###############################################################################
+# 6 GHz availability repair
+###############################################################################
+#
+# ath12k takes its self-managed regulatory rules from the firmware, and some
+# firmware/country combinations have no 6 GHz channels at all (TW among them):
+# every 6 GHz channel is `(disabled)` and hostapd fails with "pdev is not
+# supported for this country".  Keep that radio disabled so hostapd is not
+# asked to start a band that cannot exist; the check runs every boot, so a
+# country change or firmware update flips it back automatically.
+
+repair_6g_availability() {
+	local radio phy_info
+
+	radio="$(radios_for_band 6g | head -n 1)"
+	[ -n "$radio" ] || return 0
+
+	phy_info="$(iw phy 2>/dev/null || true)"
+
+	# No phy yet (first boot, driver not loaded): the firmware's view cannot
+	# be probed, so stay undecided and re-check on the next boot.
+	[ -n "$phy_info" ] || return 0
+
+	if printf '%s\n' "$phy_info" |
+		grep -qE '\* 59[0-9][0-9]\.[0-9]+ MHz \[[0-9]+\] \([0-9.]+ dBm'; then
+		if [ "$(get_uci_value "wireless.$radio.spectrum_6g_fw_blocked")" = "1" ]; then
+			delete_if_present "wireless.$radio.disabled"
+			delete_if_present "wireless.$radio.spectrum_6g_fw_blocked"
+			mark_wireless_changed
+			logger -t wireless-defaults \
+				"6 GHz channels available again; re-enabled $radio"
+		fi
+	else
+		if [ "$(get_uci_value "wireless.$radio.disabled")" != "1" ] ||
+			[ "$(get_uci_value "wireless.$radio.spectrum_6g_fw_blocked")" != "1" ]; then
+			uci -q set "wireless.$radio.disabled"='1'
+			uci -q set "wireless.$radio.spectrum_6g_fw_blocked"='1'
+			mark_wireless_changed
+			logger -t wireless-defaults \
+				"no enabled 6 GHz channel for this country; disabled radio $radio"
+		fi
+	fi
 }
 
 ###############################################################################
@@ -185,30 +390,41 @@ apply_ap_common() {
 # 2.4 GHz policy
 ###############################################################################
 
+apply_2g_radio() {
+	local radio="$1"
+
+	set_if_changed "wireless.$radio.country" "$WIFI_COUNTRY"
+	set_if_changed "wireless.$radio.channel" "$WIFI_2G_CHANNEL"
+	set_if_changed "wireless.$radio.htmode" "$WIFI_2G_HTMODE"
+	set_if_changed "wireless.$radio.txpower" "$WIFI_2G_TXPOWER"
+	set_if_changed "wireless.$radio.he_mu_beamformer" "0"
+	set_if_changed "wireless.$radio.he_su_beamformer" "1"
+}
+
+apply_2g_iface() {
+	local iface="$1"
+
+	set_if_changed "wireless.$iface.ssid" "$WIFI_2G_SSID"
+	set_if_changed "wireless.$iface.encryption" "sae-mixed"
+	set_if_changed "wireless.$iface.key" "$WIFI_KEY"
+
+	apply_ap_common "$iface"
+
+	set_if_changed "wireless.$iface.ieee80211r" "0"
+	delete_if_present "wireless.$iface.mobility_domain"
+	delete_if_present "wireless.$iface.ft_over_ds"
+	delete_if_present "wireless.$iface.ft_psk_generate_local"
+}
+
 apply_2g_policy() {
 	local radio iface
 
 	for radio in $(radios_for_band 2g); do
-		set_if_changed "wireless.$radio.country" "$WIFI_COUNTRY"
-		set_if_changed "wireless.$radio.channel" "$WIFI_2G_CHANNEL"
-		set_if_changed "wireless.$radio.htmode" "$WIFI_2G_HTMODE"
-		set_if_changed "wireless.$radio.txpower" "$WIFI_2G_TXPOWER"
-		set_if_changed "wireless.$radio.he_mu_beamformer" "0"
-		set_if_changed "wireless.$radio.he_su_beamformer" "1"
+		apply_2g_radio "$radio"
 
 		for iface in $(ifaces_for_radio "$radio"); do
 			[ "$(get_uci_value "wireless.$iface.mode")" = "ap" ] || continue
-
-			set_if_changed "wireless.$iface.ssid" "$WIFI_2G_SSID"
-			set_if_changed "wireless.$iface.encryption" "sae-mixed"
-			set_if_changed "wireless.$iface.key" "$WIFI_KEY"
-
-			apply_ap_common "$iface"
-
-			set_if_changed "wireless.$iface.ieee80211r" "0"
-			delete_if_present "wireless.$iface.mobility_domain"
-			delete_if_present "wireless.$iface.ft_over_ds"
-			delete_if_present "wireless.$iface.ft_psk_generate_local"
+			apply_2g_iface "$iface"
 		done
 	done
 }
@@ -217,35 +433,46 @@ apply_2g_policy() {
 # 5 GHz policy
 ###############################################################################
 
+apply_5g_radio() {
+	local radio="$1"
+
+	set_if_changed "wireless.$radio.country" "$WIFI_COUNTRY"
+	set_if_changed "wireless.$radio.channel" "$WIFI_5G_CHANNEL"
+	set_if_changed "wireless.$radio.htmode" "$WIFI_5G_HTMODE"
+	set_if_changed "wireless.$radio.txpower" "$WIFI_5G_TXPOWER"
+	set_if_changed "wireless.$radio.he_su_beamformer" "1"
+	set_if_changed "wireless.$radio.he_mu_beamformer" "1"
+	set_if_changed "wireless.$radio.eht_su_beamformer" "1"
+	set_if_changed "wireless.$radio.eht_mu_beamformer" "1"
+	set_if_changed "wireless.$radio.he_bss_color" "2"
+	set_if_changed "wireless.$radio.background_radar" "1"
+}
+
+apply_5g_iface() {
+	local iface="$1"
+
+	set_if_changed "wireless.$iface.ssid" "$WIFI_5G_SSID"
+	set_if_changed "wireless.$iface.encryption" "sae-mixed"
+	set_if_changed "wireless.$iface.key" "$WIFI_KEY"
+
+	apply_ap_common "$iface"
+
+	set_if_changed "wireless.$iface.max_inactivity" "86400"
+	set_if_changed "wireless.$iface.ieee80211r" "1"
+	set_if_changed "wireless.$iface.mobility_domain" "6616"
+	set_if_changed "wireless.$iface.ft_over_ds" "0"
+	set_if_changed "wireless.$iface.ft_psk_generate_local" "1"
+}
+
 apply_5g_policy() {
 	local radio iface
 
 	for radio in $(radios_for_band 5g); do
-		set_if_changed "wireless.$radio.country" "$WIFI_COUNTRY"
-		set_if_changed "wireless.$radio.channel" "$WIFI_5G_CHANNEL"
-		set_if_changed "wireless.$radio.htmode" "$WIFI_5G_HTMODE"
-		set_if_changed "wireless.$radio.txpower" "$WIFI_5G_TXPOWER"
-		set_if_changed "wireless.$radio.he_su_beamformer" "1"
-		set_if_changed "wireless.$radio.he_mu_beamformer" "1"
-		set_if_changed "wireless.$radio.eht_su_beamformer" "1"
-		set_if_changed "wireless.$radio.eht_mu_beamformer" "1"
-		set_if_changed "wireless.$radio.he_bss_color" "2"
-		set_if_changed "wireless.$radio.background_radar" "1"
+		apply_5g_radio "$radio"
 
 		for iface in $(ifaces_for_radio "$radio"); do
 			[ "$(get_uci_value "wireless.$iface.mode")" = "ap" ] || continue
-
-			set_if_changed "wireless.$iface.ssid" "$WIFI_5G_SSID"
-			set_if_changed "wireless.$iface.encryption" "sae-mixed"
-			set_if_changed "wireless.$iface.key" "$WIFI_KEY"
-
-			apply_ap_common "$iface"
-
-			set_if_changed "wireless.$iface.max_inactivity" "86400"
-			set_if_changed "wireless.$iface.ieee80211r" "1"
-			set_if_changed "wireless.$iface.mobility_domain" "6616"
-			set_if_changed "wireless.$iface.ft_over_ds" "0"
-			set_if_changed "wireless.$iface.ft_psk_generate_local" "1"
+			apply_5g_iface "$iface"
 		done
 	done
 }
@@ -254,44 +481,143 @@ apply_5g_policy() {
 # 6 GHz policy
 ###############################################################################
 
+apply_6g_radio() {
+	local radio="$1"
+
+	set_if_changed "wireless.$radio.country" "$WIFI_COUNTRY"
+	set_if_changed "wireless.$radio.band" "6g"
+	set_if_changed "wireless.$radio.channel" "$WIFI_6G_CHANNEL"
+	set_if_changed "wireless.$radio.htmode" "$WIFI_6G_HTMODE"
+	set_if_changed "wireless.$radio.txpower" "$WIFI_6G_TXPOWER"
+	set_if_changed "wireless.$radio.eht_su_beamformer" "1"
+	set_if_changed "wireless.$radio.eht_mu_beamformer" "1"
+	set_if_changed "wireless.$radio.he_su_beamformer" "1"
+	set_if_changed "wireless.$radio.he_mu_beamformer" "1"
+	set_if_changed "wireless.$radio.he_bss_color" "1"
+}
+
+apply_6g_iface() {
+	local iface="$1"
+
+	set_if_changed "wireless.$iface.mode" "ap"
+	set_if_changed "wireless.$iface.network" "lan"
+	set_if_changed "wireless.$iface.ssid" "$WIFI_6G_SSID"
+	set_if_changed "wireless.$iface.encryption" "sae"
+	set_if_changed "wireless.$iface.key" "$WIFI_KEY"
+	set_if_changed "wireless.$iface.ieee80211w" "2"
+
+	delete_if_present "wireless.$iface.mesh_id"
+	delete_if_present "wireless.$iface.mesh_fwding"
+	delete_if_present "wireless.$iface.wds"
+	delete_if_present "wireless.$iface.owe_groups"
+	delete_if_present "wireless.$iface.owe_transition_ifname"
+	delete_if_present "wireless.$iface.owe_transition_ssid"
+
+	apply_ap_common "$iface"
+
+	set_if_changed "wireless.$iface.ieee80211r" "1"
+	set_if_changed "wireless.$iface.mobility_domain" "6616"
+	set_if_changed "wireless.$iface.ft_over_ds" "0"
+	set_if_changed "wireless.$iface.ft_psk_generate_local" "1"
+}
+
 apply_6g_policy() {
 	local radio iface
 
 	for radio in $(radios_for_band 6g); do
-		set_if_changed "wireless.$radio.country" "$WIFI_COUNTRY"
-		set_if_changed "wireless.$radio.band" "6g"
-		set_if_changed "wireless.$radio.channel" "$WIFI_6G_CHANNEL"
-		set_if_changed "wireless.$radio.htmode" "$WIFI_6G_HTMODE"
-		set_if_changed "wireless.$radio.txpower" "$WIFI_6G_TXPOWER"
-		set_if_changed "wireless.$radio.eht_su_beamformer" "1"
-		set_if_changed "wireless.$radio.eht_mu_beamformer" "1"
-		set_if_changed "wireless.$radio.he_su_beamformer" "1"
-		set_if_changed "wireless.$radio.he_mu_beamformer" "1"
-		set_if_changed "wireless.$radio.he_bss_color" "1"
+		# A radio the firmware cannot serve for this country stays disabled;
+		# repair_6g_availability() owns that decision.
+		if [ "$(get_uci_value "wireless.$radio.spectrum_6g_fw_blocked")" = "1" ]; then
+			continue
+		fi
+
+		apply_6g_radio "$radio"
 
 		for iface in $(ifaces_for_radio "$radio"); do
-			set_if_changed "wireless.$iface.mode" "ap"
-			set_if_changed "wireless.$iface.network" "lan"
-			set_if_changed "wireless.$iface.ssid" "$WIFI_6G_SSID"
-			set_if_changed "wireless.$iface.encryption" "sae"
-			set_if_changed "wireless.$iface.key" "$WIFI_KEY"
-			set_if_changed "wireless.$iface.ieee80211w" "2"
-
-			delete_if_present "wireless.$iface.mesh_id"
-			delete_if_present "wireless.$iface.mesh_fwding"
-			delete_if_present "wireless.$iface.wds"
-			delete_if_present "wireless.$iface.owe_groups"
-			delete_if_present "wireless.$iface.owe_transition_ifname"
-			delete_if_present "wireless.$iface.owe_transition_ssid"
-
-			apply_ap_common "$iface"
-
-			set_if_changed "wireless.$iface.ieee80211r" "1"
-			set_if_changed "wireless.$iface.mobility_domain" "6616"
-			set_if_changed "wireless.$iface.ft_over_ds" "0"
-			set_if_changed "wireless.$iface.ft_psk_generate_local" "1"
+			apply_6g_iface "$iface"
 		done
 	done
+}
+
+###############################################################################
+# Regenerated default ifaces
+###############################################################################
+#
+# Upstream mac80211.uc only creates missing radios/ifaces, and it creates each
+# one with ssid='OpenWrt', encryption='none' (or 'owe' on 6 GHz), key='' and
+# disabled='1'.  If such a section shows up after the policy was applied (a
+# phy appears after a firmware update, /etc/config/wireless was lost), the
+# marker would make the main path skip it and the network would stay 已禁用.
+# Re-apply the band policy to exactly those untouched sections; anything the
+# operator has configured (other ssid/encryption/key) is left alone.
+
+is_generator_default_iface() {
+	local iface="$1" ssid enc key
+
+	[ "$(get_uci_value "wireless.$iface.mode")" = "ap" ] || return 1
+	[ "$(get_uci_value "wireless.$iface.disabled")" = "1" ] || return 1
+
+	ssid="$(get_uci_value "wireless.$iface.ssid")"
+	enc="$(get_uci_value "wireless.$iface.encryption")"
+	key="$(get_uci_value "wireless.$iface.key")"
+
+	case "$ssid" in ''|OpenWrt) ;; *) return 1 ;; esac
+	case "$enc" in ''|none|owe) ;; *) return 1 ;; esac
+	[ -z "$key" ] || return 1
+
+	return 0
+}
+
+heal_generated_ifaces() {
+	local radio band iface found changed=0
+
+	for radio in $(all_wifi_devices); do
+		band="$(get_uci_value "wireless.$radio.band")"
+
+		case "$band" in
+			2g|5g|6g) ;;
+			*) continue ;;
+		esac
+
+		if [ "$band" = "6g" ] &&
+			[ "$(get_uci_value "wireless.$radio.spectrum_6g_fw_blocked")" = "1" ]; then
+			continue
+		fi
+
+		found=0
+
+		for iface in $(ifaces_for_radio "$radio"); do
+			is_generator_default_iface "$iface" || continue
+			found=1
+		done
+
+		[ "$found" -eq 1 ] || continue
+
+		case "$band" in
+			2g) apply_2g_radio "$radio" ;;
+			5g) apply_5g_radio "$radio" ;;
+			6g) apply_6g_radio "$radio" ;;
+		esac
+
+		for iface in $(ifaces_for_radio "$radio"); do
+			is_generator_default_iface "$iface" || continue
+
+			case "$band" in
+				2g) apply_2g_iface "$iface" ;;
+				5g) apply_5g_iface "$iface" ;;
+				6g) apply_6g_iface "$iface" ;;
+			esac
+
+			changed=1
+			logger -t wireless-defaults \
+				"re-applied $band policy to regenerated iface $iface"
+		done
+	done
+
+	if [ "$changed" -eq 1 ]; then
+		uci -q commit wireless
+		ubus call network reload >/dev/null 2>&1 || true
+	fi
 }
 
 ###############################################################################
@@ -307,6 +633,11 @@ apply_policy() {
 	apply_5g_policy
 	apply_6g_policy
 
+	# The band ifaces exist by now; give each one a distinct MAC (when the
+	# firmware needs it) before the policy is committed so the first start of
+	# every radio is already clean.
+	repair_band_macaddrs
+
 	uci -q commit wireless
 	uci -q set "$MARKER"='1'
 	uci -q commit system
@@ -320,7 +651,35 @@ if ! is_supported_board; then
 	exit 0
 fi
 
+# Repairs run on every boot, before the marker check: a placeholder Wi-Fi MAC
+# or a 6 GHz band the firmware cannot serve for the configured country must be
+# repaired even on an installation whose policy was applied long ago.
+repair_band_macaddrs
+repair_6g_availability
+
+if [ "$WIRELESS_CHANGED" -eq 1 ]; then
+	uci -q commit wireless
+	# netifd re-reads /etc/config/wireless and restarts only the affected
+	# radios (`wifi reload` is the same ubus call, spelled out explicitly).
+	ubus call network reload >/dev/null 2>&1 || true
+
+	# The running phy reflects the configured country only after the reload
+	# above; re-check the 6 GHz band once so a country change takes effect in
+	# the same boot instead of on the next one.
+	sleep 2
+	WIRELESS_CHANGED=0
+	repair_6g_availability
+
+	if [ "$WIRELESS_CHANGED" -eq 1 ]; then
+		uci -q commit wireless
+		ubus call network reload >/dev/null 2>&1 || true
+	fi
+
+	WIRELESS_CHANGED=0
+fi
+
 if [ "$(get_uci_value "$MARKER")" = "1" ]; then
+	heal_generated_ifaces
 	exit 0
 fi
 
@@ -343,6 +702,10 @@ while :; do
 
 	if wireless_is_complete; then
 		if apply_policy; then
+			# At the S95 retry path netifd already started the radios with
+			# the previous configuration; at the early uci-defaults path this
+			# is a harmless no-op (network starts later and reads the commit).
+			ubus call network reload >/dev/null 2>&1 || true
 			exit 0
 		fi
 	fi

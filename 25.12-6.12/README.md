@@ -28,7 +28,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── required-packages.txt 必装 / 可选 / 必禁包清单（四处反查的唯一来源）
 │   ├── thirdparty-pins.conf  18 个插件、19 个仓库的来源与离线 pin
 │   └── local-packages/       项目自带软件包
-│       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭）
+│       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭、WAN 侧放行 LuCI/SSH）
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
 ├── docs/
 │   └── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
@@ -49,7 +49,9 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0009-qualcommbe-add-sbe1v1k-nss-dts.patch
 │   ├── 0010-qualcommbe-sbe1v1k-select-nss-dts.patch
 │   ├── 0011-qualcommbe-sbe1v1k-board-ethernet-from-qsdk14.patch
-│   └── 0012-qualcommbe-sbe1v1k-mainline-fallback-device.patch
+│   ├── 0012-qualcommbe-sbe1v1k-mainline-fallback-device.patch
+│   ├── 0013-0022-…patch      其余 Stage 2.x 补丁（NAT/桥接钩子、eMMC 等，见对应小节）
+│   └── 0023-qualcommbe-ipq95xx-sbe1v1k-board-network.patch   LAN/WAN 端口映射（board.json）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
 │   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义
@@ -349,6 +351,19 @@ S2 里的 `port_ledinfo`、`port_mac_sel` 没有抄：本树 qca-ssdk 虽能解�
 这两个属性与 PHY 固件行为耦合，缺少硬件证据，留作 `UNVERIFIED`；板级 MAC 仍由
 `eth_hw_addr_random()` 生成（DTS 无全零之外的 `local-mac-address`）。
 
+**端口表进 board.json（`0023`）。** `target/linux/qualcommbe/ipq95xx/base-files/
+etc/board.d/02_network` 原来没有 `spectrum,sbe1v1k` 分支，设备会落到 "Unsupported
+hardware"，随后 `99-default_network` 写 `lan=eth0` / `wan=eth1`——比实际少两个口，
+而且 LAN/WAN 角色相反。补丁声明
+`ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"`（空格分隔的 LAN 列表会变成
+board.json 的 `ports` 数组），LuCI「状态→概览→端口状态」（`29_ports.js`）据此显示
+四个网口。`prepare-tree.sh` 在编译前断言补丁已生效，`verify-image.sh` 在镜像的
+`/etc/board.d/02_network` 上复查。状态：静态检查 PASS，真机 `NOT TESTED`。
+
+跨版本升级的注意点：25.12 的 `board.json` 在缺失时重新生成、且不在 sysupgrade
+keep 列表里，所以端口面板会拿到新映射；但保留的 `/etc/config/network` 若来自
+24.10，里面的 lan/wan 设备名仍是旧角色，需要人工核对一次。
+
 **真机回退 profile**（`0012`）：`Device/spectrum_sbe1v1k_mainline` 用主线 RDP433
 设备树 + `kmod-qcom-ppe`，产物前缀 `sbe1v1k-mainline`（不与三个交付名冲突），
 默认**不选**、CI 也不构建：
@@ -457,6 +472,33 @@ source 执行，UCI marker 保证幂等）。2026-11-13 与 24.10-6.6 对齐为�
 `US`、2.4G `EHT20`、6G 信道 `37`（6G 仍是 `EHT320`；5G 为信道 40 / EHT80 /
 23 dBm，未改）。可用环境变量覆盖（如 `WIFI_COUNTRY=TW`），设备行为
 `NOT TESTED`。`verify-image.sh` 会逐字断言镜像里的这三项默认值。
+
+同一次改动把 24.10-6.6 的修复移植了过来，脚本现在**每次开机**先做两件事，再判断
+UCI marker：
+
+- `repair_6g_availability`：`iw phy` 里没有可用的 59xx MHz 信道（固件/国家组合，
+  TW 是实例）时把 6G radio 置 `disabled=1` 并记 `spectrum_6g_fw_blocked=1`；
+  信道恢复可见时自动解除。`apply_6g_policy` 会跳过被标记的 radio，不再把保护
+  重新打开（旧版本存在这个自相矛盾：保护刚置位就被 `apply_ap_common` 改回 0）。
+- `repair_band_macaddrs`：仅当 `/sys/class/ieee80211/phy*/macaddress` 出现占位
+  地址（`00:03:7f:…`）或重复地址时才给各频段 iface 派生 MAC（以太网最低 MAC
+  `+0x10/+0x11/+0x12`）；固件地址正常时不写 macaddr。25.12 的以太网 MAC 由
+  `eth_hw_addr_random()` 生成（每次 probe 随机），派生值一旦写入 UCI 就固定下来，
+  不会每次开机变化。
+
+marker 已置位后，如果 `wifi config` 又重新生成了默认 iface（固件更新后新增 phy、
+丢失 `/etc/config/wireless`），`heal_generated_ifaces` 只对仍是生成器默认值
+（ssid `OpenWrt`、无 key、`disabled=1`）的 AP iface 重新应用策略；操作员改过的
+配置不会被覆盖。上游 25.12 的生成器不写 radio 级 `disabled`，也不把单个 wiphy
+拆成 `radioX_bandN` 段，所以 24.10 的 band-split 修复没有移植。
+
+WAN 侧可达性由 `sbe1v1k-defaults` 新增的两个首启脚本保证（与 24.10 相同的纯
+uci 规则，fw4 语义一致）：`99-allow-luci-wan` 放行 tcp 80/443、`99-allow-ssh-wan`
+放行 tcp 22，其余 wan 输入仍是 REJECT。24.10 的 `99-opkg-distfeeds` **没有**
+移植——25.12 用 apk，没有 opkg 的 distfeeds 文件。
+
+无线与 WAN 规则的设备行为均为 `NOT TESTED`；静态部分由 `sh -n`、补丁 dry-run
+与 `verify-image.sh` 的新断言覆盖。
 
 ## Stage 1 已知限制（未在真机验证，状态 `UNVERIFIED`）
 
