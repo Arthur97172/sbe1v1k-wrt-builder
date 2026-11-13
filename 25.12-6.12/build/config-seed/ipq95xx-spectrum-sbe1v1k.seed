@@ -111,3 +111,210 @@ CONFIG_PACKAGE_wifi-scripts=y
 CONFIG_PACKAGE_wpad-mesh-mbedtls=y
 # CONFIG_PACKAGE_wpad-basic-mbedtls is not set
 CONFIG_PACKAGE_sbe-wifi-firmware=y
+
+# ---------------------------------------------------------------------------
+# 2026-11-13 用户请求：官方 LuCI 页、WireGuard、工具、18 个插件。
+#
+# 插件源码不在 feed 里：scripts/ci/fetch-plugins.sh 按 build/thirdparty-pins.conf
+# 在每次构建时解析各仓库最新 tag 并装进 package/，实际提交记录在
+# <装配树>/.sbe-plugins.tsv。包选择与最终镜像由 scripts/ci/check-packages.sh
+# 按 build/required-packages.txt 反查，缺包会在 defconfig 后立即 FAIL。
+# ---------------------------------------------------------------------------
+
+# --- 官方 LuCI 页与 WireGuard ---------------------------------------------
+CONFIG_PACKAGE_luci-app-uhttpd=y
+CONFIG_PACKAGE_luci-i18n-uhttpd-zh-cn=y
+CONFIG_PACKAGE_luci-proto-wireguard=y
+# luci-proto-wireguard 没有 po/ 目录，25.12 不存在 luci-i18n-wireguard-zh-cn；
+# 它的字符串回落到 luci-base 的中文包。
+CONFIG_PACKAGE_wireguard-tools=y
+CONFIG_PACKAGE_kmod-wireguard=y
+# luci-proto-wireguard 依赖 luci-lib-uqr（二维码生成），显式列出便于反查。
+CONFIG_PACKAGE_luci-lib-uqr=y
+
+# --- 工具与内核模块 -------------------------------------------------------
+CONFIG_PACKAGE_openssh-client-utils=y
+CONFIG_PACKAGE_tmux=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-br-netfilter=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_tar=y
+# tar 的 TAR_XZ 默认 y，Config.in 里的 depends on !(PACKAGE_TAR_XZ) ||
+# PACKAGE_xz-utils 把 tar 和 xz-utils 绑在一起；xz（提供 xz 命令）又
+# depends on xz-utils。漏掉 xz-utils 时 tar 与 xz 都会被 defconfig 静默
+# 丢弃（2026-11-13 实测）。liblzma 由 xz select，显式写出便于反查。
+CONFIG_PACKAGE_xz-utils=y
+CONFIG_PACKAGE_xz=y
+CONFIG_PACKAGE_liblzma=y
+# wget 在 25.12 只有 wget-ssl / wget-nossl 两个变体，取带 TLS 的。
+CONFIG_PACKAGE_wget-ssl=y
+# CONFIG_PACKAGE_wget-nossl is not set
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_ca-certificates=y
+
+# --- 公共运行时 -----------------------------------------------------------
+# 基础变体：dnsmasq-full（nftset/conntrack，openclash/passwall 需要）、
+# ip-full（passwall 的 ip 规则）、firewall4。默认变体必须显式关掉，否则
+# 两套实现会同时安装 /usr/sbin/ip、/usr/sbin/dnsmasq 并触发文件冲突。
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_dnsmasq-full=y
+# CONFIG_PACKAGE_dnsmasq is not set
+CONFIG_PACKAGE_ip-full=y
+# CONFIG_PACKAGE_ip-tiny is not set
+# 12 个自维护应用里有 4 个是 Lua 应用（fcc/ledfancontrol/nssecm/substore），
+# 需要 Lua 运行时与 LuCI 兼容层；其余依赖由各自 Makefile 声明、defconfig
+# 自动带入，这里显式列出只为可审计。
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_luci-lua-runtime=y
+CONFIG_PACKAGE_luci-lib-jsonc=y
+CONFIG_PACKAGE_luci-lib-httpclient=y
+CONFIG_PACKAGE_lua=y
+CONFIG_PACKAGE_libubus-lua=y
+CONFIG_PACKAGE_liblucihttp-lua=y
+CONFIG_PACKAGE_ucode-mod-lua=y
+CONFIG_PACKAGE_jsonfilter=y
+# coreutils configures with --enable-acl unconditionally; libacl must be staged.
+CONFIG_PACKAGE_libacl=y
+
+# --- 12 个自维护应用（Arthur97172，仓库根即包目录）-----------------------
+CONFIG_PACKAGE_luci-app-fcc=y
+CONFIG_PACKAGE_luci-i18n-fcc-zh-cn=y
+CONFIG_PACKAGE_luci-app-ledfancontrol=y
+CONFIG_PACKAGE_luci-i18n-ledfancontrol-zh-cn=y
+CONFIG_PACKAGE_luci-app-nssecm=y
+CONFIG_PACKAGE_luci-i18n-nssecm-zh-cn=y
+CONFIG_PACKAGE_luci-app-online-upgrade=y
+CONFIG_PACKAGE_luci-i18n-online-upgrade-zh-cn=y
+CONFIG_PACKAGE_luci-app-substore=y
+CONFIG_PACKAGE_luci-i18n-substore-zh-cn=y
+CONFIG_PACKAGE_luci-app-tasks=y
+CONFIG_PACKAGE_luci-i18n-tasks-zh-cn=y
+CONFIG_PACKAGE_luci-app-smartnetpilot=y
+CONFIG_PACKAGE_luci-i18n-smartnetpilot-zh-cn=y
+CONFIG_PACKAGE_luci-app-corestatus=y
+CONFIG_PACKAGE_luci-i18n-corestatus-zh-cn=y
+CONFIG_PACKAGE_luci-app-oxidns=y
+CONFIG_PACKAGE_luci-i18n-oxidns-zh-cn=y
+CONFIG_PACKAGE_luci-app-poweroff=y
+CONFIG_PACKAGE_luci-i18n-poweroff-zh-cn=y
+CONFIG_PACKAGE_luci-app-meshassistant=y
+CONFIG_PACKAGE_luci-i18n-meshassistant-zh-cn=y
+CONFIG_PACKAGE_luci-app-turboacc=y
+CONFIG_PACKAGE_luci-i18n-turboacc-zh-cn=y
+
+# --- meshassistant 运行时（routing feed 与 packages feed）-----------------
+CONFIG_PACKAGE_kmod-cfg80211=y
+CONFIG_PACKAGE_kmod-batman-adv=y
+CONFIG_PACKAGE_batctl-default=y
+CONFIG_PACKAGE_luci-proto-batman-adv=y
+CONFIG_PACKAGE_dawn=y
+# dawn 的 libgcrypt/libgpg-error 在 24.10 曾因未接线被 defconfig 静默丢弃，
+# 导致构建失败；这里显式选择。
+CONFIG_PACKAGE_libgcrypt=y
+CONFIG_PACKAGE_libgpg-error=y
+CONFIG_PACKAGE_socat=y
+CONFIG_PACKAGE_flock=y
+CONFIG_PACKAGE_bash=y
+
+# --- turboacc 运行时 ------------------------------------------------------
+CONFIG_PACKAGE_ucode=y
+CONFIG_PACKAGE_ucode-mod-fs=y
+CONFIG_PACKAGE_ucode-mod-uci=y
+CONFIG_PACKAGE_ucode-mod-ubus=y
+
+# --- PassWall -------------------------------------------------------------
+# 最小可用集。每个在 aarch64 上默认 y 的 INCLUDE_* 必须显式关闭，否则
+# defconfig 会选中 25.12 里不存在的包（geoview/v2ray-plugin/shadowsocks-rust
+# 都没有对应源码）。microsocks/xray-core/sing-box 用官方 packages feed 的版本。
+CONFIG_PACKAGE_luci-app-passwall=y
+CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
+CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy=y
+# CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy is not set
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=y
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Geoview is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SmartDNS is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadow_TLS is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray_Plugin is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Server is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server is not set
+CONFIG_PACKAGE_xray-core=y
+CONFIG_PACKAGE_sing-box=y
+CONFIG_PACKAGE_simple-obfs-client=y
+CONFIG_PACKAGE_shadowsocksr-libev-ssr-local=y
+CONFIG_PACKAGE_shadowsocksr-libev-ssr-redir=y
+CONFIG_PACKAGE_chinadns-ng=y
+CONFIG_PACKAGE_dns2socks=y
+CONFIG_PACKAGE_ipt2socks=y
+CONFIG_PACKAGE_microsocks=y
+CONFIG_PACKAGE_tcping=y
+CONFIG_PACKAGE_lyaml=y
+CONFIG_PACKAGE_resolveip=y
+CONFIG_PACKAGE_coreutils=y
+CONFIG_PACKAGE_coreutils-base64=y
+CONFIG_PACKAGE_coreutils-nohup=y
+CONFIG_PACKAGE_coreutils-timeout=y
+CONFIG_PACKAGE_unzip=y
+
+# --- Nikki / mihomo -------------------------------------------------------
+# mihomo-meta 是 mihomo 的 DEFAULT_VARIANT（PROVIDES mihomo），从源码用树内
+# golang 编译；mihomo-alpha 不要。
+CONFIG_PACKAGE_nikki=y
+CONFIG_PACKAGE_luci-app-nikki=y
+CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
+CONFIG_PACKAGE_mihomo-meta=y
+# CONFIG_PACKAGE_mihomo-alpha is not set
+CONFIG_PACKAGE_yq=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-dummy=y
+
+# --- OpenClash ------------------------------------------------------------
+# 不捆绑内核，Web UI 运行时下载。中文 .lmo 由包内 po2lmo 直接编译进主题
+# i18n 目录，没有独立的 luci-i18n-openclash-zh-cn 包。
+CONFIG_PACKAGE_luci-app-openclash=y
+CONFIG_PACKAGE_ruby=y
+CONFIG_PACKAGE_ruby-yaml=y
+# ruby 默认开启 YJIT（aarch64），其 PKG_BUILD_DEPENDS 会要求 rust/host；
+# 本项目只需要 OpenClash 的配置解析脚本，不需要 JIT，故关闭。
+# CONFIG_RUBY_ENABLE_YJIT is not set
+
+# --- Argon 主题 -----------------------------------------------------------
+# v3 起设置页并入主题包。仓库里的 compat/luci-app-argon-config 只是空迁移包，
+# 安装脚本已删除；不要再选 luci-app-argon-config（会与主题包文件冲突）。
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
+# CONFIG_PACKAGE_luci-app-argon-config is not set
+
+# --- Bandix Plus ----------------------------------------------------------
+# 后端是 GitHub Releases 的预编译二进制（aarch64 哈希固定在 Makefile 里）。
+CONFIG_PACKAGE_luci-app-bandix-plus=y
+CONFIG_PACKAGE_luci-i18n-bandix-plus-zh-cn=y
+CONFIG_PACKAGE_bandix-plus=y
+CONFIG_PACKAGE_zoneinfo-all=y
+CONFIG_PACKAGE_conntrack=y
+CONFIG_PACKAGE_libtirpc=y
+CONFIG_PACKAGE_libnetfilter-conntrack=y
+CONFIG_PACKAGE_libnetfilter-cttimeout=y
+CONFIG_PACKAGE_libnetfilter-cthelper=y
+CONFIG_PACKAGE_libnetfilter-queue=y
+# iw / iw-full 是同一个包的两种变体，都装 /usr/sbin/iw；meshassistant 的
+# +iw 依赖由 iw-full 的 PROVIDES 满足，只选 full 变体，避免文件冲突。
+# CONFIG_PACKAGE_iw is not set
+CONFIG_PACKAGE_iw-full=y
+
+# --- 必须缺席（check-packages.sh 会反查）----------------------------------
+# cpu-status / wifihistory / poweroffdevice 于 2026-11-07 从 24.10 移除，
+# 25.12 从未集成；写成显式关闭，防止以后被依赖带回来。
+# CONFIG_PACKAGE_luci-app-cpu-status is not set
+# CONFIG_PACKAGE_luci-app-wifihistory is not set
+# CONFIG_PACKAGE_luci-app-poweroffdevice is not set

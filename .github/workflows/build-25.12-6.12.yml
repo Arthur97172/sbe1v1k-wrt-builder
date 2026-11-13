@@ -27,6 +27,14 @@ name: 📦 Build 25.12-6.12
 
 on:
   workflow_dispatch:
+    inputs:
+      plugin_mode:
+        description: '第三方插件版本：latest=每次构建解析最新 tag；pinned=按 thirdparty-pins.conf 复现旧镜像'
+        type: choice
+        options:
+          - latest
+          - pinned
+        default: latest
   push:
     branches: [main]
     paths:
@@ -73,7 +81,21 @@ jobs:
             cpio time
 
       - name: Prepare build tree
+        env:
+          # 18 个插件在 prepare-tree.sh 内部安装：默认每次构建解析各仓库最新
+          # 版本 tag（不改写仓库里的 pin 文件），实际提交写进 .sbe-plugins.tsv。
+          # CI 用严格模式：远端不可达/分叉时直接失败，避免“以为在跟新”。
+          SBE_PLUGIN_MODE: ${{ inputs.plugin_mode || 'latest' }}
+          SBE_PLUGIN_STRICT: '1'
         run: ./25.12-6.12/scripts/ci/prepare-tree.sh "$GITHUB_WORKSPACE"
+
+      # 6.12 内核漂移检测：只报告，不修改 OPENWRT_SHA / 内核版本 / 补丁。
+      # 网络不可用只记 SOURCE_UNAVAILABLE；continue-on-error 保证它永不阻塞构建。
+      - name: Check kernel (report only)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ./25.12-6.12/scripts/ci/check-kernel.sh "$GITHUB_WORKSPACE" | tee kernel-report.txt
 
       # 镜像必须带厂商固件（2026-10-24 决定）。defconfig 对未知包是静默丢弃，
       # 所以构建前做三重检查：种子里有 =y、blob 在本仓库里且哈希正确、
@@ -84,11 +106,19 @@ jobs:
           CFG=sources/buildroot-25.12-6.12/.config
           FW=25.12-6.12/build/local-packages/sbe-wifi-firmware/files
           cp 25.12-6.12/build/config-seed/ipq95xx-spectrum-sbe1v1k.seed "$CFG"
+          # 种子必须包含 required-packages.txt 的全部必装项、不含必禁项。
+          ./25.12-6.12/scripts/ci/check-packages.sh seed "$CFG"
           grep -qx 'CONFIG_PACKAGE_sbe-wifi-firmware=y' "$CFG" \
             || { echo "种子里没有 CONFIG_PACKAGE_sbe-wifi-firmware=y，检查本步骤是否已过期" >&2; exit 1; }
           ( cd "$FW" && sha256sum -c FILES-SHA256 ) \
             || { echo "固件 blob 缺失或哈希不符（是否被 .gitignore 排除？）" >&2; exit 1; }
+          # 先生成包索引再核对：插件 Makefile 损坏、插件与官方 feed 重名、
+          # 上游改名导致包不存在，都在 defconfig 之前暴露，而不是 3 小时之后。
+          ./25.12-6.12/build/sbe1v1k-build.sh prepare-tmpinfo
+          ./25.12-6.12/scripts/ci/check-packages.sh index sources/buildroot-25.12-6.12
           ./25.12-6.12/build/sbe1v1k-build.sh defconfig
+          # defconfig 对未知/冲突的包是静默丢弃，这里逐包反查。
+          ./25.12-6.12/scripts/ci/check-packages.sh config "$CFG"
           grep -qx 'CONFIG_PACKAGE_sbe-wifi-firmware=y' "$CFG" \
             || { echo "defconfig 之后 sbe-wifi-firmware 被丢弃" >&2; exit 1; }
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)=' "$CFG"
@@ -152,7 +182,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log-25.12-6.12-${{ github.run_number }}
-          path: build.log
+          path: |
+            build.log
+            kernel-report.txt
+            sources/buildroot-25.12-6.12/.sbe-plugins.tsv
           if-no-files-found: warn
           retention-days: 7
 
@@ -207,6 +240,32 @@ jobs:
 
           未在真机验证。NSS Wi-Fi offload 未接入。刷写前先读 25.12-6.12/README.md。
           EOF
+
+          # 插件实际提交表与内核检测结论。两者都是“本次构建的快照”：
+          # latest 模式下插件每次可能不同，复现旧镜像用 workflow_dispatch 的
+          # plugin_mode=pinned。
+          PLUG=sources/buildroot-25.12-6.12/.sbe-plugins.tsv
+          {
+            echo ""
+            echo "第三方插件（本次实际使用的提交）："
+            echo ""
+            if [ -s "$PLUG" ]; then
+              echo "| 仓库 | tag | commit | 动作 |"
+              echo "|---|---|---|---|"
+              tail -n +2 "$PLUG" | \
+                awk -F'\t' '{printf "| %s | %s | `%s` | %s |\n", $1, $3, substr($4,1,12), $6}'
+            else
+              echo "（没有生成 $PLUG）"
+            fi
+            echo ""
+            echo "内核检测（report-only；不会自动改 OPENWRT_SHA 或内核 pin）："
+            echo ""
+            if [ -s kernel-report.txt ]; then
+              cat kernel-report.txt
+            else
+              echo "（没有生成 kernel-report.txt）"
+            fi
+          } >> "$REL/notes.md"
 
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \

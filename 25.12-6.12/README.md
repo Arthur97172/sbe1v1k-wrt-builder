@@ -25,9 +25,13 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── host-shims.txt        宿主机工具清单（host-bin 软链按它重建）
 │   ├── deterministic-bin/    date 垫片（固定 SOURCE_DATE_EPOCH）
 │   ├── config-seed/          defconfig 种子
+│   ├── required-packages.txt 必装 / 可选 / 必禁包清单（四处反查的唯一来源）
+│   ├── thirdparty-pins.conf  18 个插件、19 个仓库的来源与离线 pin
 │   └── local-packages/       项目自带软件包
 │       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭）
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
+├── docs/
+│   └── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
@@ -56,7 +60,10 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
     ├── local/
     │   └── build-wifi-image.sh  本机一键出带厂商固件的镜像（CI 下拒绝运行）
     └── ci/
-        ├── prepare-tree.sh   仅 CI：克隆上游、钉定 feeds、应用补丁、装本地包、装配 NSS
+        ├── prepare-tree.sh   仅 CI：克隆上游、钉定 feeds、应用补丁、装本地包、装插件、装配 NSS
+        ├── fetch-plugins.sh  按 thirdparty-pins.conf 解析并安装 18 个插件（可单独运行）
+        ├── check-packages.sh 按 required-packages.txt 反查 seed / 包索引 / .config / 镜像
+        ├── check-kernel.sh   检测 6.12 内核漂移（只报告，不改 pin）
         ├── export-nss-src.sh 打包 NSS 源码（ISC，仅源码），CI 自产时由 prepare-tree.sh 调用
         └── verify-image.sh   从最终 sysupgrade 镜像解出 rootfs 做静态校验
 ```
@@ -445,6 +452,12 @@ ssh root@<router-ip> reboot
 - 首次开机时如果固件不在（例如旧镜像），S09 会直接跳过；放好文件后重启
   再生成即可。
 
+首启无线默认值由 `files/usr/lib/sbe1v1k/wireless-defaults` 写入（`boot` 以
+source 执行，UCI marker 保证幂等）。2026-11-13 与 24.10-6.6 对齐为：国家
+`US`、2.4G `EHT20`、6G 信道 `37`（6G 仍是 `EHT320`；5G 为信道 40 / EHT80 /
+23 dBm，未改）。可用环境变量覆盖（如 `WIFI_COUNTRY=TW`），设备行为
+`NOT TESTED`。`verify-image.sh` 会逐字断言镜像里的这三项默认值。
+
 ## Stage 1 已知限制（未在真机验证，状态 `UNVERIFIED`）
 
 - 设备树沿用 RDP433（NOR+NAND 布局）；真实板使用 eMMC。升级已改成 tar 容器 +
@@ -466,12 +479,21 @@ ssh root@<router-ip> reboot
 装配树位于 `<工作区>/sources/buildroot-25.12-6.12`。
 
 ```sh
+# 18 个插件：安装/跟新到最新（pinned 模式复现旧版本）
+./25.12-6.12/scripts/ci/fetch-plugins.sh
 cp 25.12-6.12/build/config-seed/ipq95xx-spectrum-sbe1v1k.seed \
    sources/buildroot-25.12-6.12/.config
 ./25.12-6.12/build/sbe1v1k-build.sh defconfig
+./25.12-6.12/scripts/ci/check-packages.sh config \
+   sources/buildroot-25.12-6.12/.config
 ./25.12-6.12/build/sbe1v1k-build.sh world -j"$(nproc)"
 ./25.12-6.12/scripts/ci/verify-image.sh
 ```
+
+`fetch-plugins.sh` 必须在 `defconfig` 之前跑：插件包目录不存在时，seed 里的
+`CONFIG_PACKAGE_luci-app-*` 会被 defconfig 静默丢弃。本地装配树若已由 CI
+脚本装配过，插件已经装好，可只在需要跟新时重跑。实际安装的提交在
+`<装配树>/.sbe-plugins.tsv`，与 `thirdparty-pins.conf` 的 pin 对照即可。
 
 本地构建（与 CI 相同判据）用下面这条（固件已在种子里打开；脚本会先校验
 6 个 blob，再构建并跑 verify，末尾打印三个产物的 sha256）：
@@ -500,9 +522,69 @@ NSS 源码：本机若已有厂商树 `sources/buildroot/qca/src/nss/base`，`ns
 `workflow_dispatch`）。
 
 流程：`prepare-tree.sh`（克隆上游并钉定提交、`feeds update/install`、应用补丁、
-装本地包、**自产并校验 NSS 源码包后装配**）→ 写 `.config` + `defconfig` →
-`world` 编译 → `verify-image.sh` → 上传日志/产物 → **每次运行新建一个 Release**，
-tag 为 `v<run>-<attempt>-<sha8>-25.12-6.12`，资产恰好三个固件文件。
+装本地包、**装 18 个第三方插件**、**自产并校验 NSS 源码包后装配**）→
+`check-kernel.sh`（只报告）→ 写 `.config` + `check-packages seed` +
+`defconfig` + `check-packages index` / `config` → `world` 编译 →
+`verify-image.sh`（含逐包反查）→ 上传日志/产物 → **每次运行新建一个 Release**，
+tag 为 `v<run>-<attempt>-<sha8>-25.12-6.12`，资产恰好三个固件文件，
+release notes 附插件提交表与内核检测结论。
+
+`workflow_dispatch` 有两个相关输入：`plugin_mode`（`latest` 默认 /
+`pinned` 复现旧镜像）。CI 固定 `SBE_PLUGIN_STRICT=1`：插件仓库解析失败
+（远端不可达、分叉、无法判定祖先关系）会让 Prepare 步骤直接失败，
+避免产出「以为在跟新」的镜像。内核检测步骤 `continue-on-error`，
+永远不阻塞构建。
+
+### 第三方插件与构建时自动跟新
+
+18 个插件（12 个自维护 + 6 组第三方仓库）的来源、布局、中文包、依赖与
+风险见 [`docs/PLUGINS.md`](docs/PLUGINS.md)；机器可读清单是
+`build/thirdparty-pins.conf`。
+
+- `scripts/ci/fetch-plugins.sh` 在每次构建时对每个仓库 `git ls-remote`
+  解析最新版本 tag（无版本 tag 取默认分支头），只有新提交是清单 pin 的
+  后代才采用；分叉/回退时保留 pin。**不改写任何 pin 文件**。
+- 实际使用的提交写入 `<装配树>/.sbe-plugins.tsv`，进入 release notes 与
+  构建日志附件。复现旧镜像：
+  `SBE_PLUGIN_MODE=pinned ./25.12-6.12/scripts/ci/fetch-plugins.sh`。
+- 安装前会检查官方 feed 重名（microsocks、xray-core、sing-box 等必须用
+  官方版）；`luci-theme-argon` 的 `compat/luci-app-argon-config` 在安装时
+  删除，`luci-app-argon-config` 一律不选。
+- 插件源码缓存在仓库根 `.sbe-cache/plugins/`（已 gitignore），本地增量、
+  CI 每次从零建。
+
+### 必装包反查
+
+`build/required-packages.txt` 是包选择的唯一反查源：一行一个包名，
+`?name` 为可选（缺了只告警，典型是上游没有中文包），`!name` 为必须缺席
+（cpu-status / wifihistory / poweroffdevice / argon-config / mihomo-alpha /
+wget-nossl）。`scripts/ci/check-packages.sh` 有四个模式：
+
+| 模式 | 输入 | 时机 |
+|---|---|---|
+| `seed` | 种子文件 | `defconfig` 之前，防止种子漏项/选了禁用包 |
+| `index` | 装配树 `tmp/.packageinfo` | `prepare-tmpinfo` 之后、`defconfig` 之前，抓插件没装进来、与官方 feed 重名 |
+| `config` | `.config` | `defconfig` 之后，抓依赖未满足被静默丢弃、上游改名 |
+| `db` | 解包后的 rootfs | `verify-image.sh` 里，抓镜像里实际缺失或有禁用包 |
+
+任一模式有 FAIL 即 `exit 1`；符号不存在也会指名 FAIL，不静默跳过。
+2026-11-13 本地装配树实测：`seed` / `index` / `config` 全 PASS、FAIL 0
+（`config` 98 项）。镜像数据库一项只能由 CI 的构建产物验证，尚未跑过。
+
+### 6.12 内核检测
+
+`scripts/ci/check-kernel.sh` 只读、只报告、永远 `exit 0`（除非本地
+kernel-6.12 文件缺失）。它对比三处：
+
+- 本构建树的内核版本（装配树 `target/linux/generic/kernel-6.12` 的
+  `LINUX_VERSION-6.12`，当前 6.12.112）；
+- kernel.org `releases.json` 里 6.12 的 longterm 最新版（当前 6.12.117）；
+- `openwrt-25.12` 分支头同一文件（当前 6.12.116），并统计本项目补丁里
+  有多少触及 `target/linux/generic`。
+
+结论写进 `kernel-report.txt`，附到构建日志与 release notes。**检测不会
+修改 `OPENWRT_SHA`、feed SHA 或内核版本**——是否跟进由人工按报告决定；
+触及 generic 的本项目补丁越多，升内核的返工越大。
 
 ### NSS 源码包（`nss-src-v1`）
 

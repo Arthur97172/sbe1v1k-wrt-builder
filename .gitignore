@@ -24,6 +24,10 @@
 /24.10-6.6/build/host-bin/
 /25.12-6.12/build/host-bin/
 
+# 第三方插件的解析缓存（fetch-plugins.sh 的 blobless 元数据克隆与打包树）。
+# 只影响本机构建速度，CI 每次从零建；不得入库。
+/.sbe-cache/
+
 # Stage 2.5：厂商 Wi-Fi 固件 blob **入库**（2026-10-24 决定）。
 # 授权状态仍是 LICENSE_REVIEW_REQUIRED；用户明确接受公开分发风险，
 # 目的是让公开 CI 产出带无线固件的镜像。Makefile / FILES-SHA256 /

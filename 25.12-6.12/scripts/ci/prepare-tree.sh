@@ -19,7 +19,9 @@
 #   2. 生成 feeds.conf（openwrt-25.12 分支），feeds update 后把每个 feed
 #      检出到记录的提交，再 feeds install -a；
 #   3. 按顺序应用 25.12-6.12/patches/*.patch；
-#   4. 安装本地软件包，然后自产/复用/解包 NSS 源码并装配；
+#   4. 安装本地软件包与 18 个第三方插件（fetch-plugins.sh，默认每次解析
+#      最新版本 tag；SBE_PLUGIN_MODE=pinned 复现旧镜像，SBE_PLUGIN_STRICT=1
+#      时解析失败即中止），然后自产/复用/解包 NSS 源码并装配；
 #   5. 写入 version（REVISION）与 version.date（固定 SOURCE_DATE_EPOCH）；
 #   6. 重建 host-bin（Ubuntu runner 上没有 /usr/bin/gnu* 前缀）。
 #
@@ -141,6 +143,16 @@ for d in "$PROJ"/build/local-packages/*/; do
 	cp -a "$d" "$BR/package/$name"
 	echo "[prepare]   package/$name"
 done
+
+# 18 个第三方插件（12 个自维护 + passwall/nikki/openclash/bandix/argon）。
+# 默认在每次构建时解析各仓库最新版本 tag；只有新提交是 thirdparty-pins.conf
+# 里 pin 的后代才采用，分叉/回退/远端不可达都保持 pin（不中断构建）。
+# 实际提交记录在 <装配树>/.sbe-plugins.tsv，供 release notes 与日志引用；
+# SBE_PLUGIN_MODE=pinned 可精确复现旧镜像。
+echo "[prepare] 安装第三方插件（SBE_PLUGIN_MODE=${SBE_PLUGIN_MODE:-latest}）"
+"$SELF/fetch-plugins.sh" "$ROOT"
+[ -s "$BR/.sbe-plugins.tsv" ] \
+	|| { echo "插件安装没有产出 $BR/.sbe-plugins.tsv" >&2; exit 1; }
 
 # NSS 源码不在仓库里（QSDK 厂商树有数十 GB）。默认设备 spectrum_sbe1v1k
 # 的 DEVICE_PACKAGES 依赖 kmod-qca-ssdk-nohnat / kmod-qca-nss-dp /

@@ -1,0 +1,149 @@
+# 25.12-6.12 必装 / 必禁软件包清单
+#
+# 一行一个包名，语法：
+#   name    必须存在的包（seed 里 =y、索引里唯一、defconfig 后仍 =y、镜像里有）
+#   ?name   可选（通常是有无中文包取决于上游）——缺失只告警，不失败
+#   !name   必须缺席（历史移除项、已知冲突包）
+#
+# 本文件是 seed、包索引、defconfig 结果与最终镜像四处反查的唯一来源，
+# 由 scripts/ci/check-packages.sh 读取。
+
+# --- 官方 LuCI / WireGuard -------------------------------------------------
+luci-app-uhttpd
+?luci-i18n-uhttpd-zh-cn
+luci-proto-wireguard
+# luci-proto-wireguard 没有 po/ 目录，25.12 不存在 luci-i18n-wireguard-zh-cn
+wireguard-tools
+kmod-wireguard
+
+# --- 工具与内核模块 --------------------------------------------------------
+openssh-client-utils
+tmux
+kmod-nft-socket
+kmod-nft-tproxy
+kmod-br-netfilter
+curl
+tar
+xz-utils
+xz
+liblzma
+wget-ssl
+ca-bundle
+ca-certificates
+
+# --- 公共运行时与包变体 ----------------------------------------------------
+firewall4
+dnsmasq-full
+ip-full
+iw-full
+luci-compat
+luci-lua-runtime
+luci-lib-jsonc
+luci-lib-httpclient
+luci-lib-uqr
+lua
+libubus-lua
+liblucihttp-lua
+ucode-mod-lua
+jsonfilter
+libacl
+
+# --- 12 个自维护应用 -------------------------------------------------------
+luci-app-fcc
+?luci-i18n-fcc-zh-cn
+luci-app-ledfancontrol
+?luci-i18n-ledfancontrol-zh-cn
+luci-app-nssecm
+?luci-i18n-nssecm-zh-cn
+luci-app-online-upgrade
+?luci-i18n-online-upgrade-zh-cn
+luci-app-substore
+?luci-i18n-substore-zh-cn
+luci-app-tasks
+?luci-i18n-tasks-zh-cn
+luci-app-smartnetpilot
+?luci-i18n-smartnetpilot-zh-cn
+luci-app-corestatus
+?luci-i18n-corestatus-zh-cn
+luci-app-oxidns
+?luci-i18n-oxidns-zh-cn
+luci-app-poweroff
+?luci-i18n-poweroff-zh-cn
+luci-app-meshassistant
+?luci-i18n-meshassistant-zh-cn
+kmod-cfg80211
+kmod-batman-adv
+batctl-default
+luci-proto-batman-adv
+dawn
+libgcrypt
+libgpg-error
+socat
+flock
+bash
+luci-app-turboacc
+?luci-i18n-turboacc-zh-cn
+
+# --- PassWall --------------------------------------------------------------
+luci-app-passwall
+?luci-i18n-passwall-zh-cn
+xray-core
+sing-box
+simple-obfs-client
+shadowsocksr-libev-ssr-local
+shadowsocksr-libev-ssr-redir
+chinadns-ng
+dns2socks
+ipt2socks
+microsocks
+tcping
+lyaml
+resolveip
+coreutils
+coreutils-base64
+coreutils-nohup
+coreutils-timeout
+unzip
+
+# --- Nikki / mihomo --------------------------------------------------------
+luci-app-nikki
+?luci-i18n-nikki-zh-cn
+nikki
+mihomo-meta
+yq
+kmod-tun
+kmod-inet-diag
+kmod-dummy
+
+# --- OpenClash（中文 .lmo 由包自带，没有独立 i18n 包）---------------------
+luci-app-openclash
+ruby
+ruby-yaml
+
+# --- Argon 主题（设置页并入主题包）----------------------------------------
+luci-theme-argon
+?luci-i18n-argon-config-zh-cn
+
+# --- Bandix Plus -----------------------------------------------------------
+luci-app-bandix-plus
+?luci-i18n-bandix-plus-zh-cn
+bandix-plus
+zoneinfo-all
+conntrack
+libtirpc
+libnetfilter-conntrack
+libnetfilter-cttimeout
+libnetfilter-cthelper
+libnetfilter-queue
+
+# --- 必须缺席 --------------------------------------------------------------
+# 2026-11-07 从 24.10 移除；25.12 从未集成，这里防止被依赖或 seed 带回。
+!luci-app-cpu-status
+!luci-app-wifihistory
+!luci-app-poweroffdevice
+# Argon v3 的空迁移包：与 luci-theme-argon 文件冲突。
+!luci-app-argon-config
+# 只要 mihomo-meta。
+!mihomo-alpha
+# wget 变体只能选一个 TLS 版本。
+!wget-nossl

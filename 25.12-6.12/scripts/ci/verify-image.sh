@@ -184,6 +184,20 @@ check_overlay etc/uci-defaults/99-wireless-defaults
 check_overlay etc/init.d/wireless-defaults
 check_overlay usr/lib/sbe1v1k/wireless-defaults
 
+# 无线默认值三项（2026-11-13 与 24.10 对齐）。这是策略默认值，改了它
+# 首启的射频行为就跟着变，所以在镜像里逐字断言。
+for kv in \
+	'WIFI_COUNTRY="${WIFI_COUNTRY:-US}"' \
+	'WIFI_2G_HTMODE="${WIFI_2G_HTMODE:-EHT20}"' \
+	'WIFI_6G_CHANNEL="${WIFI_6G_CHANNEL:-37}"'
+do
+	if grep -qF "$kv" "$ROOTFS/usr/lib/sbe1v1k/wireless-defaults"; then
+		ok "无线默认值 $kv"
+	else
+		bad "无线默认值缺失：$kv"
+	fi
+done
+
 if grep -Eq '%[VCRD]|VERXXXX|WRTVERSIONINFO' "$ROOTFS/etc/banner"; then
 	bad "镜像内 /etc/banner 仍含未替换的占位符"
 else
@@ -342,5 +356,35 @@ has_pkg sbe-wifi-firmware && ok "包 sbe-wifi-firmware 已安装" \
 for p in qca-nss-wifi-plugins qca-wifi-nss-plugins; do
 	if has_pkg "$p"; then bad "包 $p 不应出现在 S2.5 镜像中"; else ok "包 $p 未安装（S2.5 预期）"; fi
 done
+
+# ---- 用户请求的包集合反查 ---------------------------------------------------
+# 唯一来源 build/required-packages.txt（必装 / 可选 / 必禁三档）。
+# 与 seed 检查、defconfig 检查共用同一份清单，避免三处各写一遍。
+set +e
+"$SELF/check-packages.sh" db "$ROOTFS"
+rc=$?
+set -e
+case "$rc" in
+0) ok "required-packages.txt 反查通过（包数据库）" ;;
+2) bad "check-packages.sh 无法读取包数据库" ;;
+*) bad "required-packages.txt 反查未通过（见上面的 FAIL 行）" ;;
+esac
+
+# ---- 代理内核与插件后端：包数据库之外再确认可执行文件确实落地 ---------------
+# （包名对但安装路径变了，同样是一次交付事故。）
+for f in usr/bin/xray usr/bin/sing-box usr/bin/bandix-plus etc/init.d/bandix-plus; do
+	if [ -e "$ROOTFS/$f" ]; then ok "存在 /$f"; else bad "缺少 /$f"; fi
+done
+if [ -e "$ROOTFS/usr/libexec/mihomo" ] || [ -e "$ROOTFS/usr/bin/mihomo" ]; then
+	ok "存在 mihomo 二进制（usr/libexec/mihomo 或 usr/bin/mihomo）"
+else
+	bad "缺少 mihomo 二进制（nikki 无法拉起）"
+fi
+if [ -e "$ROOTFS/usr/bin/ruby" ]; then ok "存在 /usr/bin/ruby"; else bad "缺少 /usr/bin/ruby（OpenClash 无法工作）"; fi
+if [ -d "$ROOTFS/www/luci-static/argon" ]; then
+	ok "存在 Argon 主题资源 /www/luci-static/argon"
+else
+	bad "缺少 Argon 主题资源 /www/luci-static/argon"
+fi
 
 exit "$fail"
