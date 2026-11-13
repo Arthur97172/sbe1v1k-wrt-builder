@@ -42,6 +42,18 @@ WIFI_6G_SSID="${WIFI_6G_SSID:-WiFi_6G}"
 
 WIFI_KEY="${WIFI_KEY:-12345678}"
 
+# The ath12k firmware on this board reports one placeholder MAC
+# (00:03:7f:12:34:56) for the wiphy and for every entry of its per-radio
+# address list, so the band vifs are created with identical MACs and only the
+# first one can be brought up.  A band iface whose macaddr is still missing or
+# the placeholder gets one derived from the lowest Ethernet MAC, offset by
+# band (2.4G +0x10, 5G +0x11, 6G +0x12) so the three bands stay distinct and
+# away from the Ethernet addresses.
+WIFI_MAC_PLACEHOLDER_PREFIX='00:03:7f:'
+WIFI_MAC_OFFSET_2G=16
+WIFI_MAC_OFFSET_5G=17
+WIFI_MAC_OFFSET_6G=18
+
 ###############################################################################
 # Board detection
 ###############################################################################
@@ -109,6 +121,13 @@ set_if_changed() {
 	current="$(get_uci_value "$option")"
 
 	[ "$current" = "$value" ] || uci -q set "$option"="$value"
+}
+
+# Set by the repair helpers below; committed and reloaded once, at the end.
+WIRELESS_CHANGED=0
+
+mark_wireless_changed() {
+	WIRELESS_CHANGED=1
 }
 
 ###############################################################################
@@ -201,8 +220,146 @@ repair_band_splits() {
 	done
 
 	if [ "$changed" -eq 1 ]; then
-		uci -q commit wireless
-		wifi reload >/dev/null 2>&1 || true
+		mark_wireless_changed
+	fi
+}
+
+###############################################################################
+# Per-band Wi-Fi MAC repair
+###############################################################################
+
+# Lowest non-placeholder Ethernet MAC.  Fixed-width lowercase hex strings sort
+# in MAC order, so `sort` yields the numerically lowest address; eth0 carries
+# the board's base MAC and br-lan is only a fallback.
+wifi_base_mac() {
+	local mac best="" brlan
+
+	for mac in $(for f in /sys/class/net/eth*/address; do
+		[ -r "$f" ] && cat "$f"
+	done | tr 'A-F' 'a-f' | sort); do
+		[ "$mac" != "00:00:00:00:00:00" ] || continue
+		best="$mac"
+		break
+	done
+
+	if [ -z "$best" ] && [ -r /sys/class/net/br-lan/address ]; then
+		brlan="$(tr 'A-F' 'a-f' < /sys/class/net/br-lan/address)"
+		[ "$brlan" != "00:00:00:00:00:00" ] && best="$brlan"
+	fi
+
+	[ -n "$best" ] || return 1
+	printf '%s\n' "$best"
+}
+
+# mac_add_offset <mac> <offset>: add offset to the last octet, carrying left.
+mac_add_offset() {
+	local mac="$1" offset="$2"
+	local o1 o2 o3 o4 o5 o6 carry
+	local IFS=:
+
+	set -- $mac
+	[ $# -eq 6 ] || return 1
+
+	o1=$((0x$1)); o2=$((0x$2)); o3=$((0x$3))
+	o4=$((0x$4)); o5=$((0x$5)); o6=$((0x$6))
+
+	o6=$((o6 + offset)); carry=$((o6 / 256)); o6=$((o6 % 256))
+	o5=$((o5 + carry)); carry=$((o5 / 256)); o5=$((o5 % 256))
+	o4=$((o4 + carry)); carry=$((o4 / 256)); o4=$((o4 % 256))
+	o3=$((o3 + carry)); carry=$((o3 / 256)); o3=$((o3 % 256))
+	o2=$((o2 + carry)); carry=$((o2 / 256)); o2=$((o2 % 256))
+	o1=$((o1 + carry)); o1=$((o1 % 256))
+
+	printf '%02x:%02x:%02x:%02x:%02x:%02x\n' \
+		"$o1" "$o2" "$o3" "$o4" "$o5" "$o6"
+}
+
+band_mac_offset() {
+	case "$1" in
+		2g) printf '%s\n' "$WIFI_MAC_OFFSET_2G" ;;
+		5g) printf '%s\n' "$WIFI_MAC_OFFSET_5G" ;;
+		6g) printf '%s\n' "$WIFI_MAC_OFFSET_6G" ;;
+		*) return 1 ;;
+	esac
+}
+
+repair_band_macaddrs() {
+	local base band offset wanted radio iface current
+
+	base="$(wifi_base_mac)" || return 0
+
+	for band in 2g 5g 6g; do
+		offset="$(band_mac_offset "$band")" || continue
+		wanted="$(mac_add_offset "$base" "$offset")" || continue
+		[ -n "$wanted" ] || continue
+
+		for radio in $(radios_for_band "$band"); do
+			for iface in $(ifaces_for_radio "$radio"); do
+				current="$(get_uci_value "wireless.$iface.macaddr")"
+
+				# Only replace an address that was never set or that is
+				# still the ath12k placeholder; a configured MAC wins.
+				case "$current" in
+					''|'00:00:00:00:00:00')
+						;;
+					"$WIFI_MAC_PLACEHOLDER_PREFIX"*)
+						;;
+					*)
+						continue
+						;;
+				esac
+
+				uci -q set "wireless.$iface.macaddr"="$wanted"
+				mark_wireless_changed
+				logger -t wireless-defaults \
+					"assigned MAC $wanted to $iface ($band)"
+			done
+		done
+	done
+}
+
+###############################################################################
+# 6 GHz availability repair
+###############################################################################
+#
+# ath12k takes its self-managed regulatory rules from the firmware, and the
+# firmware shipped for this board has no 6 GHz channels for some countries
+# (TW among them): every 6 GHz channel is `(disabled)` and the 6 GHz pdev is
+# rejected with "pdev is not supported for this country" when the radio is
+# started.  Keep that radio disabled so hostapd is not asked to start a band
+# that cannot exist; the check runs every boot, so a country change or a
+# firmware update flips it back automatically.
+
+repair_6g_availability() {
+	local radio phy_info
+
+	radio="$(radios_for_band 6g | head -n 1)"
+	[ -n "$radio" ] || return 0
+
+	phy_info="$(iw phy 2>/dev/null || true)"
+
+	# No phy yet (first boot, driver not loaded): the firmware's view cannot
+	# be probed, so stay undecided and re-check on the next boot.
+	[ -n "$phy_info" ] || return 0
+
+	if printf '%s\n' "$phy_info" |
+		grep -qE '\* 59[0-9][0-9]\.[0-9]+ MHz \[[0-9]+\] \([0-9.]+ dBm'; then
+		if [ "$(get_uci_value "wireless.$radio.spectrum_6g_fw_blocked")" = "1" ]; then
+			delete_if_present "wireless.$radio.disabled"
+			delete_if_present "wireless.$radio.spectrum_6g_fw_blocked"
+			mark_wireless_changed
+			logger -t wireless-defaults \
+				"6 GHz channels available again; re-enabled $radio"
+		fi
+	else
+		if [ "$(get_uci_value "wireless.$radio.disabled")" != "1" ] ||
+			[ "$(get_uci_value "wireless.$radio.spectrum_6g_fw_blocked")" != "1" ]; then
+			uci -q set "wireless.$radio.disabled"='1'
+			uci -q set "wireless.$radio.spectrum_6g_fw_blocked"='1'
+			mark_wireless_changed
+			logger -t wireless-defaults \
+				"no enabled 6 GHz channel for this country; disabled radio $radio"
+		fi
 	fi
 }
 
@@ -417,6 +574,10 @@ apply_policy() {
 	apply_6g_policy
 	enable_radios
 
+	# The band ifaces exist by now; give each one a distinct MAC before the
+	# policy is committed so the first start of every radio is already clean.
+	repair_band_macaddrs
+
 	uci -q commit wireless
 	uci -q set "$MARKER"='1'
 	uci -q commit system
@@ -430,9 +591,33 @@ if ! is_supported_board; then
 	exit 0
 fi
 
-# Runs before the marker check: a band lost to a LuCI radio-dialog save must
-# be restored even on an installation whose policy was applied long ago.
+# Runs before the marker check: a band lost to a LuCI radio-dialog save, a
+# placeholder Wi-Fi MAC, or a 6 GHz band the firmware cannot serve must be
+# repaired even on an installation whose policy was applied long ago.
 repair_band_splits
+repair_band_macaddrs
+repair_6g_availability
+
+if [ "$WIRELESS_CHANGED" -eq 1 ]; then
+	uci -q commit wireless
+	# netifd re-reads /etc/config/wireless and restarts only the affected
+	# radios.  /sbin/wifi reload is not usable in this QSDK stack: it calls
+	# an undefined pre_wifi_reload_legacy hook and aborts before doing
+	# anything.
+	ubus call network reload >/dev/null 2>&1 || true
+
+	# The running phy reflects the configured country only after the reload
+	# above; re-check the 6 GHz band once so a country change takes effect
+	# in the same boot instead of on the next one.
+	sleep 2
+	WIRELESS_CHANGED=0
+	repair_6g_availability
+
+	if [ "$WIRELESS_CHANGED" -eq 1 ]; then
+		uci -q commit wireless
+		ubus call network reload >/dev/null 2>&1 || true
+	fi
+fi
 
 if [ "$(get_uci_value "$MARKER")" = "1" ]; then
 	exit 0

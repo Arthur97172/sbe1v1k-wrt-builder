@@ -229,8 +229,39 @@ section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函
   仍显示“无线网络已启用”。这不是 LuCI 的显示 bug，也不能靠
   `wireless-defaults` 修掉。`build-fixes/0022` 删掉这两行 append：扩展
   默认值本就是 0，行为不变；装配脚本断言两行都消失，`verify-image.sh`
-  在镜像里复查。真机验证：A 机 2026-11-13 PASS（三个 BSS 起来、SSID
-  广播，LuCI 概览显示“无线未关联”）。
+  在镜像里复查。真机验证：A 机 2026-11-13 PASS（配置拒载错误消失；2.4G
+  BSS 起来、SSID 广播、客户端 SAE 关联成功）。同机复测还发现两个与 0022
+  无关的独立问题，见下面两段。
+
+- **三频 MAC 相同（5G 起不来的根因）**：ath12k 固件给 wiphy 的
+  `macaddress`、`address_mask`（全零）与 `addresses` 三个条目都是同一个
+  占位 MAC `00:03:7f:12:34:56`；QCA wifi-scripts 的 `macaddr_generate()`
+  在 mask 全零时按 `addresses[radio]` 给三个 band vif 分配地址，于是三个
+  vif 拿到同一个 MAC。第二个 vif 起链路时被驱动判重（dmesg
+  `DUP MAC addr 00:03:7f:12:34:56 -> phy00.0-0, vif types: 3/3`），
+  `ip link set up` 返回 “No error information”，hostapd 侧表现为
+  `Failed to create interface phy00.1-0: -23`（mac80211 的
+  `dev_alloc_name` 对重名返回 `-ENFILE`，打印成
+  “Too many open files in system”），use_existing 分支随后仍失败在 `UP`，
+  最终 `hostapd.add_iface failed`。修复在 `wireless-defaults`：每次开机
+  给 `macaddr` 缺失或仍为占位值的 band iface 写入派生地址（板级最低以太网
+  MAC +0x10/+0x11/+0x12，本机 `90:d3:cf:3c:34:b6/b7/b8`），已有配置的 MAC
+  不覆盖。真机验证：A 机 2026-11-13 PASS（2.4G `b6` ch11、5G `b7` ch40
+  两个 BSS 起来并广播）。
+- **6 GHz 在 TW 下不可用（固件限制）**：ath12k 的 self-managed 规则来自
+  固件 WMI；TW 的固件规则里没有 6 GHz 信道（`iw phy` 中 6 GHz 全部
+  `(disabled)`，dmesg `pdev is not supported for this country`，即 QSDK
+  补丁 `0104-wifi-ath12k-disable-pdev-for-non-supported-country` 的
+  `-EOPNOTSUPP` 分支）。把 country 换成 US 后 6 GHz 立即可用，证明硬件与
+  驱动链路正常，唯一阻塞是固件 regdomain。`wireless-defaults` 因此每次
+  开机探测：没有任何可用 6 GHz 信道时把 `radio0_band2` 置 `disabled='1'`
+  并记 `spectrum_6g_fw_blocked='1'`（避免 hostapd 反复失败），信道恢复
+  可见时自动解除。另测得用户默认的 6G `channel 61` + `EHT320` 本身不被
+  驱动接受（`Failed to set beacon parameters (ret=-22)`），US 测试中
+  `channel 37` + `EHT320` 可正常广播；TW 下该配置无从生效，切换 country
+  时需改用 37。真机验证：A 机 2026-11-13 PASS（TW：6G 射频自动禁用、
+  2.4G/5G 正常；US 临时测试：三频 BSS 全部起来，6G 在 ch37 EHT320
+  广播）。固件将来提供 TW 6 GHz 规则时，开机探测会自动重新启用该射频。
 
 ## 本机构建
 

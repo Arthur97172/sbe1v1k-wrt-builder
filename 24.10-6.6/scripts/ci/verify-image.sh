@@ -483,7 +483,8 @@ fi
 # QSDK 生成器给每个射频写 disabled='1'，旧脚本只开了 iface，射频层仍禁用，
 # 三个网络在 LuCI 里都显示"已禁用"；LuCI 的射频对话框在 radioX_bandN 上取不到
 # band，保存时会把 band/channel 删掉。两处修复都必须在镜像里：
-#   wireless-defaults 首启清射频级 disabled、每次开机修复缺失的 band；
+#   wireless-defaults 首启清射频级 disabled、每次开机修复缺失的 band、为
+#   缺失/占位 macaddr 的 band iface 派生 MAC、按固件能力屏蔽不可用的 6 GHz 射频；
 #   LuCI 侧按 section 的 channels 建频段表，且空值不落盘（minify 后按正则字面量查）。
 WD="$ROOTFS/usr/lib/sbe1v1k/wireless-defaults"
 if [ -f "$WD" ]; then
@@ -496,6 +497,15 @@ if [ -f "$WD" ]; then
 	grep -qF 'wifi reload' "$WD" \
 		&& ok "wireless-defaults 应用后 reload wifi" \
 		|| bad "wireless-defaults 应用后未 reload wifi（射频仍停在 disabled 状态）"
+	grep -qF 'repair_band_macaddrs' "$WD" \
+		&& ok "wireless-defaults 含三频 MAC 自愈入口" \
+		|| bad "wireless-defaults 缺 repair_band_macaddrs（三频 vif 同 MAC，5G/6G 起不来）"
+	grep -qF 'repair_6g_availability' "$WD" \
+		&& ok "wireless-defaults 含 6 GHz 可用性自愈入口" \
+		|| bad "wireless-defaults 缺 repair_6g_availability（固件无 6 GHz 信道时噪声不断）"
+	grep -qF 'spectrum_6g_fw_blocked' "$WD" \
+		&& ok "wireless-defaults 记录 6 GHz 固件屏蔽标记" \
+		|| bad "wireless-defaults 缺 spectrum_6g_fw_blocked 标记（无法区分自动屏蔽与手动禁用）"
 else
 	bad "镜像缺少 /usr/lib/sbe1v1k/wireless-defaults"
 fi
