@@ -28,7 +28,7 @@
 ### 1.1 插件“跟最新”的闭环
 
 `refresh-pins-24.10-6.6.yml`（每周一 04:23 UTC + 手动）跑 `scripts/ci/refresh-pins.sh`
-`--apply`：按用户 2026-11-07 选定的口径把 10 个自维护插件与 7 个第三方仓库解析到
+`--apply`：按用户 2026-11-07 选定的口径把 11 个自维护插件与 7 个第三方仓库解析到
 **最新 release tag**（无版本 tag 的退回默认分支头；最新 tag 相对当前 pin 是
 behind/diverged 时保持不动，**绝不回退**），只改写 commit 字段与 `PROVENANCE.md`
 的 pin 快照，然后 force-push 到固定分支 `auto/pin-refresh` 并创建一个 PR（已存在则
@@ -229,6 +229,11 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 同批次的依赖闭包门禁 | PASS（`选中包 410 个，运行时依赖全部可满足`；fcc 的新依赖 `luci-compat`/`luci-lib-httpclient`/`curl`/`ca-bundle`/`tmux` 与 oxidns 的 `rpcd`/`jsonfilter`/`uclient-fetch`/`ca-bundle` 均已选中，无需新接线） |
 | 同批次的 CI 装配（push 触发的 run `42424092025`） | 被取消（`concurrency` 的 `cancel-in-progress`：同一提交紧接着来了一个 `workflow_dispatch` 装配，push 那次让位） |
 | 同批次以 `publish=true` dispatch 的装配（run `42424441419`） | PASS（`assemble` 与 `publish` 两个 job 全过：`Assert exactly 3 assets`、`Create release`、`Verify published assets` 均 success） |
+| 2026-11-13 插件更新批次（8 个 pin 前进：fcc `1.2.4-r1`、ledfancontrol `1.1.1-r1`、meshassistant `2.7.12-r1`、nssecm `1.0.1-r1`、tasks `1.1.2-r1`、passwall `26.11.11-1`、passwall-packages 分支头、argon `v3.1.4`；新增 `luci-app-turboacc`；无线默认值改 US / EHT20 / 6G ch37）：`thirdparty-feeds.sh check` | PASS（8 个 vendor 树 HEAD 等于 pin、工作区干净；10 条 thirdparty-feed 软链与 7 个 passwall-selected 目录齐全） |
+| 同批次全量装配（本地，含 `--compare`；`config-frozen` 已同步 turboacc） | PASS（`FINGERPRINT_MATCH`，`deltas=937` 全部由 `known-delta.conf` 解释、`unexplained=0`；`entries=195328`，`aggregate=efacae1e…4db`，`recipe_sha256=d283aba7…704`；`FEEDS_OK src-link=11 package-links=175`）。`entries` 增加 76 条来自新 pin 的插件文件，turboacc 由 `apps/*` 的 `any` 白名单覆盖 |
+| 同批次的 `check-config.sh` 等价性 | PASS（`lines=2156`，`sha256=2f906295…e5a`，`feeds=8`，与重新冻结后的 `build/config-frozen/.config` 逐字节一致） |
+| 同批次的文件 B 反查 | PASS（`luci-app-turboacc` 与 `luci-i18n-turboacc-zh-cn` 均 `=y`，39 个开关项全部生效；turboacc 的依赖 `firewall4`/`ucode*`/`luci-base` 均已在冻结配置里） |
+| 同批次的 passwall-selected 复核 | PASS（新 pin `b094b79c` 上 `git ls-tree -r` 与装配树 `find` 均为 808 个文件；PROVENANCE 原记的 809 是计数多算一条，已订正） |
 | 发布 `sources-v7` 的资产与指纹 | PASS（恰好 3 个资产：bundle 269,788,616 B、`SHA256SUMS` 100 B、`TREE-FINGERPRINT.json` 2276 B；`entries=195244`、`aggregate=ac5f6831…`、`recipe=a6e0d217…` 与本地装配逐项一致） |
 | 重复发布的 `sources-v8`（run `42433401048`，head `b76a0fb`） | PASS，但内容与 v7 相同（`recipe` 仍为 `a6e0d217…`，bundle 同为 269,788,616 B）：同一配方的再次发布，不改变构建选源，无副作用 |
 | 新 pin 下的 CI 构建（run `42426101091`，head `e025128`，`source_tag=auto` → `sources-v7`） | 部分 PASS / 部分 FAIL：第 1–16 步全过——`Verify recipe hash` 通过说明选中的是 `sources-v7`；新增的 `Check package dependencies` 1 秒通过；`Build` 85m44s **success**，`package/install` 这一关已经过了（`luci-lib-uqr`/`xz` 接线修复得到验证）。第 19 步 `Verify image (static)` 在 2 秒内失败，当时脚本与步骤都不可匿名读，没有留下原因 |

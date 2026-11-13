@@ -144,10 +144,10 @@ A 机升级刷入后删除 board.json 重跑 `board_detect`，已确认
 - **上游应用**（feeds `luci`）：`luci-app-firewall`、`luci-app-ddns`、`luci-app-upnp`、
   `luci-app-ttyd`、`luci-app-uhttpd`、`luci-proto-wireguard`。
 - **项目与三方应用**：
-  - 本项目 feeds（`sources/apps`，10 个）：`luci-app-corestatus`、`luci-app-fcc`、
+  - 本项目 feeds（`sources/apps`，11 个）：`luci-app-corestatus`、`luci-app-fcc`、
     `luci-app-ledfancontrol`、`luci-app-meshassistant`、`luci-app-nssecm`、
     `luci-app-online-upgrade`、`luci-app-oxidns`、`luci-app-smartnetpilot`、
-    `luci-app-substore`、`luci-app-tasks`
+    `luci-app-substore`、`luci-app-tasks`、`luci-app-turboacc`
   - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-bandix-plus`、`luci-app-nikki`、
     `luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、`luci-theme-argon`
   - meshassistant 的运行依赖（上游 feed）：`batctl` / `kmod-batman-adv`（`routing`）、
@@ -248,20 +248,23 @@ section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函
   MAC +0x10/+0x11/+0x12，本机 `90:d3:cf:3c:34:b6/b7/b8`），已有配置的 MAC
   不覆盖。真机验证：A 机 2026-11-13 PASS（2.4G `b6` ch11、5G `b7` ch40
   两个 BSS 起来并广播）。
-- **6 GHz 在 TW 下不可用（固件限制）**：ath12k 的 self-managed 规则来自
-  固件 WMI；TW 的固件规则里没有 6 GHz 信道（`iw phy` 中 6 GHz 全部
-  `(disabled)`，dmesg `pdev is not supported for this country`，即 QSDK
-  补丁 `0104-wifi-ath12k-disable-pdev-for-non-supported-country` 的
+- **6 GHz 取决于固件 regdomain（TW 不可用）**：2026-11-13 起默认国家码为
+  **US**、默认 6G 信道为 **37**（用户提供的默认值；同日 2.4G htmode 改为
+  `EHT20`），因此新装默认按 US regdomain 配置；下面这段 TW 限制适用于把
+  国家码设回 TW 的场景。ath12k 的 self-managed 规则来自固件 WMI；TW 的固件
+  规则里没有 6 GHz 信道（`iw phy` 中 6 GHz 全部 `(disabled)`，dmesg
+  `pdev is not supported for this country`，即 QSDK 补丁
+  `0104-wifi-ath12k-disable-pdev-for-non-supported-country` 的
   `-EOPNOTSUPP` 分支）。把 country 换成 US 后 6 GHz 立即可用，证明硬件与
   驱动链路正常，唯一阻塞是固件 regdomain。`wireless-defaults` 因此每次
   开机探测：没有任何可用 6 GHz 信道时把 `radio0_band2` 置 `disabled='1'`
   并记 `spectrum_6g_fw_blocked='1'`（避免 hostapd 反复失败），信道恢复
-  可见时自动解除。另测得用户默认的 6G `channel 61` + `EHT320` 本身不被
-  驱动接受（`Failed to set beacon parameters (ret=-22)`），US 测试中
-  `channel 37` + `EHT320` 可正常广播；TW 下该配置无从生效，切换 country
-  时需改用 37。真机验证：A 机 2026-11-13 PASS（TW：6G 射频自动禁用、
-  2.4G/5G 正常；US 临时测试：三频 BSS 全部起来，6G 在 ch37 EHT320
-  广播）。固件将来提供 TW 6 GHz 规则时，开机探测会自动重新启用该射频。
+  可见时自动解除。另测得 `channel 61` + `EHT320` 会被驱动拒绝
+  （`Failed to set beacon parameters (ret=-22)`），US 下 `channel 37` +
+  `EHT320` 可正常广播，故 2026-11-13 起默认信道改为 37。真机验证：A 机
+  2026-11-13 PASS（TW：6G 射频自动禁用、2.4G/5G 正常；US 临时测试：三频
+  BSS 全部起来，6G 在 ch37 EHT320 广播）。固件将来提供 TW 6 GHz 规则时，
+  开机探测会自动重新启用该射频。
 
 ## 本机构建
 
@@ -663,7 +666,7 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 | `build-24.10-6.6.yml` 📦 | `24.10-6.6/**` 变更 / 手动（可指定 `source_tag`） | Release `v<run>-<attempt>-<sha8>`：三个固件（恰好 3 个） |
 | `refresh-pins-24.10-6.6.yml` 🔄 | 每周一 04:23 UTC / 手动 | 分支 `auto/pin-refresh` + 一个 PR：插件 pin 的 old→new 表与内核检测结论；**从不自动合并** |
 
-插件怎么“跟最新”：`refresh-pins.sh` 把 10 个自维护插件与 7 个第三方仓库解析到
+插件怎么“跟最新”：`refresh-pins.sh` 把 11 个自维护插件与 7 个第三方仓库解析到
 最新 release tag（无版本 tag 的退回默认分支头，比当前 pin 旧/分叉则保持不动），
 改写 `upstream-pins.conf` / `thirdparty-feeds.conf` 的 commit 字段与
 `PROVENANCE.md` 的 pin 快照，再开 PR。合并后 push 自动触发装配验证；发

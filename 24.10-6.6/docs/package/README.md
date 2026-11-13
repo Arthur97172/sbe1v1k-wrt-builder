@@ -9,7 +9,7 @@
 | `qsdk14/` | QSDK 14 基座（**个人镜像**，仅 1 个提交） | 2.7 GB |
 | `codelinaro/` | **官方** CodeLinaro 组件集，**66/77** 项按 manifest SHA 校验一致 | 2.6 GB |
 | `luci/` | 官方 LuCI feed（`openwrt-24.10`，pin `d0400718…`，G3.6） | 325 MB |
-| `apps/` | 十个用户自编 LuCI 应用（G3.7 五个 + 2026-11-07 追加五个，逐仓库固定 SHA，见 `PROVENANCE.md` §2.7） | 20 MB |
+| `apps/` | 十一个用户自编 LuCI 应用（G3.7 五个 + 2026-11-07 追加五个 + 2026-11-13 加入 `luci-app-turboacc`，逐仓库固定 SHA，见 `PROVENANCE.md` §2.7） | 20 MB |
 
 `codelinaro/` 的关键子集：
 

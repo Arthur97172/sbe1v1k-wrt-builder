@@ -322,30 +322,33 @@ DPP 事件脚本等）。
 > SHA-256 `089f36da…`，206 个已安装包（详见
 > `docs/STAGE3_INTEGRATION_PLAN.md` §5.8）。
 
-### 2.7 ★ `sources/apps/` —— 十个用户自编 LuCI 应用（G3.7 起，2026-10-21；2026-11-07 扩到十个；2026-11-08 以 `luci-app-corestatus` 替换 `luci-app-xpu-status`）
+### 2.7 ★ `sources/apps/` —— 十一个用户自编 LuCI 应用（G3.7 起，2026-10-21；2026-11-07 扩到十个；2026-11-08 以 `luci-app-corestatus` 替换 `luci-app-xpu-status`；2026-11-13 加入 `luci-app-turboacc`）
 
 用户在 2026-10-21 明确要求把以下应用装进固件，并说明这些应用由用户本人
 编写/维护，因此**按用户授权作为 `docs/BUILD_DESIGN.md` §"第三方应用禁止"
-条款的限定例外**引入（例外范围仅限下列十个仓库；`luci-app-store` 等第三方
+条款的限定例外**引入（例外范围仅限下列十一个仓库；`luci-app-store` 等第三方
 应用源仍在禁止之列）。2026-11-07 用户要求再加五个（tasks、smartnetpilot、
 xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 release tag。
 2026-11-08 用户要求移除 `luci-app-xpu-status`，改由同一维护者仓库
-`luci-app-corestatus`（状态页 CPU 占用/温度面板）取而代之，仓库总数仍为十个。
+`luci-app-corestatus`（状态页 CPU 占用/温度面板）取而代之，仓库总数为十个。
+2026-11-13 用户要求安装 `luci-app-turboacc`（转发路径加速的统一配置页），
+并把清单内插件再刷到最新 release tag；仓库总数变为十一个。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
 | `luci-app-substore` | `luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2026-10-24T04:50:07Z | `docs(readme): 安装命令改用通配文件名，翻译包并入包管理器代码块（2.7.3-r3）` | GPL-3.0-or-later（`LICENSE`；Makefile 未设 `PKG_LICENSE`） | 3.3 MB |
-| `luci-app-fcc` | `luci-app-fcc` | `d4ce1abd4de62cb19cada29d32ee2ce6d85be0f9` | 2026-11-07T00:25:26Z | `Release 1.2.0 as r2; r1 was claimed by the rolled-back …` | GPL-3.0（`LICENSE`） | 5.3 MB |
+| `luci-app-fcc` | `luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 2026-11-08T13:03:42Z | `Let Ctrl+V paste into the Web Console and its browser window`（tag `1.2.4-r1`） | GPL-3.0（`LICENSE`） | 2.6 MB |
 | `luci-app-online-upgrade` | `luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 2026-10-24T04:11:06Z | `docs: 调整构建章节位置并合并从源码编译说明` | GPL-2.0-only（`LICENSE`；上游原作为 gooyjq） | 3.1 MB |
-| `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `540eefcf9dc8550f44a3a38afe84f20ec11f195f` | 2026-10-24T05:10:15Z | `README 安装章节前置，补充从源码编译说明` | GPL-3.0-only（`LICENSE`） | 724 KB |
-| `luci-app-nssecm` | `luci-app-nssecm` | `af6f4abe6ccb4147addfd3975bd45451e13d03a6` | 2026-10-24T05:02:52Z | `README: reorder sections, merge backend-name note into …` | GPL-3.0-only（`LICENSE`） | 428 KB |
-| `luci-app-tasks` | `luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 2026-10-25T14:30:18Z | `Add interface screenshot to READMEs` | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 1.1 MB |
+| `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `5a14ef12bec6d4e9874a00ae76800032d5619028` | 2026-11-13T03:50:00Z | `Argon 主题下为功能区底部补留白，版本升到 1.1.1-r1`（tag `1.1.1-r1`） | GPL-3.0-only（`LICENSE`） | 236 KB |
+| `luci-app-nssecm` | `luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 2026-11-13T03:48:43Z | `nssecm: add bottom padding for Argon section card, bump to 1.0.1-r1`（tag `1.0.1-r1`） | GPL-3.0-only（`LICENSE`） | 100 KB |
+| `luci-app-tasks` | `luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 2026-11-13T02:53:33Z | `Bump version to 1.1.2-r1`（tag `1.1.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 344 KB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 2026-10-27T12:09:18Z | `feat: show the current LAN settings in the PPPoE and DH…` | GPL-3.0-only（`LICENSE`） | 1.6 MB |
 | `luci-app-corestatus` | `luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | 2026-11-08T06:11:22Z | `Makefile: bump PKG_VERSION to 1.0.2`（tag `v1.0.2`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 334 KB |
-| `luci-app-oxidns` | `luci-app-oxidns` | `aac19832876e078ba7006f5837b6bdfba17ec42b` | 2026-11-07T09:38:03Z | `docs: show screenshot and install steps before feature list`（tag `v1.3.8`，`PKG_VERSION 1.3.8`；`v1.3.8` 与 `v1.3.7` 指向同一提交） | GPL-3.0-or-later（`LICENSE`） | 2.9 MB |
-| `luci-app-meshassistant` | `luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2026-11-07T03:37:47Z | `Move Load and Link Rate next to the Interface column` | GPL-3.0-only（`LICENSE`） | 1.1 MB |
+| `luci-app-oxidns` | `luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | 2026-11-07T14:22:31Z | `fix(config): stop wiring steps into mapping sequence args`（tag `v1.4.9`，`PKG_VERSION 1.4.9`；`v1.4.9` 与 `v1.4.8` 指向同一提交） | GPL-3.0-or-later（`LICENSE`） | 1.9 MB |
+| `luci-app-meshassistant` | `luci-app-meshassistant` | `1529f85e924a6aeb164baed77f95b8e41fce3857` | 2026-11-11T23:28:36Z | `Document DHCP option 6, the lease watchdog and the test suite`（tag `2.7.12-r1`） | GPL-3.0-only（`LICENSE`） | 784 KB |
+| `luci-app-turboacc` | `luci-app-turboacc` | `47628b39861f0680318038bf60f5e8639cbd7462` | 2026-11-13T12:54:44Z | `CI: fix the ipk content check and build only the x86/64 SDKs`（tag `1.0.4-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 204 KB |
 
-十个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。五个新应用
+十一个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。十一个应用
 都带 `po/zh_Hans`，`CONFIG_LUCI_LANG_zh_Hans=y` 让 `luci.mk` 生成对应的
 `luci-i18n-*-zh-cn`。pin 的机器可读副本是 `build/upstream-pins.conf` 的
 `apps/*` 行，由 `scripts/ci/refresh-pins.sh` 与每周 workflow 自动刷成
@@ -357,9 +360,10 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | 本地目录 | `sources/apps/<repo>`；**保留 `.git`**：`luci.mk` 的 `findrev` 在未显式固定 `PKG_PO_VERSION` 的包上从 `git log` 取翻译包版本，删掉 `.git` 会退化为文件 mtime、不可复现 |
 | 接入方式 | `feeds.conf` 追加 `src-link sbe1v1k_apps /home/arthur/claude/sbe1v1k-build/sources/apps`；`scripts/feeds update sbe1v1k_apps` + `install -p sbe1v1k_apps -a`（日志 `logs/feeds_update_g37.log`、`logs/feeds_install_g37_apps.log`） |
 | 构建期联网 | **无**。`Build/Prepare`/`Configure`/`Compile` 均为空或只调用本机 `po2lmo`/`jsmin`；不下载任何运行期组件 |
-| 运行期联网（应用自身功能，非构建行为） | `luci-app-fcc` 在用户点击安装时从 `raw.githubusercontent.com`、`pypi.org`、`unofficial-builds.nodejs.org` 等下载 Python/Node/agent；`luci-app-online-upgrade` 从 GitHub Release 下载固件后调用 `sysupgrade`；`luci-app-substore` 访问用户配置的订阅 URL；`luci-app-oxidns`（2026-11-07 加入）在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置）；`luci-app-meshassistant` 只操作本机 batman-adv/dawn；`luci-app-tasks`、`luci-app-smartnetpilot`、`luci-app-corestatus`（2026-11-08 起替换 xpu-status，运行期文件无 http/socket 调用）无外部联网。均记录于 `docs/SECURITY_FINDINGS.md` §7.7/§7.11 与 `docs/RISKS_AND_BLOCKERS.md` R-21…R-24、R-39/R-40 |
+| 运行期联网（应用自身功能，非构建行为） | `luci-app-fcc` 在用户点击安装时从 `raw.githubusercontent.com`、`pypi.org`、`unofficial-builds.nodejs.org` 等下载 Python/Node/agent；`luci-app-online-upgrade` 从 GitHub Release 下载固件后调用 `sysupgrade`；`luci-app-substore` 访问用户配置的订阅 URL；`luci-app-oxidns`（2026-11-07 加入）在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置）；`luci-app-meshassistant` 只操作本机 batman-adv/dawn；`luci-app-turboacc`（2026-11-13 加入）只读写本机 UCI 与 sysctl；`luci-app-tasks`、`luci-app-smartnetpilot`、`luci-app-corestatus`（2026-11-08 起替换 xpu-status，运行期文件无 http/socket 调用）无外部联网。均记录于 `docs/SECURITY_FINDINGS.md` §7.7/§7.11 与 `docs/RISKS_AND_BLOCKERS.md` R-21…R-24、R-39/R-40 |
 | 依赖闭包新增 | luci feed：`luci-lua-runtime`、`luci-compat`、`luci-lib-httpclient`、`luci-lib-httpprotoutils`、`luci-lib-jsonc`、`luci-lib-ip`、`luci-lib-nixio`、`luci-lib-base`、`ucode-mod-lua`；树内：`lua`、`libubus-lua`、`liblucihttp-lua`、`jsonfilter`；`packages` feed 手工符号链接：`curl`（8.12.1, MIT）、`tmux`（3.5a, ISC）。curl 的 `Config.in` 默认 `LIBCURL_NGHTTP2=y`，会把 `libcurl4` 依赖到树内未接入的 `libnghttp2` 包；已在种子中显式 `# CONFIG_LIBCURL_NGHTTP2 is not set`（HTTP/1.1 足够这五个应用的发布页拉取，避免为一个无功能收益的依赖再引入一个上游源码；配置见 `build/config-seed/ipq95xx-spectrum-sbe1v1k.seed`，决定记录见 `docs/STAGE3_INTEGRATION_PLAN.md` §5.9） |
 | 依赖闭包新增（2026-11-07） | `luci-app-meshassistant` 的 `LUCI_DEPENDS`：`+luci-base +kmod-cfg80211 +batctl-default +kmod-batman-adv +dawn +bash +luci-proto-batman-adv +socat +flock +iw`。为此新增 `routing` feed（`src-link routing qca/feeds/routing`，只链接 `batctl`、`batman-adv` 两个包），并在 `package/feeds/` 下补 `routing/{batctl,batman-adv}`、`packages/{dawn,socat}`、`luci/luci-proto-batman-adv` 五条软链；`flock` 由基座的 `util-linux` 提供，`iw` 由 `iw-full` 的 PROVIDES 满足。`kmod-batman-adv` 要针对 QSDK 6.6 内核编译，**编译结果本期未验证**（本地未跑内核模块编译；CI 构建后见 `verify-image.sh`） |
+| 依赖闭包（2026-11-13） | `luci-app-turboacc` 的 `LUCI_DEPENDS`：`+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus`，全部已在 `config-frozen/.config` 里选中，不新增软链或 feed |
 | 供应链结论 | 来源为公开 GitHub 仓库、逐提交固定、完整历史可复核；许可证全部为 GPL 系（与镜像内其他 GPL 组件并存，不构成链接冲突）。用户声明为自编代码，但**运行期行为仍未在设备上验证**（`NOT TESTED`） |
 
 #### 2.7.1 `luci-app-online-upgrade` 更新到最新提交（2026-10-22）
@@ -440,18 +444,19 @@ git 历史与本表下方备注中）。**2026-11-07 用户要求移除 `luci-ap
 
 | 目录 | 远端 | **固定 commit** | 提交时间 | 提交标题 | 许可证 |
 |---|---|---|---|---|---|
-| `openwrt-passwall` | `Openwrt-Passwall/openwrt-passwall` | `0b969d5a49743a9725c8dc283b01753c5217dd0d` | 2026-11-03T23:26:50+08:00 | `luci: bump 26.11.3`（tag `26.11.3-1`） | GPL-3.0（`LICENSE`；Makefile 头声明 GPLv3） |
-| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `da712cf06cf4e6fd39e147fb36e6ec936003fcc9` | 2026-10-31T22:21:39+08:00 | `xray-core: update to 26.10.31 (#770)`（仓库无版本 tag，取 `main` 分支头） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
+| `openwrt-passwall` | `Openwrt-Passwall/openwrt-passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | 2026-11-10T16:44:36Z | `luci: bump 26.11.11`（tag `26.11.11-1`） | GPL-3.0（`LICENSE`；Makefile 头声明 GPLv3） |
+| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `b094b79c32ac4e4de3113a5c44971c6182eee535` | 2026-11-12T09:39:24+08:00 | `smartdns: fixup`（仓库无版本 tag，取 `main` 分支头） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
 | `OpenWrt-nikki` | `nikkinikki-org/OpenWrt-nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | 2026-10-14T17:11:28+08:00 | `fix: do not restart cron service after crontab changed` | GPL-3.0（`LICENSE`） |
 | `OpenClash` | `vernesong/OpenClash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | 2026-10-11T13:10:57+08:00 | `0.48.002` | **MIT**（`LICENSE`，Copyright 2019-2026 vernesong） |
 | `luci-app-poweroff` | `Arthur97172/luci-app-poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | 2026-10-25T13:34:55Z | `docs: reorder README sections and add screenshot` | GPL-3.0-only（`LICENSE` 与 `PKG_LICENSE` 一致） |
 | `luci-app-bandix-plus` | `timsaya/luci-app-bandix-plus` | `c4f002f74f3a0f4aeb79fb5d35f5a7bbd3392a1f` | 2026-10-21T18:54:43+08:00 | `luci-app-bandix-plus: bump to 0.1.3-r2` | Apache-2.0（`LICENSE`；Makefile 头误写 GPLv2，以 `PKG_LICENSE` 与 `LICENSE` 为准） |
 | `openwrt-bandix-plus` | `timsaya/openwrt-bandix-plus` | `fba9704300f2900451e00a1645e11b1f179204b8` | 2026-10-21T18:46:15+08:00 | `bandix-plus: bump to 0.1.3-r1` | Apache-2.0（`LICENSE`） |
-| `luci-theme-argon` | `jerrykuku/luci-theme-argon` | `6bdb62e6f9839f0faf69c86b2a0c0506e66359b6` | 2026-11-06T09:11:52Z | `release: v3.1.3`（annotated tag `v3.1.3` 的 peel 目标） | Apache-2.0 + MIT（`LICENSE`；`PKG_LICENSE:=Apache-2.0 MIT`） |
+| `luci-theme-argon` | `jerrykuku/luci-theme-argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | 2026-11-13T10:32:39Z | `release: v3.1.4`（annotated tag `v3.1.4` 的 peel 目标） | Apache-2.0 + MIT（`LICENSE`；`PKG_LICENSE:=Apache-2.0 MIT`） |
 
 `sources/passwall-selected/`（新目录，不带 `.git`）是从
 `openwrt-passwall-packages` 上述 commit **复制**出的 7 个包目录。复制结果
-用 `git ls-tree -r <sha> -- <dirs>` 与 `find` 逐文件比对，**809/809 文件一致**。
+用 `git ls-tree -r <sha> -- <dirs>` 与 `find` 逐文件比对，**808/808 文件一致**
+（2026-11-13 在 pin `b094b79c` 上重新核过；此前记录的 809 是计数多算了一条）。
 之所以不整棵 feed 引入：上游同一仓库还包含 `xray-core`、`sing-box` 等与
 qca feed 同名的包，以及本项目明确不打包的 `shadowsocks-rust`、`haproxy`、
 `smartdns`；只复制所需目录可避免包名冲突与误装。各包锚点：
@@ -492,8 +497,8 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 `luci-app-poweroff` **1.0.0-r1**（自维护仓库，`LUCI_DEPENDS:=+luci-base`，
 `PKGARCH:=all`，无外部联网、无预编译二进制；i18n 包
 `luci-i18n-poweroff-zh-cn` 由 `po/zh_Hans/poweroff.po` 经 `luci.mk` 生成）、
-`luci-app-bandix-plus` 0.1.3-r2、`bandix-plus` 0.1.3-r1、`luci-theme-argon` **3.1.3**
-（`6bdb62e6`，243 个受版本控制文件；仓库根目录即包目录，v3 起 `luci-app-argon-config`
+`luci-app-bandix-plus` 0.1.3-r2、`bandix-plus` 0.1.3-r1、`luci-theme-argon` **3.1.4**
+（`c5c0873e`，243 个受版本控制文件；仓库根目录即包目录，v3 起 `luci-app-argon-config`
 的设置页已并入主题包，发行里的同名包只是空迁移包，故本构建只接一个源包）。
 
 2026-11-07 升级后的第三方版本锚点：`openwrt-passwall` 26.11.3（tag `26.11.3-1`）、
@@ -508,7 +513,7 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 | 接入方式 | `feeds.conf` 追加 `src-link thirdparty …/sources/thirdparty-feed` 与 `src-link passwall_selected …/sources/passwall-selected`；2026-11-07 又追加 `src-link routing qca/feeds/routing`（只为 meshassistant 的 batctl/kmod-batman-adv）。`thirdparty-feed` 只含 10 个指向固定 clone 的符号链接，避免把 `openwrt-passwall-packages` 的 60 多个包（含同名 `xray-core`/`sing-box`）索引进 feed |
 | `feeds/packages` 路径 | 新建 `sources/buildroot/feeds/packages -> ../qca/feeds/packages` 软链，满足第三方包的 `include $(TOPDIR)/feeds/packages/lang/{golang,rust}/…` 与 luci 的 `findrev`；`packages` feed 仍未建立索引，包通过 `package/feeds/packages/` 手工符号链接可见 |
 | 构建期联网 | 首次下载各包 `PKG_SOURCE`/`PKG_MIRROR_HASH` 对应的 tarball 或 git 镜像；其中 **`chinadns-ng` 与 `bandix-plus` 下载的是 GitHub Release 的 aarch64 预编译二进制**（`chinadns-ng+wolfssl_noasm@aarch64…`、`bandix-plus-0.1.3-aarch64.tar.gz`，`PKG_HASH 42ddd494…` / `46de71c3…`）；`mihomo-meta`、`xray-core`、`sing-box`、`yq` 首次需构建 `golang/host` |
-| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、corestatus（2026-11-08 起替换 xpu-status）无外部联网；`luci-theme-argon` 3.1.3 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
+| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、corestatus（2026-11-08 起替换 xpu-status）无外部联网；`luci-theme-argon` 3.1.4 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
 | 本地修改 | 无。`wifihistory` 原先的一行 include 改写随该应用一起删除（2026-11-07）；其余 7 个 clone `git status --porcelain` 为空 |
 | 供应链结论 | 全部公开 GitHub、逐 commit 固定；许可证以 GPL 系为主，`chinadns-ng`/`ipt2socks` 为 **AGPL**，`chinadns-ng` 与 `bandix-plus` 为预编译二进制（`LICENSE_REVIEW_REQUIRED`）；运行期一律 `NOT TESTED` |
 
@@ -519,23 +524,24 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 <!-- pins:begin -->
 | 仓库 | commit | 备注 |
 | --- | --- | --- |
-| `apps/luci-app-fcc` | `afafe2b0ef41098bd1e64872029f7314eb96efdb` | 1.2.1-r1（tag；PKG_VERSION 1.2.1；PKG_RELEASE 1） |
-| `apps/luci-app-ledfancontrol` | `540eefcf9dc8550f44a3a38afe84f20ec11f195f` | 1.1.0-r1（tag） |
-| `apps/luci-app-meshassistant` | `d51d2cf215b09ac49085605ba19cc981eb45555f` | 2.6.3-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
-| `apps/luci-app-nssecm` | `af6f4abe6ccb4147addfd3975bd45451e13d03a6` | 1.0.0-r1（tag） |
+| `apps/luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | v1.0.2（tag；PKG_VERSION 1.0.2；PKG_RELEASE 1） |
+| `apps/luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 1.2.4-r1（tag；PKG_VERSION 1.2.4） |
+| `apps/luci-app-ledfancontrol` | `5a14ef12bec6d4e9874a00ae76800032d5619028` | 1.1.1-r1（tag） |
+| `apps/luci-app-meshassistant` | `1529f85e924a6aeb164baed77f95b8e41fce3857` | 2.7.12-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
+| `apps/luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 1.0.1-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
 | `apps/luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | v1.4.9（tag；PKG_VERSION 1.4.9；与 v1.4.8 同一提交） |
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
-| `apps/luci-app-tasks` | `c1665942cda36b4f7668c6eb167968a03b26193f` | 1.1.1-r1（tag） |
-| `apps/luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | v1.0.2（tag；PKG_VERSION 1.0.2；PKG_RELEASE 1） |
-| `repo argon` | `6bdb62e6f9839f0faf69c86b2a0c0506e66359b6` | thirdparty/luci-theme-argon |
+| `apps/luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 1.1.2-r1（tag） |
+| `apps/luci-app-turboacc` | `47628b39861f0680318038bf60f5e8639cbd7462` | 1.0.4-r1（tag；PKG_VERSION 1.0.4；GPL-3.0-only；po/zh_Hans） |
+| `repo argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | thirdparty/luci-theme-argon |
 | `repo bandix-core` | `fba9704300f2900451e00a1645e11b1f179204b8` | thirdparty/openwrt-bandix-plus |
 | `repo bandix-luci` | `c4f002f74f3a0f4aeb79fb5d35f5a7bbd3392a1f` | thirdparty/luci-app-bandix-plus |
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
-| `repo passwall` | `0b969d5a49743a9725c8dc283b01753c5217dd0d` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `da712cf06cf4e6fd39e147fb36e6ec936003fcc9` | thirdparty/openwrt-passwall-packages |
+| `repo passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | thirdparty/openwrt-passwall |
+| `repo passwall-packages` | `b094b79c32ac4e4de3113a5c44971c6182eee535` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
@@ -565,7 +571,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | 文件 | 来源 | 大小 | SHA-256 | 装配位置 |
 |---|---|---|---|---|
 | `banner` | 用户提供 | 1,041 B | `d649da4e4a286b0b66c3558cb0b5c3f756d33f64e320051d93756ca56bbc4011` | `sources/buildroot/files/etc/banner`（覆盖 `base-files` 的 `/etc/banner`） |
-| `99-wireless-defaults`（实现本体） | 用户提供的无线默认值策略脚本。2026-10-22 将 `is_supported_board()` 白名单改为**仅 `spectrum,sbe1v1k`**（原 Airoha/Gemtek/Nokia 板型全部移除），并同步修改文件头注释、失败提示语与幂等标记（`MARKER` 改为 `system.@system[0].spectrum_wireless_defaults`）。2026-11-07 用户更新默认值：国家 `US→TW`；2.4G 信道 6→11、`HE40→EHT40`；5G 36→40、`EHT160→EHT80`；6G 37→61（`EHT320` 不变）；三频 txpower 28/28/23→23/23/23。同日第二次更新只订正了上一版的 htmode 笔误（`HET40→EHT40`、`EHT60→EHT80`），逻辑未改（与上一版相比 1 个 diff hunk、2 行）。2026-11-13 增加两处：首启应用策略时清除 QSDK 生成器写入的射频级 `disabled`（应用后 `wifi reload`），以及每次开机（marker 检查之前）对 `radioX_bandN` section 的 `band` 丢失做自愈。同日真机复测后再增两处：①每次开机（marker 检查之前）为 `macaddr` 缺失或仍为 ath12k 占位值（`00:03:7f:*`）的 band iface 派生 MAC（板级最低以太网 MAC +0x10/+0x11/+0x12），修复三频 vif 同 MAC 导致 5G/6G 起不来的问题；②每次开机探测可用 6 GHz 信道，没有时把 6G 射频置 `disabled='1'` 并记 `spectrum_6g_fw_blocked='1'`，恢复可见时自动解除；三处自愈统一改为提交后一次 `ubus call network reload`（`wifi reload` 在该 QSDK 栈内因缺 `pre_wifi_reload_legacy` 直接中断），并在 reload 后复查一次 6 GHz 状态 | 20,114 B | `a5a5503b41004a1f066ebb490cf8c6d1d9c464af393ea6cff3d8c156d8738229` | `sources/buildroot/files/usr/lib/sbe1v1k/wireless-defaults`（模式 0755，由 `/etc/init.d/wireless-defaults` 与首启入口调用） |
+| `99-wireless-defaults`（实现本体） | 用户提供的无线默认值策略脚本。2026-10-22 将 `is_supported_board()` 白名单改为**仅 `spectrum,sbe1v1k`**（原 Airoha/Gemtek/Nokia 板型全部移除），并同步修改文件头注释、失败提示语与幂等标记（`MARKER` 改为 `system.@system[0].spectrum_wireless_defaults`）。2026-11-07 用户更新默认值：国家 `US→TW`；2.4G 信道 6→11、`HE40→EHT40`；5G 36→40、`EHT160→EHT80`；6G 37→61（`EHT320` 不变）；三频 txpower 28/28/23→23/23/23。同日第二次更新只订正了上一版的 htmode 笔误（`HET40→EHT40`、`EHT60→EHT80`），逻辑未改（与上一版相比 1 个 diff hunk、2 行）。2026-11-13 增加两处：首启应用策略时清除 QSDK 生成器写入的射频级 `disabled`（应用后 `wifi reload`），以及每次开机（marker 检查之前）对 `radioX_bandN` section 的 `band` 丢失做自愈。同日真机复测后再增两处：①每次开机（marker 检查之前）为 `macaddr` 缺失或仍为 ath12k 占位值（`00:03:7f:*`）的 band iface 派生 MAC（板级最低以太网 MAC +0x10/+0x11/+0x12），修复三频 vif 同 MAC 导致 5G/6G 起不来的问题；②每次开机探测可用 6 GHz 信道，没有时把 6G 射频置 `disabled='1'` 并记 `spectrum_6g_fw_blocked='1'`，恢复可见时自动解除；三处自愈统一改为提交后一次 `ubus call network reload`（`wifi reload` 在该 QSDK 栈内因缺 `pre_wifi_reload_legacy` 直接中断），并在 reload 后复查一次 6 GHz 状态。2026-11-13 用户再次提供默认值，只改三项：国家 `TW→US`、2.4G htmode `EHT40→EHT20`、6G 信道 `61→37`（`61 + EHT320` 被驱动以 `ret=-22` 拒绝，US 实测 37 可正常广播；上述自愈逻辑与其余默认值不变） | 20,114 B | `4c7ffd28332b75f3a195216e5cb72842a96fa6728ff768e9c2075573ddb7d01e` | `sources/buildroot/files/usr/lib/sbe1v1k/wireless-defaults`（模式 0755，由 `/etc/init.d/wireless-defaults` 与首启入口调用） |
 | `99-wireless-defaults`（首启入口） | 项目自有的 459 B 壳脚本，只调用上面的实现本体。因为 `/etc/init.d/boot` 以 `.`（source）方式执行本文件，壳内不得使用 `set -e`/`exit`；实现本体以子进程运行，不受此限 | 459 B | `9f4f0c25e45e13a9e9bb795211bcab2a23becab006c0a64c11bf5c79568c16b0` | `sources/buildroot/files/etc/uci-defaults/99-wireless-defaults`（模式 0755，首次启动成功后被 boot 删除） |
 
 复核：`cmp <仓库根>/banner sources/buildroot/files/etc/banner`、
