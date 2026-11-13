@@ -417,6 +417,14 @@ grep -q '^	if (match(enc_lower, /\^sae-compat/, "s"))$' "$_ws/lib/wifi/mac80211.
 	|| die 4 "0018 未生效：mac80211.uc 会把 sae-compat 改写成 sae"
 logmsg "  SAE_COMPAT_OK wifi-scripts（netifd + hostapd + uci 迁移）"
 
+# 0021 让 has_feature() 认识 "11be"。LuCI 的模式下拉只认 `hostapd -v11be`
+# 的退出码，而这个分支必须包在 CONFIG_IEEE80211BE 里——无条件返回 1 会在
+# 没开 EHT 的构建里谎报支持。分支存在且确实受 #ifdef 约束，缺一即停。
+_bf="$SRC/buildroot/qca/src/network/services/hostapd/src/utils/build_features.h"
+grep -A2 '^#ifdef CONFIG_IEEE80211BE$' "$_bf" | grep -q 'strcmp(feat, "11be")' \
+	|| die 4 "0021 未生效：build_features.h 缺 CONFIG_IEEE80211BE 下的 11be 分支"
+logmsg "  BUILD_FEATURES_11BE_OK hostapd（has_feature 报 11be）"
+
 # =============================================================== 11b. luci
 step "LuCI 补丁（build/luci-patches/SERIES）"
 apply_series "$BUILD/luci-patches/SERIES"

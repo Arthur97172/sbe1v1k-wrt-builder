@@ -20,6 +20,10 @@
 # 0007 为什么空号：wlan-hostapd 的共享 files/ 现在由 upstream-pins.conf 把整个
 # hostapd 包钉到 CodeLinaro feed 的 edfb839（自带 files/ 与 noextns 安装段），
 # 再打一条“新建这些文件”的补丁只会全部报 already exists。编号保留空位不重排。
+#
+# 0020 为什么空号：docs/KERNEL_ICE_RACE_EVAL-2026-11-11.md 的草案把 0020 留给
+# qcom-ice-scm 提前注册的补丁（B1）。第 0 步对照实验判定 H1 后 B1 已决定不做，
+# 但编号仍按该文档预留；hostapd 的 11be 补丁因此顺延为 0021。
 
 0001-kernel-drop-duplicate-ip6-vti.patch	tree	buildroot	ip6_vti 与 6.6 内核自带模块重名
 0002-kernel-6.6-report-6.6.147.patch	tree	buildroot	include/kernel-6.6 上报 6.6.147
@@ -38,3 +42,4 @@
 0017-openwrt-patches-busybox-drop-config-override.patch	tree	buildroot	去掉 QSDK busybox 配置覆盖（审计时从未生效）
 0018-wifi-scripts-sae-compat.patch	tree	buildroot	补上 WPA2-PSK/WPA3-SAE Compatibility Mode（WPA3 §13）
 0019-kernel-initramfs-xz-dict.patch	tree	buildroot	initramfs 的 cpio.xz 改用 -9e + 128 MiB 字典（压回 64 MiB 的 RAM 启动上限内）
+0021-hostapd-build-features-11be.patch	tree	buildroot	hostapd 的 has_feature() 认识 "11be"（LuCI 按 `hostapd -v11be` 退出码显示 802.11be 模式）

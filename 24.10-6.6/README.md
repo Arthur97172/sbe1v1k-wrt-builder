@@ -115,6 +115,13 @@ SAE 走单独的 RSN Override 元素（`rsn_override_key_mgmt=SAE`、`rsn_overri
 `assemble-sources.sh` 与 `verify-image.sh` 会对补丁的关键行和
 “`rsn_override_key_mgmt` 赋值早于 override 元素发出”这条顺序各做断言。
 
+**802.11be（Wi-Fi 7）模式下拉**由 `build/build-fixes/0021` 补进：LuCI 只在
+`hostapd -v11be` 退出 0 时显示 EHT 模式，而 QSDK hostapd fork 虽然编进了 EHT
+（`hostapd-full.config` 的 `CONFIG_IEEE80211BE=y`、驱动侧 iwinfo 已上报 `be`），
+`src/utils/build_features.h` 的编译期表里却没有 `"11be"` 分支，探针恒为 exit 1。
+补丁只加 4 行 `#ifdef CONFIG_IEEE80211BE` 分支，不引入新的编译能力；装配脚本断言
+该分支存在且确实受 `#ifdef` 约束。
+
 ## 本机构建
 
 装配树位于 `<工作区>/sources/buildroot`（本目录的上一级目录里）。

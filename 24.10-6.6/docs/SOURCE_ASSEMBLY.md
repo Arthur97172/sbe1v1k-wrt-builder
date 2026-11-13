@@ -62,7 +62,7 @@
 | `build/assembly-map.conf` | 仓库内文件/目录 → 装配树位置 | rtl8261n、SBE DTS、base-files、本地包、6 个 blob、bandix-plus |
 | `build/p-b/SERIES` | 板级补丁（镜像定义、DTS 注册、pwm） | 3 条，`tree` |
 | `build/target-feed-fixes/SERIES` | `config-6.6`、`target.mk` 修正 | 2 条，`tree` |
-| `build/build-fixes/SERIES` | 构建系统补丁 | 16 条，全部 `tree`（0004、0007 空号，见文件头） |
+| `build/build-fixes/SERIES` | 构建系统补丁 | 17 条，全部 `tree`（0004、0007、0020 空号，见文件头） |
 | `build/luci-patches/SERIES` | LuCI 树补丁（`sources/luci`） | 1 条，`tree`；`build-fixes` 的 `tree` 目标是 `buildroot`，够不到 luci |
 | `build/openwrt-patches/package/system/procd/patches/0002-*.patch` | 替换上游同名补丁（rcS 上下文重排） | 1 个文件，由 `assembly-map.conf` 整文件覆盖 |
 | `build/feeds.conf.in` | 11 条相对 `src-link` | 不含宿主路径 |
