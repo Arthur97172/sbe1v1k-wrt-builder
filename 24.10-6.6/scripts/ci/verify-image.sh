@@ -167,6 +167,8 @@ check_overlay etc/banner
 check_overlay etc/uci-defaults/99-wireless-defaults
 check_overlay etc/init.d/wireless-defaults
 check_overlay usr/lib/sbe1v1k/wireless-defaults
+check_overlay etc/init.d/ethernet-macs
+check_overlay usr/lib/sbe1v1k/ethernet-macs
 
 if grep -Eq '%[VCRD]|VERXXXX|WRTVERSIONINFO' "$ROOTFS/etc/banner"; then
 	bad "镜像内 /etc/banner 仍含未替换的占位符"
@@ -211,6 +213,44 @@ fi
 [ -f "$ROOTFS/etc/uci-defaults/99-wireless-defaults" ] \
 	&& ok "首启入口 /etc/uci-defaults/99-wireless-defaults 在镜像中" \
 	|| bad "镜像缺少首启入口 /etc/uci-defaults/99-wireless-defaults"
+
+# ---- 以太网端口 MAC 固定化（eth1–eth3 = eth0 base MAC +1..+3） ------------
+# APPSBL 只给 dp1（eth0）写 DT MAC，dp2–dp4 每次开机随机；脚本必须在
+# netifd 之前（START=15 < network 的 S20）把 eth1–eth3 固定下来，否则 WAN
+# 的 IP 与 br-lan 的桥 MAC 每次重启都变。四处缺一即停：首行 rc.common、
+# START=15、S15 开机软链、按 addr_assign_type 只改随机地址。
+head -n1 "$ROOTFS/etc/init.d/ethernet-macs" | grep -Fxq '#!/bin/sh /etc/rc.common' \
+	&& ok "/etc/init.d/ethernet-macs 首行为 rc.common" \
+	|| bad "/etc/init.d/ethernet-macs 首行不是 '#!/bin/sh /etc/rc.common'"
+grep -qx 'START=15' "$ROOTFS/etc/init.d/ethernet-macs" \
+	&& ok "/etc/init.d/ethernet-macs START=15（先于 network 的 20）" \
+	|| bad "/etc/init.d/ethernet-macs 的 START 不是 15（晚于 network 则 WAN 先拿到随机 MAC）"
+
+RCD="$ROOTFS/etc/rc.d/S15ethernet-macs"
+if [ -L "$RCD" ]; then
+	tgt=$(readlink "$RCD")
+	if [ "$tgt" = "../init.d/ethernet-macs" ]; then
+		ok "/etc/rc.d/S15ethernet-macs -> $tgt"
+	else
+		bad "/etc/rc.d/S15ethernet-macs 指向 $tgt"
+	fi
+elif [ -e "$RCD" ]; then
+	bad "/etc/rc.d/S15ethernet-macs 存在但不是软链"
+else
+	bad "缺少 /etc/rc.d/S15ethernet-macs（开机不执行，端口 MAC 继续随机）"
+fi
+
+EM="$ROOTFS/usr/lib/sbe1v1k/ethernet-macs"
+if [ -f "$EM" ]; then
+	grep -qF 'addr_assign_type' "$EM" \
+		&& ok "ethernet-macs 只改 addr_assign_type=1 的随机端口" \
+		|| bad "ethernet-macs 未检查 addr_assign_type（会覆盖引导器给定的地址）"
+	grep -qF 'mac_add_offset "$base" "$offset"' "$EM" \
+		&& ok "ethernet-macs 从 eth0 base MAC 派生端口地址" \
+		|| bad "ethernet-macs 未从 base MAC 派生（端口仍是随机地址）"
+else
+	bad "镜像缺少 /usr/lib/sbe1v1k/ethernet-macs"
+fi
 
 # ---- 升级脚本：sysupgrade 必须写回当前槽位 ----------------------------------
 # 板子是 A/B 布局（0:HLOS|rootfs 与 0:HLOS_1|rootfs_1）。写死槽位会让升级
@@ -517,15 +557,30 @@ if [ -f "$LJS" ]; then
 		|| bad "LuCI 缺 band-split 处理（luci 补丁 0002 未进镜像）"
 	# 0003：iwinfo 的 255 dBm 哨兵必须被过滤，已配置的 txpower 必须能选
 	# （否则保存表单时被换掉或删掉）。minify 后空格不固定，按可选空格匹配。
-	grep -Eq 'p\.dbm ?< ?0 ?\|\| ?p\.dbm ?> ?63' "$LJS" \
+	grep -Eq 'p\.dbm ?>= ?0 ?&& ?p\.dbm ?<= ?63' "$LJS" \
 		&& ok "LuCI 过滤 txpower 列表的 255 dBm 哨兵（minify 后）" \
 		|| bad "LuCI 未过滤 txpower 哨兵（luci 补丁 0003 未进镜像）"
+	grep -qF 'probePowerList' "$LJS" \
+		&& ok "LuCI 按候选接口名逐个探测 txpower 列表（minify 后）" \
+		|| bad "LuCI 缺 txpower 列表探测（0003 未进镜像，phy 级查询只有哨兵）"
+	grep -Eq 'method: ?["'\'']devices["'\'']' "$LJS" \
+		&& ok "LuCI 在无可用列表时回退到 iwinfo devices（minify 后）" \
+		|| bad "LuCI 缺 iwinfo devices 回退（0003 未进镜像，6 GHz 只剩已配置值）"
 	grep -Eq "uci\.get\('wireless', ?section_id, ?'txpower'\)" "$LJS" \
 		&& ok "LuCI 读入已配置的 txpower（minify 后）" \
 		|| bad "LuCI 未读入已配置的 txpower（保存会丢 option txpower）"
 	grep -qF 'listed.has(String(cfgval))' "$LJS" \
 		&& ok "LuCI 把已配置的 txpower 补进下拉（minify 后）" \
 		|| bad "LuCI 未把已配置的 txpower 补进下拉"
+	# 0004：0003 的 devices 回退需要 rpcd ACL 放行，否则 ubus 调用被拒。
+	LACL="$ROOTFS/usr/share/rpcd/acl.d/luci-mod-network.json"
+	if [ -f "$LACL" ]; then
+		grep -qF '"devices"' "$LACL" \
+			&& ok "rpcd ACL 放行 iwinfo devices（luci 补丁 0004）" \
+			|| bad "rpcd ACL 未放行 iwinfo devices（0004 未进镜像，6 GHz 回退被拒）"
+	else
+		bad "镜像缺少 luci-mod-network 的 rpcd ACL"
+	fi
 else
 	bad "镜像缺少 LuCI wireless.js"
 fi

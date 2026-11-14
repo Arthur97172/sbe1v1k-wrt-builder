@@ -1,0 +1,24 @@
+Subject: [PATCH] luci-mod-network: allow reading the iwinfo device list
+
+CBIWifiTxPowerValue falls back to `iwinfo devices` when neither the VAP
+interface name nor the wifi-device section yields a usable transmit
+power list (on QSDK ath12k this is the 6 GHz band: libiwinfo has no
+6 GHz band, so its phy-level and per-VAP queries only return the
+"not reported" sentinel).  The rpc ACL of luci-mod-network only granted
+assoclist, countrylist, freqlist and txpowerlist, so that call was
+denied.  `devices` is a read-only method that lists interface names;
+grant it next to the other iwinfo read methods.
+
+diff --git a/modules/luci-mod-network/root/usr/share/rpcd/acl.d/luci-mod-network.json b/modules/luci-mod-network/root/usr/share/rpcd/acl.d/luci-mod-network.json
+index 002a6d085d..f0227189fc 100644
+--- a/modules/luci-mod-network/root/usr/share/rpcd/acl.d/luci-mod-network.json
++++ b/modules/luci-mod-network/root/usr/share/rpcd/acl.d/luci-mod-network.json
+@@ -13,7 +13,7 @@
+ 			},
+ 			"ubus": {
+ 				"file": [ "exec" ],
+-				"iwinfo": [ "assoclist", "countrylist", "freqlist", "txpowerlist" ],
++				"iwinfo": [ "assoclist", "countrylist", "devices", "freqlist", "txpowerlist" ],
+ 				"luci": [ "getSwconfigFeatures", "getSwconfigPortState" ]
+ 			},
+ 			"uci": [ "dhcp", "firewall", "network", "wireless", "system" ]

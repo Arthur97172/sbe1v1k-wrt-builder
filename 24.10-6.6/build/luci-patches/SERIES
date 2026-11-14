@@ -12,4 +12,5 @@
 
 0001-luci-wireless-sae-compat.patch	tree	luci	LuCI 增加 WPA2-PSK/WPA3-SAE Compatibility Mode 选项
 0002-luci-wireless-qsdk-band-split.patch	tree	luci	QSDK band-split 射频（radioX_bandN）的频率/频段选择改读 section 自身 channels，保存表单不再删掉 band/channel
-0003-luci-wireless-txpower-list.patch	tree	luci	最大传输功率下拉丢掉 iwinfo 的 255 dBm 哨兵值，并把已配置的 txpower 补进列表（保存不再丢 23）；当前功率 0 显示为未知
+0003-luci-wireless-txpower-list.patch	tree	luci	最大传输功率下拉先按 VAP 接口名探测 txpower 列表（phy/band-split section 只有 255 dBm 哨兵），失败再回退到 iwinfo devices；过滤 0..63 之外的值并把已配置的 txpower 补进列表（保存不再丢 23）；当前功率为 0 时显示已配置值
+0004-luci-network-iwinfo-devices-acl.patch	tree	luci	luci-mod-network 的 rpcd ACL 放行 iwinfo devices（0003 的 6 GHz 回退需要，原 ACL 只给 assoclist/countrylist/freqlist/txpowerlist）

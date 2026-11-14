@@ -1,4 +1,4 @@
-Subject: [PATCH] luci-mod-network: keep the txpower select usable on QSDK radios
+Subject: [PATCH] luci-mod-network: fix the txpower select on QSDK radios
 
 LuCI asks iwinfo for the transmit power list by wifi-device section name.
 On QSDK every radioX_bandN section resolves to the same wiphy, and for a
@@ -10,44 +10,108 @@ bogus "255 dBm" option, and the configured value (e.g. txpower 23) was
 not part of the list, so the browser preselected the bogus entry and
 Save & Apply replaced or dropped the option.
 
-Two changes:
+Measured on SBE1V1K (ath12k, QSDK): `iwinfo phy00 txpowerlist` returns
+only the sentinel, while the per-VAP names do much better --
+`phy00.0-0` (2.4 GHz) and `phy00.1-0` (5 GHz) return the full 0..30 dBm
+list.  The 6 GHz VAP (`phy00.2-0`) also returns only the sentinel, as
+libiwinfo has no 6 GHz band, so the 6 GHz section falls back to the list
+of another VAP reported by `iwinfo devices` (its rpc ACL is extended
+separately, see 0004).
 
+Changes:
+
+ - probe the associated VAP interface name (from the network model),
+   then the section itself, then every device `iwinfo devices` reports,
+   and use the first list with more than one usable entry;
  - skip entries outside the 0..63 dBm range that a real WLAN radio can
    use, which removes the 255 dBm sentinel;
  - append the section's configured `option txpower` to the list when the
    driver list does not contain it, so it stays selectable and is
-   preserved when the dialog is saved untouched.
-
-The "Current power" hint now treats a reported power of 0 as unknown:
-nl80211 returns 0 when the driver does not expose the current TX power
-(QSDK ath12k does not), so 0 was shown as a usable 0 dBm setting.
+   preserved when the dialog is saved untouched;
+ - the "Current power" hint treats a reported power of 0 as unknown
+   (nl80211 returns 0 when the driver does not expose the current TX
+   power; QSDK ath12k does not) and falls back to the configured
+   `option txpower`, so the hint matches what was saved.
 
 diff --git a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
-index bdbba2d849..74065a9dbe 100644
+index bdbba2d849..8a0b273ceb 100644
 --- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
 +++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
-@@ -605,8 +605,30 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+@@ -598,15 +598,82 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+ 		expect: { results: [] }
+ 	}),
+ 
++	callDevices: rpc.declare({
++		object: 'iwinfo',
++		method: 'devices',
++		expect: { devices: [] }
++	}),
++
++	/* libiwinfo keeps its -1 "not reported" marker when a query does not
++	 * match a frequency entry; the marker is stored in a uint8_t and arrives
++	 * here as dBm 255 / mW 2147483647.  Only offer values a real WLAN radio
++	 * can use. */
++	usablePowerList: function(pwrlist) {
++		return L.toArray(pwrlist).filter(function(p) {
++			return p.dbm >= 0 && p.dbm <= 63;
++		});
++	},
++
++	/* Query each candidate device name until one returns a real list. */
++	probePowerList: function(candidates) {
++		const self = this;
++		const names = L.toArray(candidates).filter(function(name, idx, arr) {
++			return name && arr.indexOf(name) == idx;
++		});
++
++		const step = function(idx) {
++			if (idx >= names.length)
++				return Promise.resolve([]);
++
++			return self.callTxPowerList(names[idx]).then(function(pwrlist) {
++				return (self.usablePowerList(pwrlist).length > 1) ? pwrlist : step(idx + 1);
++			}).catch(function() {
++				return step(idx + 1);
++			});
++		};
++
++		return step(0);
++	},
++
+ 	load: function(section_id) {
+-		return this.callTxPowerList(section_id).then(L.bind(function(pwrlist) {
++		/* The section belongs to a wifi-device, and on QSDK band-split radios
++		 * every band section resolves to the same wiphy: the phy level query
++		 * never yields a usable list.  The interface name of the associated
++		 * VAP (phy00.0-0, ...) does, except on 6 GHz where libiwinfo has no
++		 * band at all.  Probe the VAP first, then the section, then every VAP
++		 * iwinfo knows about. */
++		const vap = this.wifiNetwork ? this.wifiNetwork.getIfname() : null;
++
++		return this.probePowerList([ vap, section_id ]).then(L.bind(function(pwrlist) {
++			if (this.usablePowerList(pwrlist).length > 1)
++				return pwrlist;
++
++			return this.callDevices().then(L.bind(function(devs) {
++				return this.probePowerList(devs ? devs.devices : null);
++			}, this)).catch(function() {
++				return pwrlist;
++			});
++		}, this)).then(L.bind(function(pwrlist) {
+ 			this.powerval = this.wifiNetwork ? this.wifiNetwork.getTXPower() : null;
+ 			this.poweroff = this.wifiNetwork ? this.wifiNetwork.getTXPowerOffset() : null;
  
  			this.value('', _('driver default'));
  
 -			for (let p of pwrlist)
 +			const listed = new Set();
 +
-+			for (let p of pwrlist) {
-+				/* A request for a phy (and every QSDK band-split section,
-+				 * since radioX_bandN sections resolve to the same wiphy)
-+				 * makes libiwinfo fail to find the frequency entry; it keeps
-+				 * its -1 "not reported" marker, which is stored in a uint8_t
-+				 * and arrives here as dBm 255 / mW 2147483647.  Only offer
-+				 * values the hardware can actually use. */
-+				if (p.dbm < 0 || p.dbm > 63)
-+					continue;
-+
++			for (let p of this.usablePowerList(pwrlist)) {
 +				listed.add(String(p.dbm));
  				this.value(p.dbm, `${p.dbm} dBm (${p.mw} mW)`);
 +			}
 +
-+			/* iwinfo cannot report a usable list for these radios, so the
++			/* iwinfo cannot report a usable list for every radio, so the
 +			 * configured `option txpower` may be missing from it.  Without an
 +			 * own entry the select falls back to its first option and Save &
 +			 * Apply silently replaces or drops the configured value. */
@@ -58,14 +122,17 @@ index bdbba2d849..74065a9dbe 100644
  
  			return form.ListValue.prototype.load.apply(this, [section_id]);
  		}, this));
-@@ -617,10 +639,15 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+@@ -617,10 +684,18 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
  
  		widget.firstElementChild.style.width = 'auto';
  
 +		/* nl80211 reports a current TX power of 0 when the driver does not
-+		 * expose it (QSDK ath12k does not), so 0 means "not reported" here
-+		 * and must not be shown as a usable 0 dBm setting. */
-+		const power = (this.powerval != null && this.powerval > 0) ? this.powerval : null;
++		 * expose it (QSDK ath12k does not), so 0 means "not reported" here.
++		 * Fall back to the configured value, which is what the driver is
++		 * asked to apply. */
++		const cfgval = parseInt(uci.get('wireless', section_id, 'txpower'), 10);
++		const configured = isNaN(cfgval) ? null : cfgval;
++		const power = (this.powerval != null && this.powerval > 0) ? this.powerval : configured;
 +
  		dom.append(widget, E('span', [
  			' - ', _('Current power'), ': ',

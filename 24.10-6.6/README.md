@@ -29,7 +29,9 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
-│   └── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
+│   ├── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
+│   ├── etc/init.d/ethernet-macs                每次开机固定 eth1–eth3 的 MAC（START=15，先于 network）
+│   └── usr/lib/sbe1v1k/ethernet-macs           实际逻辑（eth0 base MAC +1..+3，见 §以太网端口 MAC）
 └── scripts/
     ├── render-overlay.sh     把 files/ 整体复制进 sources/buildroot/files 并替换版本占位符
     ├── custom-packages.sh    应用文件 B + defconfig + 逐包反查
@@ -127,6 +129,24 @@ board.json 网络段在升级路径下照常写入；`verify-image.sh` 对该守
 A 机升级刷入后删除 board.json 重跑 `board_detect`，已确认
 `lan.ports = [eth2, eth3, eth0]`（真机 PASS，2026-11-13）。
 
+### 以太网端口 MAC 固定化
+
+引导器（APPSBL）只把板级 base MAC 写进 `dp1` 的 DT `local-mac-address`
+（= `eth0`，`addr_assign_type=0`）；`dp2`–`dp4`（`eth1`–`eth3`）的该属性全零，
+`nss-dp` 因此**每次开机**给它们分配随机 MAC（`addr_assign_type=1`）。`eth1` 是
+WAN、`eth2`/`eth3` 组 `br-lan`，随机地址会让 WAN 的 IP、DHCP 租约和桥 MAC 每次
+重启都变（2026-11-14 的 #70 镜像真机现象）。
+
+修复在 overlay：`/etc/init.d/ethernet-macs`（`START=15`，早于 `network` 的 20，
+由 `include/rootfs.mk` 自动 enable）调用 `/usr/lib/sbe1v1k/ethernet-macs`，从
+`eth0` 读 base MAC（全零/组播/本地管理的地址视为不可用），按 **+1/+2/+3** 逐口
+`ip link set address` 固定 `eth1`–`eth3`。偏移低于 `wireless-defaults` 的
++16/+17/+18（Wi-Fi MAC 派生）且高于 `eth0`，不影响“最低以太网 MAC 作 Wi-Fi
+base”的规则。只处理 `addr_assign_type=1` 的端口，引导器已给定的地址不动；
+base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两个文件进镜像、
+`S15ethernet-macs` 软链存在且脚本按 `addr_assign_type` 判断。真机行为
+`NOT TESTED`（需重启验证 MAC 与 IP 是否稳定）。
+
 版本（取自镜像内 `/usr/lib/opkg/status`，随 feeds 更新会变化）：
 
 | 组件 | 版本 |
@@ -219,17 +239,21 @@ QSDK 的 `/sbin/wifi config` 把一颗 wiphy（`phy00`，PCI `0001:01:00.0`）�
 section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函数分别断言，
 `verify-image.sh` 也在镜像内复查。
 
-- **“最大传输功率”下拉里只有 255 dBm**：“当前功率: 0 dBm、下拉只有
-  `255 dBm`”是同一个 iwinfo 限制的两个表现。对 phy 级查询（三个
-  `radio0_bandN` section 都解析到同一颗 `phy00`）libiwinfo 匹配不到频道条目，
-  把内部表示“未知”的 `-1` 直接塞进列表末项的 `uint8_t dbm`，于是变成 255，
-  rpcd 再用它算 `dBm→mW` 时整数溢出得到 2147483647 mW；而已配置的
-  `option txpower`（23）不在列表里，浏览器打开对话框时预选第一个选项，
-  原样保存就会把 txpower 换成 255 或删掉。`build/luci-patches/0003` 丢掉
-  0..63 dBm 之外的条目（真实 WLAN 射频不会超出），并把 section 自身的
-  `option txpower` 补进下拉、保持选中——保存不再丢配置。“当前功率 0 dBm”
-  是 QSDK ath12k 不回报当前发射功率时 nl80211 的 0，补丁把它显示为“未知”。
-  后两项限制都在 libiwinfo/rpcd 侧，只在 LuCI 前端做防御，不碰 C 代码。
+- **“最大传输功率”下拉里只有 255 dBm / “当前功率: 未知”**：同一个 iwinfo 限制
+  的两个表现。对 phy 级查询（三个 `radio0_bandN` section 都解析到同一颗
+  `phy00`）libiwinfo 匹配不到频道条目，把内部表示“未知”的 `-1` 直接塞进列表
+  末项的 `uint8_t dbm`，于是变成 255，rpcd 再用它算 `dBm→mW` 时整数溢出得到
+  2147483647 mW；而已配置的 `option txpower`（23）不在列表里，浏览器打开
+  对话框时预选第一个选项，原样保存就会把 txpower 换成 255 或删掉。
+  `build/luci-patches/0003` 先按 **VAP 接口名**（`this.wifiNetwork.getIfname()`，
+  如 `phy00.0-0`）探测：真机实测 2.4G/5G 的 VAP 返回完整 `0..30 dBm` 列表，
+  phy 级与 6 GHz VAP（libiwinfo 没有 6 GHz band）都只有哨兵；VAP 无列表时回退
+  到 section 自身，再回退到 `iwinfo devices` 报告的其它 VAP。列表过滤
+  0..63 dBm 之外的条目，并把 section 自身的 `option txpower` 补进下拉、保持
+  选中——保存不再丢配置。“当前功率 0 dBm”是 QSDK ath12k 不回报当前发射功率时
+  nl80211 的 0，补丁改为显示已配置的 `option txpower`。`0004` 在
+  `luci-mod-network` 的 rpcd ACL 里放行只读的 `iwinfo devices`（否则 6 GHz
+  回退被拒）。限制都在 libiwinfo/rpcd 侧，只在 LuCI 前端做防御，不碰 C 代码。
 
 - **hostapd 拒载配置（所有 Wi-Fi 显示“已禁用”的真根因）**：QCA 的
   `wifi-scripts` 生成 `hostapd-phy00.X.conf` 时无条件追加
@@ -701,9 +725,9 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 
 - `files/` 由 `include/image.mk` 原样复制进 rootfs，**不经过** `VERSION_SED_SCRIPT`，
   所以 banner 里的 `%V`/`%R` 必须由 `render-overlay.sh` 在构建前替换。
-- `/etc/rc.d/S95wireless-defaults` 由 `include/rootfs.mk` 的 `prepare_rootfs`
-  自动生成，条件是 `etc/init.d/wireless-defaults` 首行**精确**为
-  `#!/bin/sh /etc/rc.common` 且权限 0755。
+- `/etc/rc.d/S95wireless-defaults`、`/etc/rc.d/S15ethernet-macs` 等开机链接由
+  `include/rootfs.mk` 的 `prepare_rootfs` 自动生成，条件是 `etc/init.d/<名>`
+  首行**精确**为 `#!/bin/sh /etc/rc.common` 且权限 0755。
 - `/etc/uci-defaults/*` 由 `/etc/init.d/boot` 以 `( . file )`（子 shell 内 source）
   加载，成功才删除、失败保留到下次开机重试。本仓库的约定仍是不用 `set -e`，退出
   一律显式写：overlay 里的入口用调用脚本的返回码，包内脚本（如

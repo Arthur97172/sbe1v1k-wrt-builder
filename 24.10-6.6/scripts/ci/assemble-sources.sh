@@ -537,9 +537,15 @@ logmsg "  QSDK_BAND_SPLIT_OK luci wireless.js"
 # 0003 修「最大传输功率」下拉：iwinfo 对 phy/band-split section 的查询拿不到
 # 频率条目，把 -1（未知）哨兵塞进 uint8_t 的 dbm 字段变成 255 dBm，rpcd 再算
 # 出 2147483647 mW；同时列表里没有已配置的 txpower，保存表单会把 23 换成
-# 255 或直接删掉。四处缺一即停：过滤 0..63 之外的条目、把 section 的
-# option txpower 补进列表、已列值不重复、当前功率 0 按未知显示。
-grep -qF 'if (p.dbm < 0 || p.dbm > 63)' "$_ljs" \
+# 255 或直接删掉。真机实测：phy 级查询只有哨兵，2.4G/5G 的 VAP 接口名
+# （phy00.0-0/phy00.1-0）有完整 0..30 dBm 列表，6 GHz 的 VAP 也只有哨兵。
+# 缺一即停：按 VAP 接口名探测、devices 回退、过滤 0..63 之外的条目、把
+# section 的 option txpower 补进列表、已列值不重复、当前功率 0 按配置值显示。
+grep -qF 'this.wifiNetwork.getIfname()' "$_ljs" \
+	|| die 4 "0003 未生效：txpower 列表未先按 VAP 接口名探测"
+grep -qF 'callDevices: rpc.declare' "$_ljs" \
+	|| die 4 "0003 未生效：txpower 列表缺 iwinfo devices 回退"
+grep -qF 'return p.dbm >= 0 && p.dbm <= 63;' "$_ljs" \
 	|| die 4 "0003 未生效：txpower 列表仍保留 255 dBm 哨兵条目"
 grep -qF "uci.get('wireless', section_id, 'txpower')" "$_ljs" \
 	|| die 4 "0003 未生效：已配置的 txpower 未读入表单"
@@ -548,6 +554,14 @@ grep -qF 'listed.has(String(cfgval))' "$_ljs" \
 grep -qF 'this.powerval > 0' "$_ljs" \
 	|| die 4 "0003 未生效：当前功率 0 仍显示为 0 dBm"
 logmsg "  TXPOWER_LIST_OK luci wireless.js"
+
+# 0004：0003 对 6 GHz section 的回退要调用 iwinfo devices，rpcd 的
+# luci-mod-network ACL 必须放行（原来只有 assoclist/countrylist/freqlist/
+# txpowerlist，调用会被拒绝，回退静默失效）。
+_lacl="$SRC/luci/modules/luci-mod-network/root/usr/share/rpcd/acl.d/luci-mod-network.json"
+grep -qF '"iwinfo": [ "assoclist", "countrylist", "devices", "freqlist", "txpowerlist" ]' "$_lacl" \
+	|| die 4 "0004 未生效：luci-mod-network ACL 未放行 iwinfo devices"
+logmsg "  IWINFO_DEVICES_ACL_OK luci-mod-network"
 
 # =============================================================== 12. 第三方
 step "第三方树"

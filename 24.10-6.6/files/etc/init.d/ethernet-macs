@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# 每次开机在 netifd 之前固定以太网端口 MAC（实现见
+# /usr/lib/sbe1v1k/ethernet-macs）。
+#
+# START=15：晚于 boot/system（10），早于 network（20）——WAN 的 DHCP 与
+# br-lan 的桥地址拿到的都是固定后的值。脚本自身幂等（每次开机端口地址都被
+# nss-dp 重新随机化，所以每次都要重设），不需要 UCI marker。
+
+START=15
+
+start() {
+	/usr/lib/sbe1v1k/ethernet-macs
+}

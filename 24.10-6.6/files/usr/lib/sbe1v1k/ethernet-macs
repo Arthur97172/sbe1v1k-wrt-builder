@@ -1,0 +1,119 @@
+#!/bin/sh
+# 以太网端口 MAC 固定化。
+#
+# 引导器（APPSBL）只把板级 base MAC 写进 dp1 的 DT local-mac-address，对应
+# eth0（addr_assign_type=0）；dp2–dp4（eth1–eth3）的 local-mac-address 全是
+# 零，nss-dp 每次开机给它们分配随机 MAC（addr_assign_type=1）。eth1 是 WAN，
+# eth2/eth3 组成 br-lan：随机地址让 WAN 的 IP、DHCP 租约和桥 MAC 每次重启
+# 都变。
+#
+# 在 netifd 拉起接口之前（/etc/init.d/ethernet-macs，START=15 < network 的
+# 20）从 eth0 读 base MAC，按 +1/+2/+3 派生 eth1–eth3。偏移全部低于
+# wireless-defaults 的 +16/+17/+18 且高于 eth0，所以那个脚本“最低以太网
+# MAC 作 Wi-Fi base”的规则不受影响。
+#
+# 只改 addr_assign_type=1（内核随机分配）的端口；引导器/DT 已给定的地址
+# 保持原样。base MAC 不可用时一个端口都不动，只记一条日志。
+
+PORTS="eth1 eth2 eth3"
+BASE_IF=eth0
+
+log() {
+	logger -t ethernet-macs -- "$*"
+}
+
+# eth0 的 DT 地址。全零、组播（首字节 & 0x01）或本地管理（首字节 & 0x02，
+# 内核随机分配的特征）都视为不可用——随机地址不能当 per-unit base。
+read_base_mac() {
+	local mac o1
+
+	[ -r "/sys/class/net/$BASE_IF/address" ] || return 1
+	mac=$(tr 'A-F' 'a-f' < "/sys/class/net/$BASE_IF/address")
+	[ "$mac" != "00:00:00:00:00:00" ] || return 1
+	o1=${mac%%:*}
+	case "$o1" in
+		''|*[!0-9a-f]*) return 1 ;;
+	esac
+	[ $((0x$o1 & 0x01)) -eq 0 ] || return 1
+	[ $((0x$o1 & 0x02)) -eq 0 ] || return 1
+
+	printf '%s\n' "$mac"
+}
+
+# mac_add_offset <mac> <offset>：把偏移加到最后一个字节，向左进位。
+# 与 /usr/lib/sbe1v1k/wireless-defaults 中的同名函数保持一致。
+mac_add_offset() {
+	local mac="$1" offset="$2"
+	local o1 o2 o3 o4 o5 o6 carry
+	local IFS=:
+
+	set -- $mac
+	[ $# -eq 6 ] || return 1
+
+	o1=$((0x$1)); o2=$((0x$2)); o3=$((0x$3))
+	o4=$((0x$4)); o5=$((0x$5)); o6=$((0x$6))
+
+	o6=$((o6 + offset)); carry=$((o6 / 256)); o6=$((o6 % 256))
+	o5=$((o5 + carry)); carry=$((o5 / 256)); o5=$((o5 % 256))
+	o4=$((o4 + carry)); carry=$((o4 / 256)); o4=$((o4 % 256))
+	o3=$((o3 + carry)); carry=$((o3 / 256)); o3=$((o3 % 256))
+	o2=$((o2 + carry)); carry=$((o2 / 256)); o2=$((o2 % 256))
+	o1=$((o1 + carry)); o1=$((o1 % 256))
+
+	printf '%02x:%02x:%02x:%02x:%02x:%02x\n' \
+		"$o1" "$o2" "$o3" "$o4" "$o5" "$o6"
+}
+
+# 端口地址是否由内核随机分配。读不到该属性时按“是”处理，让 pin_port 退回
+# 到与目标值比较。
+port_is_random() {
+	local f="/sys/class/net/$1/addr_assign_type"
+
+	[ -r "$f" ] || return 0
+	[ "$(cat "$f")" = "1" ]
+}
+
+pin_port() {
+	local port="$1" wanted="$2" cur
+
+	[ -e "/sys/class/net/$port" ] || return 0
+	port_is_random "$port" || return 0
+
+	cur=$(tr 'A-F' 'a-f' < "/sys/class/net/$port/address" 2>/dev/null)
+	[ "$cur" = "$wanted" ] && return 0
+
+	if ip link set dev "$port" address "$wanted" 2>/dev/null; then
+		log "$port -> $wanted"
+		return 0
+	fi
+
+	# 个别驱动要求接口先 down 才允许改地址；本脚本在 netifd 之前运行，
+	# 之后 network 会照常 ifup。
+	ip link set dev "$port" down 2>/dev/null
+	if ip link set dev "$port" address "$wanted" 2>/dev/null; then
+		log "$port -> $wanted (after down)"
+		return 0
+	fi
+
+	log "failed to set $port address to $wanted"
+	return 1
+}
+
+main() {
+	local base offset port wanted
+
+	base=$(read_base_mac) || {
+		log "no usable base MAC on $BASE_IF; port MACs left untouched"
+		return 0
+	}
+
+	offset=0
+	for port in $PORTS; do
+		offset=$((offset + 1))
+		wanted=$(mac_add_offset "$base" "$offset") || continue
+		[ -n "$wanted" ] || continue
+		pin_port "$port" "$wanted"
+	done
+}
+
+main "$@"
