@@ -198,6 +198,12 @@ apply_series() {
 			apply_patch "$patch" "$SRC/$dest"
 			;;
 		package-patch)
+			# OpenWrt 只从 <包目录>/patches/ 取补丁；落错一级就是静默
+			# 不生效（0023 首次登记时目标写成了包根）。
+			case "$dest" in
+			*/patches/) ;;
+			*) die 4 "package-patch 目标必须是 <包目录>/patches/：$dest（$p）" ;;
+			esac
 			mkdir -p "$SRC/$dest"
 			cp -p "$patch" "$SRC/$dest/"
 			logmsg "  PACKAGE-PATCH $(basename "$patch") → $dest/"
@@ -455,6 +461,28 @@ if grep -q 'append base_cfg "athnewind=' "$_ws22"; then
 	die 4 "0022 未生效：mac80211.sh 仍向 hostapd 配置发 athnewind"
 fi
 logmsg "  HOSTAPD_EXTN_OPTS_OK wifi-scripts（配置不再带 noextns 不认识的扩展项）"
+
+# 0023 把 dawn 的 neighbor_report 拷贝改成有界。补丁由构建期应用，装配阶段
+# 只能验证两件事：它确实落在 dawn 包的 patches/ 目录（放错一级 OpenWrt 会
+# 静默不应用），以及内容里确实是 1024 上限 + 有界拷贝，不是原补丁的残次版。
+_dawn_patch="$SRC/buildroot/qca/feeds/packages/net/dawn/patches/0023-dawn-bounded-neighbor-report.patch"
+[ -f "$_dawn_patch" ] || die 4 "0023 未生效：dawn/patches/ 下没有有界化补丁"
+grep -q '^+#define NEIGHBOR_REPORT_LEN 1024$' "$_dawn_patch" \
+	|| die 4 "0023 内容不符：NEIGHBOR_REPORT_LEN 不是 1024"
+grep -q 'strncpy(entry->neighbor_report, neighborreport, NEIGHBOR_REPORT_LEN)' "$_dawn_patch" \
+	|| die 4 "0023 内容不符：neighbor_report 仍是无界拷贝"
+logmsg "  DAWN_NR_BOUNDED_OK dawn（NEIGHBOR_REPORT_LEN=1024，有界拷贝）"
+
+# 0024 去掉 wpa_supplicant 配置里五个只有 qcn-app-extns 认识的全局项。noextns
+# 变体遇到任一未知全局项就整份拒收（Failed to read or parse configuration），
+# mesh vif 永远 NO-CARRIER；五条 heredoc 行必须一条都不剩。
+_ws24="$SRC/buildroot/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh"
+for _k in CSwOpts athnewind rptr_mgr_mode channel uplink_csa; do
+	if grep -qxF "${_k}=\$${_k}" "$_ws24"; then
+		die 4 "0024 未生效：hostapd.sh 仍向 wpa_supplicant 配置写 $_k"
+	fi
+done
+logmsg "  SUPPLICANT_EXTN_OPTS_OK wifi-scripts（supplicant 配置不再带扩展全局项）"
 
 # =============================================================== 11b. luci
 step "LuCI 补丁（build/luci-patches/SERIES）"

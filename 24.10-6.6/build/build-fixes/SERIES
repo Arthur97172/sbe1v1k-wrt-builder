@@ -44,5 +44,5 @@
 0019-kernel-initramfs-xz-dict.patch	tree	buildroot	initramfs 的 cpio.xz 改用 -9e + 128 MiB 字典（压回 64 MiB 的 RAM 启动上限内）
 0021-hostapd-build-features-11be.patch	tree	buildroot	hostapd 的 has_feature() 认识 "11be"（LuCI 按 `hostapd -v11be` 退出码显示 802.11be 模式）
 0022-wifi-scripts-drop-hostapd-extn-options.patch	tree	buildroot	不再向 hostapd 配置发 disable_iface_during_cac/athnewind（noextns 变体无扩展解析，unknown item 会让 add_iface 失败、所有 BSS 起不来）
-0023-dawn-bounded-neighbor-report.patch	package-patch	buildroot/qca/feeds/packages/net/dawn/	dawn 的 neighbor_report 用无界 strcpy 写入 200 字节缓冲，QSDK hostapd 回 304-330 字符即踩坏紧随的 ubus_subscriber（AVL 指针被 hex 覆盖，每 15 s 一次 core）
+0023-dawn-bounded-neighbor-report.patch	package-patch	buildroot/qca/feeds/packages/net/dawn/patches/	dawn 的 neighbor_report 用无界 strcpy 写入 200 字节缓冲，QSDK hostapd 回 304-330 字符即踩坏紧随的 ubus_subscriber（AVL 指针被 hex 覆盖，每 15 s 一次 core）
 0024-wifi-scripts-drop-supplicant-extn-options.patch	tree	buildroot	wpa_supplicant 配置不再写 athnewind/rptr_mgr_mode/channel/uplink_csa/CSwOpts（noextns 变体不认全局扩展项，整个文件被拒，802.11s 永远起不来）
