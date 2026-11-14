@@ -26,6 +26,13 @@ The CONFIG_PWM line is what makes the two kmods' kernel symbols
 selectable at all; CONFIG_PWM_IPQ builds the controller in, so the fan
 driver never has to wait for the chip module.
 
+Turning CONFIG_PWM on also makes CONFIG_LEDS_QCOM_LPG (drivers/leds,
+depends on PWM) visible for the first time.  Every symbol the target
+config leaves without a value is a "(NEW)" prompt to kconfig, and
+OpenWrt exports FAIL_ON_UNCONFIGURED=1 to the kernel build, so
+conf --syncconfig exits 1 on the first such symbol before anything is
+compiled - that is why this patch also pins the new symbol to n.
+
 Status: static only, NOT TESTED on hardware.
 ---
 diff -ruN a/target/linux/qualcommbe/patches-6.12/0400-dt-bindings-pwm-add-IPQ6018-binding.patch b/target/linux/qualcommbe/patches-6.12/0400-dt-bindings-pwm-add-IPQ6018-binding.patch
@@ -616,7 +623,7 @@ diff -ruN a/target/linux/qualcommbe/patches-6.12/0403-pwm-fix-period-calculation
 + 
 --- a/target/linux/qualcommbe/config-6.12
 +++ b/target/linux/qualcommbe/config-6.12
-@@ -397,6 +397,10 @@
+@@ -397,6 +397,11 @@
  CONFIG_POWER_SUPPLY=y
  CONFIG_PRINTK_TIME=y
  CONFIG_PTP_1588_CLOCK_OPTIONAL=y
@@ -624,6 +631,7 @@ diff -ruN a/target/linux/qualcommbe/patches-6.12/0403-pwm-fix-period-calculation
 +# kmod-leds-pwm) hang off this; without it they are silently dropped.
 +CONFIG_PWM=y
 +CONFIG_PWM_IPQ=y
++# CONFIG_LEDS_QCOM_LPG is not set
  CONFIG_QCA807X_PHY=y
  CONFIG_QCA808X_PHY=y
  # CONFIG_QCM_DISPCC_2290 is not set

@@ -181,7 +181,12 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 `patches/0025` 加入上游 OpenWrt qualcommbe 的四个内核补丁（0400 绑定、0401
 驱动、0402 `pwm@1941010` 节点、0403 周期计算修复——没有 0403，25 kHz 的
 短周期会塌成约 0% 高电平），并在 `config-6.12` 打开 `CONFIG_PWM` /
-`CONFIG_PWM_IPQ`。`patches/0026` 在板级 DTS 里接上通道 3（GPIO 53，风扇，
+`CONFIG_PWM_IPQ`，同时把打开 PWM 后才可见的 `CONFIG_LEDS_QCOM_LPG` 钉成
+`n`：OpenWrt 给内核构建导出了 `FAIL_ON_UNCONFIGURED=1`，`conf --syncconfig`
+遇到任何没有取值的新符号会立刻 `exit 1`（`target/linux` 报
+`ERROR: target/linux failed to build`，整个目标只跑十几秒，看不出原因）。
+以后在 `config-6.12` 引入新符号时，若构建以这种方式失败，先找 `(NEW)`
+符号并补上显式取值。`patches/0026` 在板级 DTS 里接上通道 3（GPIO 53，风扇，
 40 µs 周期）、RGB 三通道的引脚复用、GPIO 40 的转速计输入，并把风扇挂成
 `top-glue-thermal`（tsens 15）的 cooling device。温控区是必需的：
 `pwm-fan` 的 probe 直接 `set_pwm(ctx, MAX_PWM)`，没有 cooling device 就不会降速。

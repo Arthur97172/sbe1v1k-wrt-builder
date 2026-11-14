@@ -26,7 +26,11 @@
 - `patches/0025`：原样收进上游 OpenWrt qualcommbe 的 0400（DT 绑定）、0401
   （驱动 + Kconfig/Makefile）、0402（`pwm@1941010` 节点，默认 disabled）、
   0403（周期计算修复，25 kHz 短周期否则塌成约 0% 高电平）；`config-6.12`
-  打开 `CONFIG_PWM=y`、`CONFIG_PWM_IPQ=y`。
+  打开 `CONFIG_PWM=y`、`CONFIG_PWM_IPQ=y`，并把打开 PWM 后才可见的
+  `CONFIG_LEDS_QCOM_LPG` 钉成 `n`。后者不是可选项：OpenWrt 给内核构建
+  导出 `FAIL_ON_UNCONFIGURED=1`，`conf --syncconfig` 遇到没有取值的新符号
+  立即 `exit 1`，CI #23（1d9b13f）因此在 `target/linux` 里 13 秒失败，
+  日志只剩一行 `ERROR: target/linux failed to build`。
 - `patches/0026`：板级 DTS 增加通道 3 的 `pwm-fan`（40 µs 周期）、
   `pwm_pins`（GPIO 44/45/53/56 复用到 PWM）、`fan_tach_pins`（GPIO 40 上拉，
   两脉冲/转）、四个 active trip（40/50/65/80 °C，2 °C 回差）与 cooling maps，
