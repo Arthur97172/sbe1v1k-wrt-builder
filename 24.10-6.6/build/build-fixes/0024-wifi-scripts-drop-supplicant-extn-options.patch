@@ -1,0 +1,66 @@
+Subject: [PATCH] wifi-scripts: stop emitting wpa_supplicant globals only qcn-app-extns understands
+
+The QCA wifi-scripts (qca/feeds/wlan-open/mac80211/wifi-scripts) write
+the wpa_supplicant configuration for every supplicant-managed vif (sta,
+adhoc, and 802.11s mesh) with five QCA-specific global fields appended
+unconditionally after the network block:
+
+    CSwOpts=$CSwOpts
+    athnewind=$athnewind
+    rptr_mgr_mode=$rptr_mgr_mode
+    channel=$channel
+    uplink_csa=$uplink_csa
+
+These are parsed only by the QCA wifi extensions in wpa_supplicant
+(qcn-app-extns).  This build ships the wpad-mesh-*-noextns variant on
+purpose (qcn-app-extns is not part of the imported QCA source drop, see
+custom-packages.conf), so its config reader rejects any unknown global
+field and drops the entire file:
+
+    Successfully initialized wpa_supplicant
+    Failed to read or parse configuration '/var/run/wpa_supplicant-mesh6g.conf'
+
+wpa_supplicant then exits and netifd leaves the vdev DOWN: an 802.11s
+interface (mode mesh, which the scripts route through
+mac80211_setup_supplicant because wpa_supplicant -vmesh succeeds) never
+joins its mesh and carries no traffic.
+
+Not emitting the five fields equals the extension defaults
+(athnewind=0, rptr_mgr_mode=1, no CS options, no uplink CSA, channel
+unset), i.e. exactly the values the on-device configuration contained,
+so behaviour without the extensions is unchanged.  ppe_vp and
+wps_cred_add_sae are kept: both are understood by this wpa_supplicant.
+
+---
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh
+@@ -2373,11 +2373,17 @@
+ 	if [ "$key_mgmt" = "WPS" ]; then
+ 		echo "wps_cred_processing=1" >> "$_config"
+ 	else
++		# CSwOpts, athnewind, rptr_mgr_mode, channel and uplink_csa are parsed
++		# only by the QCA wifi extensions in wpa_supplicant (qcn-app-extns).
++		# This build ships the -noextns variant, whose config reader rejects
++		# the whole file on an unknown global field ("Failed to read or parse
++		# configuration"), so an 802.11s mesh interface never comes up.  Not
++		# emitting them equals the extension defaults (athnewind=0,
++		# rptr_mgr_mode=1, no CS options, no uplink CSA).
+ 		cat >> "$_config" <<EOF
+ $mesh_ctrl_interface
+ $user_mpm
+ $disable_csa_dfs
+-CSwOpts=$CSwOpts
+ $saepwe
+ $dpp1905connector
+ $rsn_override
+@@ -2400,10 +2406,6 @@
+ 	$smd_id
+ 	$smd_ptk_mode
+ }
+-athnewind=$athnewind
+-rptr_mgr_mode=$rptr_mgr_mode
+-channel=$channel
+-uplink_csa=$uplink_csa
+ EOF
+ 	fi
+ 	return 0

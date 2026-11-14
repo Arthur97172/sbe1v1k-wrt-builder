@@ -1,0 +1,75 @@
+Subject: [PATCH] ubus: bound the neighbour report copy in ubus_get_rrm_cb
+
+ubus_get_rrm_cb() copies hostapd's "rrm_nr_get_own" reply into
+hostapd_sock_entry::neighbor_report with a plain strcpy(). That buffer is
+NEIGHBOR_REPORT_LEN + 1 (201) bytes and is followed in the same struct by
+the ubus_subscriber, so a reply longer than 200 hex characters runs into
+the subscriber's avl_node -- the exact node libubus inserted into
+ctx->objects.
+
+The QSDK hostapd on this target returns one report for every BSS of the
+phy; with three radios it is 304 hex characters. The overflow turns the
+subscribed object's avl_node (list.next, parent, left, right, key) into
+ASCII hex digits, and the next ubus object insertion walks those pointers
+and dies with SIGSEGV inside avl_insert() -- one core every few seconds,
+each crash additionally stalling for the vendor core-upload retry.
+
+Copy at most NEIGHBOR_REPORT_LEN characters and terminate explicitly,
+mirroring what msghandler.c already does for the same field, and warn when
+the report does not fit. Also skip the copy when the request no longer
+belongs to a known socket (entry == NULL) and when the attribute is not a
+string, both of which dereference NULL today.
+
+--- a/src/utils/ubus.c	2026-11-14 02:13:57.381055387 +0000
++++ b/src/utils/ubus.c	2026-11-14 02:14:18.352021316 +0000
+@@ -968,9 +968,31 @@
+      {
+          if(i==2)
+          {
+-            char* neighborreport = blobmsg_get_string(attr);
+-            strcpy(entry->neighbor_report,neighborreport);
+-            dawnlog_debug("Copied Neighborreport: %s,\n", entry->neighbor_report);
++            const char *neighborreport;
++            size_t nrl;
++
++            // The request may already have been sent when the interface was
++            // removed, in which case no hostapd_sock_entry owns req->peer.
++            if (!entry)
++                break;
++
++            neighborreport = blobmsg_get_string(attr);
++            if (!neighborreport)
++                break;
++
++            // neighbour_report below is NEIGHBOR_REPORT_LEN + 1 bytes and is
++            // followed in the same struct by the ubus_subscriber, so the copy
++            // must stay bounded even when hostapd returns more than the buffer
++            // holds: QSDK hostapd answers with one element per BSS of the phy
++            // and easily exceeds the length dawn was written for.
++            strncpy(entry->neighbor_report, neighborreport, NEIGHBOR_REPORT_LEN);
++            entry->neighbor_report[NEIGHBOR_REPORT_LEN] = '\0';
++
++            nrl = strlen(neighborreport);
++            if (nrl > NEIGHBOR_REPORT_LEN)
++                dawnlog_warning("Neighbor Report possibly truncated - hex length of %zu\n", nrl);
++            else
++                dawnlog_debug("Copied Neighborreport: %s,\n", entry->neighbor_report);
+          }
+          i++;
+      }
+--- a/src/include/datastorage.h	2026-11-14 02:13:57.384040032 +0000
++++ b/src/include/datastorage.h	2026-11-14 02:13:57.385553686 +0000
+@@ -201,7 +201,12 @@
+ 
+ // ---------------- Defines ----------------
+ // FIXME: Is this enough of the NR to allow 802.11 operations to work?  Should we go for max possible length of 256 * 2 + 1
+-#define NEIGHBOR_REPORT_LEN 200
++// A Neighbor Report element carries a one-byte length, so one element is at
++// most 257 bytes (514 hex chars), and hostapd returns one element per BSS it
++// serves. The QSDK hostapd on this target already answers with 304-330 hex
++// chars for a single interface; 200 overflowed both this buffer and the
++// ubus_subscriber that follows it in hostapd_sock_entry.
++#define NEIGHBOR_REPORT_LEN 1024
+ /* Neighbor report string elements
+  * [Elemen ID|1][LENGTH|1][BSSID|6][BSSID INFORMATION|4][Operating Class|1][Channel Number|1][PHY Type|1][Operational Subelements]
+  * first two bytes are not stored
