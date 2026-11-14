@@ -25,7 +25,7 @@
 | 8 | 装配映射 | `build/assembly-map.conf` | 源存在；打完 files-6.6 仍为 525；DTS 含 `Spectrum SBE1V1K` 与 `sdhc_1`；`mmc.sh` 权限 744、SHA 固定 |
 | 9 | Wi-Fi blob | `sbe-wifi-firmware/files/FILES-SHA256` | `sha256sum -c` 6/6；许可仍是 `LICENSE_REVIEW_REQUIRED` |
 | 10 | 就地叠加 | `files-6.6/.` → `qca/src/linux-6.6/`；`bootloader/files/.` → `qca/src/u-boot-2025/` | 与两个包 Makefile 在解析期的 `cp` 一致；DTS 与 rtl8261n 落地；u-boot 叠加后恰好多出 381 个文件且无覆盖，`tools/sysupgrade.c` 在位 |
-| 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 21 条：20 条 `tree` + 1 条 `package-patch`（`0023` 只把补丁拷进 dawn 包的 `patches/`，由 OpenWrt 在拉源码后应用；`package-patch` 的目标必须以 `/patches/` 结尾，脚本会断言）；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
+| 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 21 条：20 条 `tree` + 1 条 `package-patch`（`0023` 只把补丁拷进 dawn 包的 `patches/`，由 OpenWrt 在拉源码后应用；`package-patch` 的目标必须以 `/patches/` 结尾，且补丁文件与落点目录都必须已在 `known-delta.conf` 登记——这两条平台脚本都会断言，否则第 16 步必然 `FINGERPRINT_MISMATCH`）；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
 | 11b | LuCI 补丁 | `build/luci-patches/SERIES` | `tree` 模式，目标是 `sources/luci`（第 5 步整树替换之后）；`0018` 五条、`luci-patches/0001` 四条 grep 断言（其中一条断言 `rsn_override_key_mgmt` 的赋值行号早于 override 元素的发出行号）；`luci-patches/0002` 三条 grep 断言（频段表读 section `channels`、重建后恢复所选 band、空值不落盘） |
 | 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` | passwall-selected 7 个包从新的 pin 重新派生；`thirdparty-feed` 10 个链接无悬空（2026-11-07 第二批加入 argon 主题）。2026-11-07 起装配不再打任何第三方补丁（wifihistory 专用补丁随应用删除） |
 | 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 11 条 `src-link`、175 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
@@ -35,7 +35,11 @@
 
 任何一步失败都会打印步骤名与最后 50 行日志。退出码：`2` SOURCE_UNAVAILABLE（pin
 取不到）、`3` PIN_MISMATCH、`4` ASSERTION_FAILED、`5` FINGERPRINT_MISMATCH、
-`6` SIZE_LIMIT（导出时）。
+`6` SIZE_LIMIT（导出时）。`4` 有两处来源：脚本自己的 `die 4`，和 `trap on_err ERR`
+的兜底（任何未预期的命令失败，打印 `FAIL step="…" rc=<真实 rc>` 后统一 `exit 4`）。
+兜底**只应**接住真正意外的情况；预期内的非零返回必须写成 `cmd || rc=$?` 再判定，
+不能用 `set +e`——`ERR` trap 的触发条件不看 `errexit`，`set +e` 挡不住它（2026-11-14
+的 exit 5 就是这样被改写成 4 的）。
 
 `SOURCE_UNAVAILABLE` 只在**重试之后**才判：每个 pin 最多取 3 次（间隔 5 秒，第三次
 强制 `http.version=HTTP/1.1`，规避 TLS/HTTP2 framing 这类网络抖动）。重试仍失败就

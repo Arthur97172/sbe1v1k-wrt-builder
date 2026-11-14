@@ -206,6 +206,16 @@ apply_series() {
 			esac
 			mkdir -p "$SRC/$dest"
 			cp -p "$patch" "$SRC/$dest/"
+			# 补丁文件与它落进的目录都是审计基线里没有的新路径，第 16 步
+			# 指纹比对逐条要对上 known-delta 的规则；漏登记一条就是
+			# FINGERPRINT_MISMATCH，而且以前只报“1 条未解释差异”不报路径。
+			# 在这里先拦，错在哪一行一眼可见。
+			for _np in "${dest%/}/$(basename "$patch")" "${dest%/}"; do
+				# 按第一列精确比对：规则既可写 glob 也可写绝对路径，新路径的
+				# 登记必须原文出现，否则指纹比对时对不上（fnmatch 语义另算）。
+				cut -f1 "$BUILD/known-delta.conf" | grep -qxF -- "$_np" \
+					|| die 4 "package-patch 新路径未在 known-delta.conf 登记：$_np（第 16 步指纹比对必然失败）"
+			done
 			logmsg "  PACKAGE-PATCH $(basename "$patch") → $dest/"
 			;;
 		*)
@@ -683,13 +693,14 @@ step "树指纹"
 _recipe=$("$PROJ/scripts/ci/recipe-hash.sh")
 FP_JSON="$STAGE/fingerprint.json"
 FP_TSV="$STAGE/fingerprint.tsv"
-set +e
+# 用 `|| rc=$?` 而不是 `set +e`：trap ERR 的触发条件不看 errexit，set +e
+# 挡不住 on_err（rc=5 的指纹不一致曾被它改写成 rc=4，日志里只剩一句通用的
+# step 失败）。`||` 列表里的命令按 bash 规则不进 ERR trap。
+rc=0
 "$PROJ/scripts/ci/tree-fingerprint.sh" \
 	--root "$SRC" --exclude "$BUILD/fingerprint-exclude.conf" \
 	--profile fresh --recipe-sha "$_recipe" --epoch "$EPOCH" \
-	--out "$FP_JSON" --tsv "$FP_TSV" >>"$LOG" 2>&1
-rc=$?
-set -e
+	--out "$FP_JSON" --tsv "$FP_TSV" >>"$LOG" 2>&1 || rc=$?
 [ "$rc" = 0 ] || { tail -n 60 "$LOG" >&2; die 4 "tree-fingerprint.sh 失败（rc=$rc）"; }
 _agg=$(sed -n 's/.*"aggregate_sha256": "\([0-9a-f]*\)".*/\1/p' "$FP_JSON")
 _entries=$(sed -n 's/.*"entry_count": \([0-9]*\).*/\1/p' "$FP_JSON")
@@ -707,16 +718,16 @@ if [ "$NO_COMPARE" != 1 ]; then
 				|| die 4 "无法解压基准：$COMPARE"
 			COMPARE="$STAGE/compare-baseline.tsv"
 		fi
-		set +e
+		rc=0
 		"$PROJ/scripts/ci/tree-fingerprint.sh" \
 			--root "$SRC" --exclude "$BUILD/fingerprint-exclude.conf" \
 			--profile fresh --recipe-sha "$_recipe" --epoch "$EPOCH" \
 			--out "$FP_JSON" --tsv "$FP_TSV" \
-			--compare "$COMPARE" --known-delta "$BUILD/known-delta.conf" >>"$LOG" 2>&1
-		rc=$?
-		set -e
+			--compare "$COMPARE" --known-delta "$BUILD/known-delta.conf" >>"$LOG" 2>&1 || rc=$?
 		if [ "$rc" = 5 ]; then
-			grep -E '^(compare:|DELTA|ERROR)' "$LOG" | tail -n 80 >&2 || true
+			# UNEXPLAINED 行优先打全：它们才是判定依据，DELTA 只是背景。
+			grep -E '^UNEXPLAINED' "$LOG" >&2 || true
+			grep -E '^(compare:|UNEXPLAINED|DELTA|ERROR)' "$LOG" | tail -n 40 >&2 || true
 			die 5 "FINGERPRINT_MISMATCH：与基准 $COMPARE 有未解释差异"
 		fi
 		[ "$rc" = 0 ] || { tail -n 60 "$LOG" >&2; die 4 "指纹比对失败（rc=$rc）"; }

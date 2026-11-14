@@ -405,6 +405,10 @@ def main():
               % (len(deltas), len(deltas) - len(unexplained), len(unexplained)))
         for p, d in deltas[:200]:
             print("DELTA %s %s" % (d, p))
+        # 未解释差异必须逐条列出：deltas 截断在 200 条，判定依据不能跟着被截掉
+        # （0023 的 dawn/patches/ 目录就是这样被埋掉的，CI 里只看到一句 rc=4）。
+        for p, d in unexplained:
+            print("UNEXPLAINED %s %s" % (d, p))
         if unexplained:
             die(5, "指纹与参考值不一致：%d 条未解释差异" % len(unexplained))
         print("FINGERPRINT_MATCH")

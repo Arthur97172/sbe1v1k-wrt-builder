@@ -249,8 +249,9 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
 | 2026-11-14 插件 pin 刷新（`luci-app-corestatus` `v1.0.2` → `v1.0.4`、`luci-app-ledfancontrol` `1.1.1-r1` → `1.1.1-r2`、`luci-app-meshassistant` `2.7.12-r1` → `2.8.1-r1`）：`scripts/ci/refresh-pins.sh --no-kernel` 与 `--apply` | PASS（首扫 3 项可更新、其余保持不动；`--apply` 后复扫 0 项可更新；三行都是 tag 相对旧 pin 的前进，非回退/分叉；`PROVENANCE.md` 的 pin 块由 `--apply` 同步；内核 pin 未动） |
 | 同批次的 CI 装配（push 触发 `sources-24.10-6.6.yml`） | NOT TESTED（本机未重跑全量装配；`known-delta.conf` 的 `apps/*` `any` 白名单下，插件内容变化只应产生已解释差异；结果以 CI 为准） |
-| `publish=true` 的 `sources-v13` 运行（run `43565539803`，head `5baee5c`） | FAIL：第 5 步 `Assemble sources` 失败，`Export bundle` 起全部 skipped，`publish` job 未执行。同一棵树更早的两次运行（`43546794981` push、`43547050726` dispatch，head `979852a`）也失败在同一步 |
-| 同批次的根因修复（`0023` 的落点 + `known-delta` 登记） | 静态 PASS：`bash -n` 通过，补丁内容断言（`NEIGHBOR_REPORT_LEN=1024`、`strncpy` 有界拷贝）在补丁文件上命中，`0024` 式的五条全局项断言在已打补丁的 `hostapd.sh` 上不误报、在补丁前的行形态上能拦住；CI 复验 NOT TESTED（见文末小节） |
+| `publish=true` 的 `sources-v13` 运行（run `43565539803`，head `5baee5c`） | FAIL：第 5 步 `Assemble sources` 失败，`Export bundle` 起全部 skipped，`publish` job 未执行。修复提交 `ab25c3e` 的 push 运行 `43566519007` 同样失败在同一步（两轮的注解都是 `Process completed with exit code 4`） |
+| 同批次的根因修复（`0023` 的落点 + `known-delta` 登记） | 静态 PASS：`bash -n` 通过；`0023` 补丁内容断言（`NEIGHBOR_REPORT_LEN=1024`、`strncpy` 有界拷贝）在补丁文件上命中，`0024` 的五条全局项断言在已打补丁的 `hostapd.sh` 上不误报、在补丁前的行形态上能拦住。但这一版**没修好 CI**：漏登记 `dawn/patches/` 目录本身（见文末 06:4x 小节），复验仍 FAIL |
+| `known-delta` 补目录规则 + `set +e` 改 `\|\| rc=$?`（第二次修复） | 本机 PASS：整树重装配（43 pin 全取、warm cache）跑完 16 步，`exit 0`；`compare: deltas=942 explained=942 unexplained=0`、`FINGERPRINT_MATCH`；`entries=195332`、`aggregate=5057a73a…d200`、`recipe_sha256=5f54e9cd…3bfb`；`FEEDS_OK src-link=11 package-links=175`、`SRC_DEPS_OK selected=412`。CI 复验 NOT TESTED |
 
 发布包由 runner 产出，`sbe1v1k-sources-24.10-6.6.tar.zst` 为 228,711,892 B；本地两次导出的
 是 228,502,877 B。两者**条目级指纹完全一致**（上面的 `entries`/`aggregate`/`recipe` 三项相同），
@@ -396,40 +397,59 @@ $(PKG_INSTALL_DIR)/usr/bin/socat $(1)/usr/bin/`，即 `/usr/bin/socat`；脚本�
 在 QSDK 6.6 内核上编译通过（本期唯一的编译风险点已经过去）；模块是否装进镜像仍待下一轮
 断言复验，在此之前按 `NOT TESTED` 处理。
 
-### 2026-11-14：`Assemble sources` 在 `979852a`/`5baee5c` 失败（`0023` 落点与指纹白名单）
+### 2026-11-14：`Assemble sources` 连续失败（`dawn/patches/` 目录未登记 + `ERR` trap 掩盖真实退出码）
 
-`24.10 修复：802.11s 起不来与 dawn 崩溃循环`（`979852a`）之后，`sources-24.10-6.6.yml`
-的三次运行全部失败在第 5 步 `Assemble sources`：`02:31` 的 push 运行 `43546794981`、
-`02:34` 的 dispatch 运行 `43547050726`（都是 `source_tag` 之外的普通装配），以及
-`06:0x` 以 `publish=true` 手动 dispatch 的 `43565539803`。`publish` job 因依赖
-`assemble` 而整体 skipped，所以这一轮没有产生 `sources-v13`。工作流日志需要登录才能
-下载（匿名 `jobs/…/logs` 返回 403），下面是按装配脚本与补丁内容逐项核对出的根因，
-`FAIL` 事实来自运行状态，失败点的具体报错文本记为 `UNVERIFIED`。
+`979852a`（`0023`/`0024`）之后，`sources-24.10-6.6.yml` 有两次可查的失败运行，都卡在第 5 步
+`Assemble sources`：`5baee5c` 的 `publish=true` dispatch `43565539803`（06:16，job
+`132358538548`）和 `ab25c3e` 的 push `43566519007`（06:28，job `132361459435`）。`979852a`
+本身没有对应的 push 运行（该分支上只记录到 `5baee5c` 之后的两次），所以“`979852a` 是否独立
+失败”是 `UNVERIFIED`。两轮的 job 页面注解都只有一句 `Process completed with exit code 4.`；
+日志与 artifact 需要登录才能下载（匿名 `jobs/…/logs` 返回 403、artifact 下载 401），
+所以下面的事实来自**本机整树重装配**（`ab25c3e`，43 个 pin 全取、逐字节复现 CI 的步骤 1–16）。
 
-两个缺陷都在 `979852a` 引入：
+本机在 `ab25c3e` 上重装配到最后一步 `树指纹` 时，得到与 CI 相同的失败：
 
-1. **`0023` 的目标目录少了一级。** `package-patch` 模式的语义是“把补丁原样拷进目标包
-   的 `patches/` 目录，构建期由 OpenWrt 应用”，SERIES 里写的却是包根
-   `buildroot/qca/feeds/packages/net/dawn/`。后果有两层：装配树里多出一个审计基线没有的
-   文件（包根），而 `known-delta.conf` 没有它的登记，第 16 步指纹比对必然以
-   `FINGERPRINT_MISMATCH`（exit 5）失败；即便放行，OpenWrt 只扫 `patches/`，这个补丁也
-   永远不会被应用，dawn 的越界修复等于没进镜像。
-2. **`known-delta.conf` 没有登记 `0023` 的补丁文件。** 审计基线建于 2026-10-25，之后
-   每条 build-fix 引入的新路径都要在这里写明理由和门禁（`0018`/`0021`/`0022` 都是这样
-   登记的），`0023` 漏了。
+```
+compare: deltas=942 explained=941 unexplained=1
+指纹与参考值不一致：1 条未解释差异
+```
+
+那一条未解释差异是 **`buildroot/qca/feeds/packages/net/dawn/patches`——目录本身**。
+`ab25c3e` 把补丁从包根挪进 `dawn/patches/` 并登记了补丁**文件**的 `fresh-only` 规则，
+但审计基线里的 `dawn/patches/` 是空目录（git 不保存空目录，指纹基线里没有这条），
+装配为放补丁新建了这个目录，于是目录条目也是 `fresh-only`、无人认领，比对以
+`FINGERPRINT_MISMATCH`（exit 5）结束。`5baee5c` 那一轮补丁还在包根，未解释的应是那条
+`dawn/0023-…patch` 文件本身——这一点没有当日日志，记为 `UNVERIFIED`。
+
+第二个缺陷是**诊断被自己的 trap 吃掉**：脚本开头是 `set -Eeuo pipefail` + `trap on_err ERR`，
+而 `on_err` 无条件 `exit 4`。bash 的 `ERR` trap 触发条件不看 `errexit`，所以包住指纹调用的
+`set +e … rc=$? … set -e` 根本挡不住它：`tree-fingerprint.sh` 一返回 5，`on_err` 立刻接管，
+打印 `FAIL step="树指纹" rc=5` 后 `exit 4`，真正的 `die 5`（带 `FINGERPRINT_MISMATCH` 说明）
+从未执行。CI 注解里的 `exit code 4` 就是这么来的——它不代表任何一种 `die 4`，完全掩盖了
+exit 5 的语义。同一缺陷还会把装配里任何“预期内失败”的命令改写成一个没有上下文的 4。
 
 修复：
 
-- `build/build-fixes/SERIES`：`0023` 的目标改为 `…/dawn/patches/`；
-- `scripts/ci/assemble-sources.sh`：`package-patch` 目标必须以 `/patches/` 结尾，否则
-  `die 4`——这类错位以后在装配阶段就停，不会静默产出“补丁没打上”的源码包；
-- `scripts/ci/assemble-sources.sh`：补上 `0023`（补丁在 `patches/`、`NEIGHBOR_REPORT_LEN=1024`、
-  `strncpy` 有界拷贝）与 `0024`（`CSwOpts`/`athnewind`/`rptr_mgr_mode`/`channel`/`uplink_csa`
-  五条 heredoc 行一条不剩）的装配期断言，对应 `known-delta` 里两条登记的可执行门禁；
-- `build/known-delta.conf`：新增 `0023` 补丁文件的 `fresh-only` 规则（理由 + 门禁），
-  并把 `hostapd.sh` 的 `changed` 规则说明补上 `0024`。
+- `build/known-delta.conf`：给 `dawn/patches` 目录本身补一条 `fresh-only` 规则（理由与门禁同上一条）；
+- `scripts/ci/assemble-sources.sh`：两处 `set +e … rc=$? … set -e` 改为 `rc=0; cmd || rc=$?`
+  （`||` 列表里的命令不进 `ERR` trap），指纹失败不再被 `on_err` 截胡；
+- `scripts/ci/assemble-sources.sh`：`rc=5` 分支先整段打印 `UNEXPLAINED` 行再打 40 行背景，
+  失败时第一眼看到的就是未解释路径；
+- `scripts/ci/tree-fingerprint.sh`：未解释差异逐条输出 `UNEXPLAINED <方向> <路径>`。此前它只打印
+  `deltas[:200]`，未解释项恰好排在 200 条之后时，日志里只剩一句“1 条未解释差异”，
+  本次就是这么被埋掉的。
 
-静态验证（本机）：`bash -n` 通过；两条补丁内容断言在补丁文件上命中；`0024` 的五条断言
-在已打补丁的 `hostapd.sh` 上零命中（不误报），在补丁前的 `athnewind=$athnewind` 行形态上
-能拦住。CI 复验（重新装配 → `FINGERPRINT_MATCH` → 再 `publish=true` 发 `sources-v13`）
-记为 `NOT TESTED`，以下一次运行为准。
+本机验证：
+
+- 装配脚本新增一条门禁：`package-patch` 落盘后，补丁文件与目标目录都必须以第一列原文
+  出现在 `known-delta.conf`，否则第 11 步就 `die 4` 指名路径——这类漏登记不必等到第 16 步
+  才以“N 条未解释差异”的形式出现；
+- 整树重装配（43 个 pin、warm cache、新 stage）跑完 16 步 **exit 0**：
+  `compare: deltas=942 explained=942 unexplained=0` → `FINGERPRINT_MATCH`；
+  `entries=195332`、`aggregate=5057a73a…d200`；`recipe_sha256=5f54e9cd…3bfb`
+  （`known-delta.conf` 与两个脚本都在 recipe 输入里，所以 recipe 变了，树本身没变）；
+- 反向验证（临时去掉目录规则重跑比对）→ `UNEXPLAINED fresh-only
+  buildroot/qca/feeds/packages/net/dawn/patches`、`rc=5`，且该 rc 不再被 `on_err` 改写成 4。
+
+CI 复验（重新装配 → `FINGERPRINT_MATCH` → `publish=true` 发 `sources-v13`）记为
+`NOT TESTED`，以下一次运行为准。
