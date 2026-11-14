@@ -131,6 +131,10 @@ bandix-plus
 zoneinfo-all
 conntrack
 libtirpc
+# 这四个库的 Makefile 带 ABI_VERSION（conntrack=3、cttimeout=1、cthelper=0、
+# queue=1），安装名会被拼成 conntrack3 / cttimeout1 / cthelp0 / queue1
+# （include/package-pack.mk）。这里写包名（= .config 符号名），镜像反查由
+# check-packages.sh db 接受 ABI 形式，不要把本清单改成带后缀的名字。
 libnetfilter-conntrack
 libnetfilter-cttimeout
 libnetfilter-cthelper

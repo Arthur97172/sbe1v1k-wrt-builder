@@ -10,6 +10,12 @@
 # required-packages.txt 语法：name 必装、?name 可选（缺失只告警）、!name 必禁。
 # 无法识别的包名（上游改名或删包）一律以 FAIL 指名，绝不静默跳过。
 # 状态词：PASS / FAIL / WARN / UNVERIFIED；任一 FAIL → exit 1。
+#
+# 注意：清单里写的是*包名*（等同 .config 的符号名）。apk/opkg 的已安装名
+# 可能带 ABI 后缀（Makefile 的 ABI_VERSION，见 include/feeds.mk 的
+# FormatABISuffix 与 include/package-pack.mk 的 `Package: $(1)$(ABIV_$(1))`：
+# 非 kmod 包追加 ABI 号，包名本身以数字结尾时用 `-` 分隔）。所以 db 模式
+# 在精确匹配之外也接受这种 ABI 形式（如 libnetfilter-conntrack → …3）。
 
 set -euo pipefail
 LC_ALL=C
@@ -20,7 +26,7 @@ PROJ=$(CDPATH= cd -- "$SELF/../.." && pwd)
 LIST=$PROJ/build/required-packages.txt
 [ -f "$LIST" ] || { echo "缺少 $LIST" >&2; exit 2; }
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '/^# 用法：/,/^# 状态词/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 MODE=${1:-}
 ARG=${2:-}
@@ -133,9 +139,34 @@ db)
 	fi
 	names=$(dblist)
 	has_pkg() { printf '%s\n' "$names" | grep -qxF "$1"; }
+	# ABI 后缀形式（见文件头）：只有非 kmod 包才会被追加，且包名末位是
+	# 数字时用 `-` 分隔、否则直接接 ABI 号。返回第一个命中的 DB 名。
+	abi_hit() {
+		local pat
+		if printf '%s' "$1" | grep -q '[0-9]$'; then
+			pat="$(printf '%s' "$1" | sed 's/[][\.^$*+?(){}|/]/\\&/g')-[0-9]+"
+		else
+			pat="$(printf '%s' "$1" | sed 's/[][\.^$*+?(){}|/]/\\&/g')[0-9]+"
+		fi
+		hit=$(printf '%s\n' "$names" | grep -xE "$pat" || true)
+		printf '%s' "${hit%%$'\n'*}"
+	}
+	# has_req <pkg>：精确名或 ABI 名命中；命中 ABI 名时把实际 DB 名写进
+	# REQUIRE_HIT，日志里保留证据。kmod 不加后缀，故只做精确匹配。
+	has_req() {
+		if has_pkg "$1"; then REQUIRE_HIT=""; return 0; fi
+		case "$1" in kmod-*|luci-*|sbe-*) return 1 ;; esac
+		REQUIRE_HIT=$(abi_hit "$1")
+		[ -n "$REQUIRE_HIT" ]
+	}
 	echo "INFO   数据库 $dbcase：$DB"
 	for p in "${req[@]}"; do
-		if has_pkg "$p"; then ok "镜像 $p"; else bad "镜像缺少 $p"; fi
+		if has_req "$p"; then
+			if [ -n "$REQUIRE_HIT" ]; then ok "镜像 $p（ABI 安装名 $REQUIRE_HIT）"
+			else ok "镜像 $p"; fi
+		else
+			bad "镜像缺少 $p"
+		fi
 	done
 	for p in "${opt[@]}"; do
 		has_pkg "$p" || note "镜像缺少可选包 $p"
