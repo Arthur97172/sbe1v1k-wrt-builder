@@ -515,6 +515,17 @@ if [ -f "$LJS" ]; then
 	grep -qF '^radio\d+_band\d+$' "$LJS" \
 		&& ok "LuCI 无线对话框识别 radioX_bandN section（minify 后）" \
 		|| bad "LuCI 缺 band-split 处理（luci 补丁 0002 未进镜像）"
+	# 0003：iwinfo 的 255 dBm 哨兵必须被过滤，已配置的 txpower 必须能选
+	# （否则保存表单时被换掉或删掉）。minify 后空格不固定，按可选空格匹配。
+	grep -Eq 'p\.dbm ?< ?0 ?\|\| ?p\.dbm ?> ?63' "$LJS" \
+		&& ok "LuCI 过滤 txpower 列表的 255 dBm 哨兵（minify 后）" \
+		|| bad "LuCI 未过滤 txpower 哨兵（luci 补丁 0003 未进镜像）"
+	grep -Eq "uci\.get\('wireless', ?section_id, ?'txpower'\)" "$LJS" \
+		&& ok "LuCI 读入已配置的 txpower（minify 后）" \
+		|| bad "LuCI 未读入已配置的 txpower（保存会丢 option txpower）"
+	grep -qF 'listed.has(String(cfgval))' "$LJS" \
+		&& ok "LuCI 把已配置的 txpower 补进下拉（minify 后）" \
+		|| bad "LuCI 未把已配置的 txpower 补进下拉"
 else
 	bad "镜像缺少 LuCI wireless.js"
 fi

@@ -534,6 +534,21 @@ grep -qF 'configured option instead of deleting it' "$_ljs" \
 	|| die 4 "0002 未生效：空 band/channel 仍会删除配置选项"
 logmsg "  QSDK_BAND_SPLIT_OK luci wireless.js"
 
+# 0003 修「最大传输功率」下拉：iwinfo 对 phy/band-split section 的查询拿不到
+# 频率条目，把 -1（未知）哨兵塞进 uint8_t 的 dbm 字段变成 255 dBm，rpcd 再算
+# 出 2147483647 mW；同时列表里没有已配置的 txpower，保存表单会把 23 换成
+# 255 或直接删掉。四处缺一即停：过滤 0..63 之外的条目、把 section 的
+# option txpower 补进列表、已列值不重复、当前功率 0 按未知显示。
+grep -qF 'if (p.dbm < 0 || p.dbm > 63)' "$_ljs" \
+	|| die 4 "0003 未生效：txpower 列表仍保留 255 dBm 哨兵条目"
+grep -qF "uci.get('wireless', section_id, 'txpower')" "$_ljs" \
+	|| die 4 "0003 未生效：已配置的 txpower 未读入表单"
+grep -qF 'listed.has(String(cfgval))' "$_ljs" \
+	|| die 4 "0003 未生效：已配置的 txpower 未补进下拉列表"
+grep -qF 'this.powerval > 0' "$_ljs" \
+	|| die 4 "0003 未生效：当前功率 0 仍显示为 0 dBm"
+logmsg "  TXPOWER_LIST_OK luci wireless.js"
+
 # =============================================================== 12. 第三方
 step "第三方树"
 tp_repo() {

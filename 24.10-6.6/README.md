@@ -219,6 +219,18 @@ QSDK 的 `/sbin/wifi config` 把一颗 wiphy（`phy00`，PCI `0001:01:00.0`）�
 section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函数分别断言，
 `verify-image.sh` 也在镜像内复查。
 
+- **“最大传输功率”下拉里只有 255 dBm**：“当前功率: 0 dBm、下拉只有
+  `255 dBm`”是同一个 iwinfo 限制的两个表现。对 phy 级查询（三个
+  `radio0_bandN` section 都解析到同一颗 `phy00`）libiwinfo 匹配不到频道条目，
+  把内部表示“未知”的 `-1` 直接塞进列表末项的 `uint8_t dbm`，于是变成 255，
+  rpcd 再用它算 `dBm→mW` 时整数溢出得到 2147483647 mW；而已配置的
+  `option txpower`（23）不在列表里，浏览器打开对话框时预选第一个选项，
+  原样保存就会把 txpower 换成 255 或删掉。`build/luci-patches/0003` 丢掉
+  0..63 dBm 之外的条目（真实 WLAN 射频不会超出），并把 section 自身的
+  `option txpower` 补进下拉、保持选中——保存不再丢配置。“当前功率 0 dBm”
+  是 QSDK ath12k 不回报当前发射功率时 nl80211 的 0，补丁把它显示为“未知”。
+  后两项限制都在 libiwinfo/rpcd 侧，只在 LuCI 前端做防御，不碰 C 代码。
+
 - **hostapd 拒载配置（所有 Wi-Fi 显示“已禁用”的真根因）**：QCA 的
   `wifi-scripts` 生成 `hostapd-phy00.X.conf` 时无条件追加
   `disable_iface_during_cac=0` 与 `athnewind=0`，而这两项只有

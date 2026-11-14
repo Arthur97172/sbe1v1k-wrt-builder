@@ -1,0 +1,78 @@
+Subject: [PATCH] luci-mod-network: keep the txpower select usable on QSDK radios
+
+LuCI asks iwinfo for the transmit power list by wifi-device section name.
+On QSDK every radioX_bandN section resolves to the same wiphy, and for a
+phy level query libiwinfo never matches a frequency entry: it passes its
+-1 "not reported" marker down to the final list entry, where the uint8_t
+field turns it into 255 dBm and the rpcd-side dBm2mW() conversion
+overflows to 2147483647 mW.  The resulting select offered exactly one
+bogus "255 dBm" option, and the configured value (e.g. txpower 23) was
+not part of the list, so the browser preselected the bogus entry and
+Save & Apply replaced or dropped the option.
+
+Two changes:
+
+ - skip entries outside the 0..63 dBm range that a real WLAN radio can
+   use, which removes the 255 dBm sentinel;
+ - append the section's configured `option txpower` to the list when the
+   driver list does not contain it, so it stays selectable and is
+   preserved when the dialog is saved untouched.
+
+The "Current power" hint now treats a reported power of 0 as unknown:
+nl80211 returns 0 when the driver does not expose the current TX power
+(QSDK ath12k does not), so 0 was shown as a usable 0 dBm setting.
+
+diff --git a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
+index bdbba2d849..74065a9dbe 100644
+--- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
++++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
+@@ -605,8 +605,30 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+ 
+ 			this.value('', _('driver default'));
+ 
+-			for (let p of pwrlist)
++			const listed = new Set();
++
++			for (let p of pwrlist) {
++				/* A request for a phy (and every QSDK band-split section,
++				 * since radioX_bandN sections resolve to the same wiphy)
++				 * makes libiwinfo fail to find the frequency entry; it keeps
++				 * its -1 "not reported" marker, which is stored in a uint8_t
++				 * and arrives here as dBm 255 / mW 2147483647.  Only offer
++				 * values the hardware can actually use. */
++				if (p.dbm < 0 || p.dbm > 63)
++					continue;
++
++				listed.add(String(p.dbm));
+ 				this.value(p.dbm, `${p.dbm} dBm (${p.mw} mW)`);
++			}
++
++			/* iwinfo cannot report a usable list for these radios, so the
++			 * configured `option txpower` may be missing from it.  Without an
++			 * own entry the select falls back to its first option and Save &
++			 * Apply silently replaces or drops the configured value. */
++			const cfgval = uci.get('wireless', section_id, 'txpower');
++
++			if (cfgval != null && cfgval != '' && !listed.has(String(cfgval)))
++				this.value(cfgval, `${cfgval} dBm`);
+ 
+ 			return form.ListValue.prototype.load.apply(this, [section_id]);
+ 		}, this));
+@@ -617,10 +639,15 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+ 
+ 		widget.firstElementChild.style.width = 'auto';
+ 
++		/* nl80211 reports a current TX power of 0 when the driver does not
++		 * expose it (QSDK ath12k does not), so 0 means "not reported" here
++		 * and must not be shown as a usable 0 dBm setting. */
++		const power = (this.powerval != null && this.powerval > 0) ? this.powerval : null;
++
+ 		dom.append(widget, E('span', [
+ 			' - ', _('Current power'), ': ',
+-			E('span', [ this.powerval != null ? `${this.powerval} dBm` : E('em', _('unknown')) ]),
+-			this.poweroff ? ` + ${this.poweroff} dB offset = ${this.powerval != null ? this.powerval + this.poweroff : '?'} dBm` : ''
++			E('span', [ power != null ? `${power} dBm` : E('em', _('unknown')) ]),
++			this.poweroff ? ` + ${this.poweroff} dB offset = ${power != null ? power + this.poweroff : '?'} dBm` : ''
+ 		]));
+ 
+ 		return widget;
