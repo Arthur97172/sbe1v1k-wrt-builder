@@ -1,0 +1,92 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: carry over the 24.10 boot blockers
+
+v24 刷进路由器 B 后链路有 carrier 但 LAN 零流量、拿不到 DHCP，系统没有
+起到用户态。对比 24.10-6.6 的真机结论，25.12 的设备树缺了三处已经在
+同一块板子上被证明为启动阻塞的写法（24.10 的
+build/p-b/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts 是基线）：
+
+1. CPU OPP 表。ipq9574.dtsi 给四个 CPU 都挂 operating-points-v2；
+   qualcommbe 的 config-6.12 打开 CONFIG_CPUFREQ_DT、
+   CONFIG_CPUFREQ_DT_PLATDEV（cpufreq-dt-platdev.c 里有
+   "qcom,ipq9574"）与 CONFIG_ARM_QCOM_CPUFREQ_NVMEM，于是 cpufreq-dt
+   在 OPP 表可用时就会注册。它第一次 dev_pm_opp_set_rate() 重写 APCS
+   mux 和 A73 PLL，板子在用户态之前静默死亡。24.10 同一颗芯片上：
+   v52/v53/v54（cpufreq 上线）都没到用户态，v50（cpufreq 注册失败）和
+   v55（OPP 表不存在）都起来了。两个内核都没有这些核的电压管理
+   （没有 CPR/APM），本来也没有安全的调频可做。
+
+2. sleep_clk 的 32 kHz 速率。ipq9574-rdp-common.dtsi 给它赋了
+   clock-frequency；24.10 的记录是“每个起不来的 DTB 都有这个速率”，
+   出厂可用 DTS 故意不写。它唯一的消费者是 qcom_wdt，删掉后看门狗停在
+   deferred probe，系统照常启动（24.10 v55，2026-11-13）。
+
+3. nss@40000000 的 32 MiB 保留区（0x40000000..0x42000000，厂商内存图，
+   S1/S2 都有）。mainline ipq9574.dtsi 不保留它，内核分配器会把这 32 MiB
+   发出去；0024 用的 0x42200000 装载地址正好紧挨着它。
+
+DHCP 与 WiFi 的相关性尚未在真机上区分，因此这里只搬 24.10 已被硬件
+证明的启动条件，不引入新机制。DTB 已用 dtc 编译并反编译核对：cpus 下
+没有 operating-points-v2，sleep-clk 没有 clock-frequency，
+reserved-memory 含 nss@40000000。CI 在 prepare-tree（源码断言）与
+verify-image（反编译编出的 DTB）两处检查。
+
+Status: static only, NOT TESTED on hardware.
+---
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -654,3 +654,54 @@
+ 		     <0 334 4>,		/* PPEDS 3 Rx desc */
+ 		     <0 358 4>;		/* PPEDS 3 Rx fill */
+ };
++/*
++ * ---------------------------------------------------------------------------
++ * Boot blockers carried over from the hardware-proven 24.10-6.6 board tree
++ * ---------------------------------------------------------------------------
++ */
++
++/*
++ * Disable cpufreq on this board.
++ *
++ * ipq9574.dtsi gives all four CPUs an operating-points-v2 table, and the
++ * qualcommbe target turns on CONFIG_CPUFREQ_DT, CONFIG_CPUFREQ_DT_PLATDEV
++ * (cpufreq-dt-platdev.c matches "qcom,ipq9574") and
++ * CONFIG_ARM_QCOM_CPUFREQ_NVMEM, so cpufreq-dt registers as soon as the OPP
++ * table resolves.  Its first dev_pm_opp_set_rate() reprograms the APCS mux
++ * and the A73 PLL and the board dies silently before userland.  The same
++ * silicon produced exactly that on 24.10-6.6: v52/v53/v54 (cpufreq online)
++ * never reached userland, while v50 (cpufreq could not register at all) and
++ * v55 (OPP table absent) both did.  Neither kernel has voltage management
++ * for these cores (no CPR/APM), so there is no safe transition to offer
++ * anyway; APPSBL already left the CPUs at a usable rate.  Every 25.12 image
++ * up to v24 still carried the table and never booted.
++ */
++&CPU0 { /delete-property/ operating-points-v2; };
++&CPU1 { /delete-property/ operating-points-v2; };
++&CPU2 { /delete-property/ operating-points-v2; };
++&CPU3 { /delete-property/ operating-points-v2; };
++
++/*
++ * Drop the 32 kHz sleep clock rate that ipq9574-rdp-common.dtsi assigns.  In
++ * the 24.10 board tree a sleep_clk rate was present in every DTB that failed
++ * to boot, and the shipping DTS deliberately leaves the property out.  Its
++ * only consumer here is the qcom_wdt watchdog at 0xb017000, which then stays
++ * in deferred probe; the system boots and runs without it (24.10 v55,
++ * 2026-11-13).  Revisit the watchdog as its own item.
++ */
++&sleep_clk { /delete-property/ clock-frequency; };
++
++/*
++ * The NSS firmware window of the vendor memory map: 32 MiB at
++ * 0x40000000..0x42000000, carried by both vendor device trees (S1 and S2)
++ * and reserved by the 24.10 board tree.  mainline ipq9574.dtsi does not
++ * reserve it, so the kernel allocator would otherwise hand the region out;
++ * the 0x42200000 kernel load address (patch 0024) sits right behind it.
++ */
++&{/reserved-memory} {
++	nss@40000000 {
++		no-map;
++		reg = <0x0 0x40000000 0x0 0x2000000>;
++		status = "okay";
++	};
++};

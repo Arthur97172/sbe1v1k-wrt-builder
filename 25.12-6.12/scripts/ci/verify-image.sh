@@ -126,6 +126,29 @@ if [ -n "$DTB" ] && [ -f "$DTB" ]; then
 		else
 			bad "DTB 没有风扇 cooling map：pwm-fan 不会降速"
 		fi
+		# 启动阻塞（0027）：v24 刷入后起不来。24.10 在同一颗芯片上的真机
+		# 结论是三条硬条件——cpus 不能残留 operating-points-v2（否则
+		# cpufreq-dt 注册、重写 A73 PLL，静默死在用户态之前）、sleep-clk
+		# 不能带 clock-frequency、必须保留 nss@40000000。反编译编出的 DTB
+		# 检查，防止源文件写对了却没进镜像。
+		if grep -q 'operating-points-v2 = <' "$DTBDEC"; then
+			bad "DTB 的 CPU 仍带 operating-points-v2：cpufreq-dt 会注册并重写 A73 PLL，真机静默死亡"
+		else
+			ok "DTB 的 CPU 没有 operating-points-v2（cpufreq-dt 不会注册）"
+		fi
+		SLP=$(awk '/sleep-clk \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		if printf '%s\n' "$SLP" | grep -q 'clock-frequency'; then
+			bad "DTB 的 sleep-clk 带 clock-frequency（24.10：每个起不来的 DTB 都有它）"
+		else
+			ok "DTB 的 sleep-clk 没有 clock-frequency"
+		fi
+		NSSRM=$(awk '/nss@40000000 \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		if printf '%s\n' "$NSSRM" | grep -q 'reg = <0x0*0 0x40000000 0x0*0 0x2000000>' &&
+		   printf '%s\n' "$NSSRM" | grep -q 'no-map'; then
+			ok "DTB 保留 nss@40000000（0x40000000..0x42000000，32 MiB，no-map）"
+		else
+			bad "DTB 没有 nss@40000000 保留区（内核会把 NSS 固件窗口当普通内存分配）"
+		fi
 	else
 		bad "无法反编译 DTB：$DTB"
 	fi

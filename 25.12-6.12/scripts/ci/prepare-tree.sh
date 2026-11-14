@@ -157,6 +157,18 @@ grep -q '^	fan: pwm-fan {' "$SBE_DTS" \
 	|| { echo "补丁应用不完整：设备树没有 pwm-fan 节点" >&2; exit 1; }
 grep -q '^&pwm {' "$SBE_DTS" \
 	|| { echo "补丁应用不完整：设备树没有启用 &pwm" >&2; exit 1; }
+# 启动阻塞（0027）：24.10 在同一颗芯片上用真机证明了三条——CPU 的
+# operating-points-v2 让 cpufreq-dt 注册并重写 A73 PLL（v52–v54 静默死亡）、
+# sleep_clk 带速率、缺 nss@40000000（0x40000000..0x42000000）保留区。25.12 的
+# v24 三条都缺，刷入后起不来。补丁顺序一变就可能静默失效，编译前先断言。
+for n in 0 1 2 3; do
+	grep -q "^&CPU$n { /delete-property/ operating-points-v2; };" "$SBE_DTS" \
+		|| { echo "补丁应用不完整：设备树没有删除 CPU$n 的 operating-points-v2" >&2; exit 1; }
+done
+grep -q '^&sleep_clk { /delete-property/ clock-frequency; };' "$SBE_DTS" \
+	|| { echo "补丁应用不完整：设备树没有删除 sleep_clk 的速率" >&2; exit 1; }
+grep -q 'nss@40000000' "$SBE_DTS" \
+	|| { echo "补丁应用不完整：设备树没有 nss@40000000 保留区" >&2; exit 1; }
 
 echo "[prepare] 安装项目自带软件包"
 for d in "$PROJ"/build/local-packages/*/; do

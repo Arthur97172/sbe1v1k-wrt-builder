@@ -78,9 +78,60 @@ load/entry：`Device/Default` 的值是 **`0x41000000`**。这个地址落在厂
 - `CONFIG_PWM_IPQ` 与 `nss`/`ath12k` 的运行时共存（时钟 `GCC_ADSS_PWM_CLK`
   与 `assigned-clock-rates <100000000>` 的行为）。
 
-## 4. 顺带发现，未修改
+## 4. 顺带发现（已在 v24 的定案里处理）
 
 25.12 的板级 DTS 没有 24.10 里那条 `nss@40000000` 的 `no-map` 保留区。
 如果厂商引导器把 NSS 固件放在 `0x40000000..0x42000000`，Linux 会把这段当普通
-内存分配。这影响的是以太网数据面而不是本次的启动/风扇症状，且需要 S2 的
-`/proc/iomem` 或串口日志才能确认，故只记录，不在本批修改。
+内存分配。v21 时只记录未改；v24 刷入失败后与 CPU OPP 一并写进 `patches/0027`，
+见下一节。
+
+## 5. v24 起不来：启动阻塞补齐（2026-11-14，`patches/0027`）
+
+`v24-1-62f2ee35-25.12-6.12` 刷进路由器 B 后链路有 carrier，但 LAN 零流量、
+拿不到 DHCP，系统没有起到用户态。本地静态比对（v24 的 FIT/DTB 与 24.10
+已在真机上验证的 `build/p-b/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts`）
+排除了此前怀疑的几项：FIT 装载地址已是 `0x42200000`（0024）、eMMC 已启用
+（0021）、sysupgrade tar 与根文件系统成员大小对齐（`root` = `align_up(bytes_used,
+64k)`，72,810,496 = 665×64 KiB）都对。缺的是 24.10 用真机试出来的三条启动条件：
+
+1. **CPU OPP 表**。`ipq9574.dtsi` 给四个 CPU 都挂 `operating-points-v2`，而
+   qualcommbe 的 `config-6.12` 打开 `CONFIG_CPUFREQ_DT`、
+   `CONFIG_CPUFREQ_DT_PLATDEV`（`cpufreq-dt-platdev.c:197` 有
+   `{ .compatible = "qcom,ipq9574" }`）与 `CONFIG_ARM_QCOM_CPUFREQ_NVMEM`，
+   于是 cpufreq-dt 在 OPP 表可用时注册。它第一次 `dev_pm_opp_set_rate()`
+   重写 APCS mux 和 A73 PLL，板子在用户态之前静默死亡——24.10 v52/v53/v54
+   的真机结果，v50（cpufreq 注册失败）与 v55（OPP 表不存在）都起来了。两个
+   内核都没有这些核的电压管理（没有 CPR/APM），本来也没有安全的调频可做。
+   v24 反编译 DTB 里 `operating-points-v2` 出现 5 次（4 个 CPU + OPP 表自身），
+   和 24.10 失败期的形状一致。
+
+2. **sleep_clk 的 32 kHz 速率**。`ipq9574-rdp-common.dtsi:271` 给它赋了
+   `clock-frequency = <32000>`；24.10 的记录是“每个起不来的 DTB 都有这个速率”，
+   出厂可用 DTS 故意不写。它唯一的消费者是 `qcom_wdt`（`watchdog@b017000`），
+   删掉后看门狗停在 deferred probe，系统照常启动（24.10 v55）。
+
+3. **`nss@40000000` 保留区**。32 MiB 的 `0x40000000..0x42000000` 是厂商内存图
+   给 NSS 固件留的窗口（S1/S2 都有），mainline `ipq9574.dtsi` 不保留它。0024 用
+   的 `0x42200000` 装载地址正好紧挨着它；不保留时内核分配器会把这 32 MiB 当普通
+   内存发出去。
+
+修复：`patches/0027` 在板级 DTS 末尾追加四个
+`&CPUn { /delete-property/ operating-points-v2; };`、
+`&sleep_clk { /delete-property/ clock-frequency; };` 与
+`&{/reserved-memory} { nss@40000000 { … } }`。这三条只搬 24.10 已被硬件证明的
+启动条件，不引入新机制；DHCP 与 WiFi 是否还另有独立问题，要等真机串口日志。
+
+静态验证（本地）：
+
+- `patches/0027` 在按 0009→0011→0021→0022→0026 顺序重建的源码树上
+  `patch --fuzz=0` 干净应用（无偏移）；
+- 用 6.12 树的 cpp + dtc 编译，反编译断言：`operating-points-v2 = <` 出现 0 次
+  （反编译 v24 的 DTB 是 5 次），`sleep-clk` 无 `clock-frequency`（v24 有
+  `0x7d00`），`reserved-memory` 含 `nss@40000000`（v24 没有）；DTB 45,369 字节
+  （v24 为 45,401）；
+- `scripts/ci/prepare-tree.sh` 与 `scripts/ci/verify-image.sh` 都加了对应断言，
+  同一段检查对 v24 的 DTB 全部判失败、对修复后的 DTB 全部通过。
+
+未验证：真机能否起、串口日志停在哪、cpufreq 相关的 thermal cooling map 缺
+cooling device 时温控区的行为。全部 `NOT TESTED`，重刷路由器必须单独批准。
+

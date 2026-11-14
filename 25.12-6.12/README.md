@@ -32,7 +32,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
 ├── docs/
 │   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
-│   └── V21_BOOT_AND_FAN_FIX.md  v21 起不来 + 风扇满速的静态定案（0024–0026）
+│   └── V21_BOOT_AND_FAN_FIX.md  v21/v24 起不来 + 风扇满速的静态定案（0024–0027）
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
@@ -55,7 +55,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0023-qualcommbe-ipq95xx-sbe1v1k-board-network.patch   LAN/WAN 端口映射（board.json）
 │   ├── 0024-qualcommbe-sbe1v1k-fix-kernel-loadaddr.patch     KERNEL_LOADADDR 0x42200000（v21 起不来的根因）
 │   ├── 0025-qualcommbe-sbe1v1k-pwm-driver.patch              内核 PWM 驱动 0400–0403 + CONFIG_PWM（风扇满速的根因）
-│   └── 0026-qualcommbe-sbe1v1k-pwm-fan.patch                 风扇 / 引脚 / 温控区 DTS
+│   ├── 0026-qualcommbe-sbe1v1k-pwm-fan.patch                 风扇 / 引脚 / 温控区 DTS
+│   └── 0027-qualcommbe-sbe1v1k-boot-blockers.patch           CPU OPP / sleep_clk / NSS 保留区（v24 起不来的根因）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
 │   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义
@@ -203,6 +204,30 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 启动。`scripts/ci/verify-image.sh` 会反编译编出的 DTB 断言 `mmc@7804000` 为
 `okay`，并确认该 DTB 逐字节存在于两个交付 FIT 中。注意 eMMC 能起来不等于能
 升级：写入目标见下一节（`patches/0022`），真机升级状态仍是 `NOT TESTED`。
+
+### 启动阻塞：CPU OPP、sleep_clk、NSS 保留区（`patches/0027`）
+
+`v24` 刷进路由器 B 后链路有 carrier 但 LAN 零流量、拿不到 DHCP。FIT 装载
+地址（0024）、eMMC（0021）、升级 tar 都已核对无误；缺的是 24.10 在同一颗
+芯片上用真机试出来的三条启动条件，`patches/0027` 把它们搬进板级 DTS：
+
+- **CPU OPP**：`ipq9574.dtsi` 给四个 CPU 都挂 `operating-points-v2`，而本
+  目标打开 `CONFIG_CPUFREQ_DT`/`CONFIG_CPUFREQ_DT_PLATDEV`（allowlist 里有
+  `qcom,ipq9574`）/`CONFIG_ARM_QCOM_CPUFREQ_NVMEM`，cpufreq-dt 会注册；它
+  第一次 `dev_pm_opp_set_rate()` 重写 APCS mux 与 A73 PLL，板子在用户态之前
+  静默死亡（24.10 v52–v54 的真机结果，v50/v55 都能到用户态）。本内核没有这些
+  核的电压管理，本来也没有安全的调频可做。0027 用四个
+  `&CPUn { /delete-property/ operating-points-v2; };` 关掉它。
+- **sleep_clk**：`ipq9574-rdp-common.dtsi` 给它赋 32 kHz；24.10 的记录是
+  “每个起不来的 DTB 都有这个速率”，出厂可用 DTS 故意不写。唯一消费者
+  `qcom_wdt` 会停在 deferred probe，系统照常启动。0027 删掉这个速率。
+- **NSS 保留区**：`0x40000000..0x42000000` 32 MiB 是厂商内存图给 NSS 固件的
+  窗口，mainline `ipq9574.dtsi` 不保留；0024 的 `0x42200000` 装载地址紧挨着它。
+  0027 补 `nss@40000000` 的 `no-map` 保留。
+
+`prepare-tree.sh` 在源码层断言这三条，`verify-image.sh` 反编译编出的 DTB 再
+断言一次（同一段检查对 v24 的 DTB 全部判失败）。静态验证记录见
+`docs/V21_BOOT_AND_FAN_FIX.md` §5；设备行为仍是 `NOT TESTED`。
 
 ### 升级（sysupgrade）与 A/B 槽位（`patches/0022`）
 
@@ -549,7 +574,8 @@ uci 规则，fw4 语义一致）：`99-allow-luci-wan` 放行 tcp 80/443、`99-a
   Wi-Fi 插件；每台设备的校准数据来自 eMMC `0:ART`，镜像内没有，首次上机前
   仍需补一个 ART 提取脚本（见 Stage 2.5）。
 - 板级细节中只有 LAN/WAN 端口映射在 Stage 2.4 补上（依据厂商 QSDK 14 DTB）；
-  PWM 风扇与 RGB 引脚复用由 `patches/0025`/`0026` 补上（静态验证，`NOT TESTED`）；
+  PWM 风扇与 RGB 引脚复用由 `patches/0025`/`0026` 补上，启动阻塞（CPU OPP /
+  sleep_clk / NSS 保留区）由 `patches/0027` 补上（均静态验证，`NOT TESTED`）；
   板级 MAC、LED/按键仍沿用 RDP433。
 
 因此 Stage 1 产物只用于确认“25.12 + 6.12 能为本板编译出正确命名的镜像”，
