@@ -334,7 +334,9 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 2026-11-13 用户要求安装 `luci-app-turboacc`（转发路径加速的统一配置页），
 并把清单内插件再刷到最新 release tag；仓库总数变为十一个。2026-11-14 用户
 要求把 `corestatus`、`ledfancontrol`、`meshassistant` 再刷到最新 release tag
-（`v1.0.4` / `1.1.1-r2` / `2.8.1-r1`，其余 pin 不动）。
+（`v1.0.4` / `1.1.1-r2` / `2.8.1-r1`，其余 pin 不动）；同日再把 `turboacc` 升到
+`1.3.0-r1`（`1.0.4-r1` → `1.3.0-r1`；`1.2.0-r1` 与 `1.3.0-r1` 指向同一提交，
+取后者）。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
@@ -348,7 +350,7 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | `luci-app-corestatus` | `luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | 2026-11-14T03:04:06Z | `Merge branch 'release-1.0.4'`（tag `v1.0.4`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 388 KB |
 | `luci-app-oxidns` | `luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | 2026-11-07T14:22:31Z | `fix(config): stop wiring steps into mapping sequence args`（tag `v1.4.9`，`PKG_VERSION 1.4.9`；`v1.4.9` 与 `v1.4.8` 指向同一提交） | GPL-3.0-or-later（`LICENSE`） | 1.9 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `4b3941ae51d9264163bf0929ec69922515cf9556` | 2026-11-14T05:23:13Z | `Adapt the encryption modes to the installed wpad build`（tag `2.8.1-r1`） | GPL-3.0-only（`LICENSE`） | 820 KB |
-| `luci-app-turboacc` | `luci-app-turboacc` | `47628b39861f0680318038bf60f5e8639cbd7462` | 2026-11-13T12:54:44Z | `CI: fix the ipk content check and build only the x86/64 SDKs`（tag `1.0.4-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 204 KB |
+| `luci-app-turboacc` | `luci-app-turboacc` | `a5a4dd76c84df8c5f2bd4b3fc01852e6cc23d976` | 2026-11-14T09:19:18Z | `Drop unused dependencies and status plumbing`（tag `1.3.0-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 139 KB |
 
 十一个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。十一个应用
 都带 `po/zh_Hans`，`CONFIG_LUCI_LANG_zh_Hans=y` 让 `luci.mk` 生成对应的
@@ -365,7 +367,7 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | 运行期联网（应用自身功能，非构建行为） | `luci-app-fcc` 在用户点击安装时从 `raw.githubusercontent.com`、`pypi.org`、`unofficial-builds.nodejs.org` 等下载 Python/Node/agent；`luci-app-online-upgrade` 从 GitHub Release 下载固件后调用 `sysupgrade`；`luci-app-substore` 访问用户配置的订阅 URL；`luci-app-oxidns`（2026-11-07 加入）在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置）；`luci-app-meshassistant` 只操作本机 batman-adv/dawn；`luci-app-turboacc`（2026-11-13 加入）只读写本机 UCI 与 sysctl；`luci-app-tasks`、`luci-app-smartnetpilot`、`luci-app-corestatus`（2026-11-08 起替换 xpu-status，运行期文件无 http/socket 调用）无外部联网。均记录于 `docs/SECURITY_FINDINGS.md` §7.7/§7.11 与 `docs/RISKS_AND_BLOCKERS.md` R-21…R-24、R-39/R-40 |
 | 依赖闭包新增 | luci feed：`luci-lua-runtime`、`luci-compat`、`luci-lib-httpclient`、`luci-lib-httpprotoutils`、`luci-lib-jsonc`、`luci-lib-ip`、`luci-lib-nixio`、`luci-lib-base`、`ucode-mod-lua`；树内：`lua`、`libubus-lua`、`liblucihttp-lua`、`jsonfilter`；`packages` feed 手工符号链接：`curl`（8.12.1, MIT）、`tmux`（3.5a, ISC）。curl 的 `Config.in` 默认 `LIBCURL_NGHTTP2=y`，会把 `libcurl4` 依赖到树内未接入的 `libnghttp2` 包；已在种子中显式 `# CONFIG_LIBCURL_NGHTTP2 is not set`（HTTP/1.1 足够这五个应用的发布页拉取，避免为一个无功能收益的依赖再引入一个上游源码；配置见 `build/config-seed/ipq95xx-spectrum-sbe1v1k.seed`，决定记录见 `docs/STAGE3_INTEGRATION_PLAN.md` §5.9） |
 | 依赖闭包新增（2026-11-07） | `luci-app-meshassistant` 的 `LUCI_DEPENDS`：`+luci-base +kmod-cfg80211 +batctl-default +kmod-batman-adv +dawn +bash +luci-proto-batman-adv +socat +flock +iw`。为此新增 `routing` feed（`src-link routing qca/feeds/routing`，只链接 `batctl`、`batman-adv` 两个包），并在 `package/feeds/` 下补 `routing/{batctl,batman-adv}`、`packages/{dawn,socat}`、`luci/luci-proto-batman-adv` 五条软链；`flock` 由基座的 `util-linux` 提供，`iw` 由 `iw-full` 的 PROVIDES 满足。`kmod-batman-adv` 要针对 QSDK 6.6 内核编译，**编译结果本期未验证**（本地未跑内核模块编译；CI 构建后见 `verify-image.sh`） |
-| 依赖闭包（2026-11-13） | `luci-app-turboacc` 的 `LUCI_DEPENDS`：`+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus`，全部已在 `config-frozen/.config` 里选中，不新增软链或 feed |
+| 依赖闭包（2026-11-13） | `luci-app-turboacc` 1.0.4 的 `LUCI_DEPENDS`：`+luci-base +firewall4 +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus`，全部已在 `config-frozen/.config` 里选中，不新增软链或 feed。2026-11-14 的 1.3.0（提交标题即 `Drop unused dependencies and status plumbing`）去掉了 `+ucode-mod-ubus`，其余依赖不变、没有新增：`config-frozen/.config` 只多不少，冻结配置无需改动（`ucode-mod-ubus` 仍因别的包需要留在镜像里） |
 | 供应链结论 | 来源为公开 GitHub 仓库、逐提交固定、完整历史可复核；许可证全部为 GPL 系（与镜像内其他 GPL 组件并存，不构成链接冲突）。用户声明为自编代码，但**运行期行为仍未在设备上验证**（`NOT TESTED`） |
 
 #### 2.7.1 `luci-app-online-upgrade` 更新到最新提交（2026-10-22）
@@ -536,7 +538,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 1.1.2-r1（tag） |
-| `apps/luci-app-turboacc` | `47628b39861f0680318038bf60f5e8639cbd7462` | 1.0.4-r1（tag；PKG_VERSION 1.0.4；GPL-3.0-only；po/zh_Hans） |
+| `apps/luci-app-turboacc` | `a5a4dd76c84df8c5f2bd4b3fc01852e6cc23d976` | 1.3.0-r1（tag；PKG_VERSION 1.3.0；GPL-3.0-only；po/zh_Hans） |
 | `repo argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | thirdparty/luci-theme-argon |
 | `repo bandix-core` | `fba9704300f2900451e00a1645e11b1f179204b8` | thirdparty/openwrt-bandix-plus |
 | `repo bandix-luci` | `c4f002f74f3a0f4aeb79fb5d35f5a7bbd3392a1f` | thirdparty/luci-app-bandix-plus |

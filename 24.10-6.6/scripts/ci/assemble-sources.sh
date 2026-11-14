@@ -483,6 +483,19 @@ grep -q 'strncpy(entry->neighbor_report, neighborreport, NEIGHBOR_REPORT_LEN)' "
 	|| die 4 "0023 内容不符：neighbor_report 仍是无界拷贝"
 logmsg "  DAWN_NR_BOUNDED_OK dawn（NEIGHBOR_REPORT_LEN=1024，有界拷贝）"
 
+# 0025 让 dawn 跳过 hostapd 控制目录里不是 netdev 的 socket。同样是构建期补丁，
+# 装配阶段验证落点（patches/，放错一级会被静默忽略）与内容：iwinfo 侧必须只剩
+# 一处 iwinfo_backend()（在守卫函数里）、ubus 侧必须按 if_nametoindex 过滤。
+_dawn_patch25="$SRC/buildroot/qca/feeds/packages/net/dawn/patches/0025-dawn-skip-non-netdev-sockets.patch"
+[ -f "$_dawn_patch25" ] || die 4 "0025 未生效：dawn/patches/ 下没有非 netdev 过滤补丁"
+grep -q '^+static const struct iwinfo_ops \*iwinfo_ops_for(const char \*ifname) {' "$_dawn_patch25" \
+	|| die 4 "0025 内容不符：dawn_iwinfo.c 没有统一的 iwinfo_backend 守卫"
+grep -q '^+            if (if_nametoindex(entry->d_name) == 0)$' "$_dawn_patch25" \
+	|| die 4 "0025 内容不符：ubus.c 的订阅循环没有按 netdev 过滤"
+grep -q '^-            iw = iwinfo_backend(entry->d_name);$' "$_dawn_patch25" \
+	|| die 4 "0025 内容不符：仍有调用点直接调用 iwinfo_backend()"
+logmsg "  DAWN_NON_NETDEV_OK dawn（iwinfo_backend 统一判空，订阅只收 netdev）"
+
 # 0024 去掉 wpa_supplicant 配置里五个只有 qcn-app-extns 认识的全局项。noextns
 # 变体遇到任一未知全局项就整份拒收（Failed to read or parse configuration），
 # mesh vif 永远 NO-CARRIER；五条 heredoc 行必须一条都不剩。

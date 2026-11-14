@@ -1,0 +1,175 @@
+Subject: [PATCH] iwinfo/ubus: skip hostapd sockets that are not interfaces
+
+dawn walks /var/run/hostapd and treats every DT_SOCK entry as a wireless
+interface. On the QSDK hostapd of this target that is wrong: besides the
+per-BSS sockets it also creates "global" and one control socket per MLO
+link, named <iface>_link<N> (e.g. phy00.2-ap0_link0).
+
+The per-link sockets are not network devices, so libiwinfo finds no
+backend for them and iwinfo_backend() returns NULL. get_rssi(),
+get_expected_throughput(), get_bandwidth(), get_bssid(), get_ssid(),
+get_channel_utilization(), support_ht() and support_vht() each test only
+for the literal name "global" and then dereference the result, so the
+NULL ops table is read at offset of assoclist and the daemon dies with
+SIGSEGV. dawn_rssi is scheduled every 15 s, so procd (respawn 3600 15 0)
+restarts it in a loop and the vendor core-upload helper leaves a
+dawn.*.core in /tmp per cycle. subscribe_to_new_interfaces() hits the
+same sockets from the other side: the ubus object hostapd.<link> does
+not exist and the lookup warns three times per cycle.
+
+Route every iwinfo_backend() call through one helper that checks the
+result and returns NULL, and let each caller take its existing "no
+information" path. In subscribe_to_new_interfaces(), require the socket
+name to be a real network device via if_nametoindex() instead of
+special-casing "global" -- that covers the MLO link sockets as well.
+
+diff -urN a/src/utils/dawn_iwinfo.c b/src/utils/dawn_iwinfo.c
+--- a/src/utils/dawn_iwinfo.c	2023-05-14 12:22:26.000000000 +0000
++++ b/src/utils/dawn_iwinfo.c	2026-11-14 09:59:00.580018582 +0000
+@@ -19,6 +19,22 @@
+ 
+ #define IWINFO_ESSID_MAX_SIZE    32
+ 
++/* The QSDK hostapd also creates sockets in /var/run/hostapd that are not
++ * network devices: "global" and the per-link MLO control sockets
++ * (<iface>_link<N>). iwinfo_backend() returns NULL for those, and every
++ * caller below walks the whole directory as if each socket were an
++ * interface, so the result must be checked before use: dereferencing a NULL
++ * ops table killed the daemon every update cycle (one core per 15 s).
++ */
++static const struct iwinfo_ops *iwinfo_ops_for(const char *ifname) {
++    const struct iwinfo_ops *iw = iwinfo_backend(ifname);
++
++    if (!iw)
++        dawnlog_debug("[IWINFO] No backend for %s, skipping\n", ifname);
++
++    return iw;
++}
++
+ int compare_essid_iwinfo(struct dawn_mac bssid_addr, struct dawn_mac bssid_addr_to_compare) {
+     const struct iwinfo_ops *iw;
+ 
+@@ -41,7 +57,9 @@
+             if (strcmp(entry->d_name, "global") == 0)
+                 continue;
+ 
+-            iw = iwinfo_backend(entry->d_name);
++            iw = iwinfo_ops_for(entry->d_name);
++            if (!iw)
++                continue;
+ 
+             // FIXME: Try to reduce string conversion and comparison here by using byte array compares
+             // TODO: Magic number
+@@ -116,7 +134,9 @@
+ 
+     if (strcmp(ifname, "global") != 0)
+     {
+-        const struct iwinfo_ops* iw = iwinfo_backend(ifname);
++        const struct iwinfo_ops* iw = iwinfo_ops_for(ifname);
++        if (!iw)
++            return 0;
+ 
+         char buf[IWINFO_BUFSIZE];
+         int len;
+@@ -173,7 +193,9 @@
+     const struct iwinfo_ops *iw;
+     if (strcmp(ifname, "global") == 0)
+         return INT_MIN;
+-    iw = iwinfo_backend(ifname);
++    iw = iwinfo_ops_for(ifname);
++    if (!iw)
++        return INT_MIN;
+ 
+     if (iw->assoclist(ifname, buf, &len)) {
+         dawnlog_warning("No information available\n");
+@@ -229,7 +251,9 @@
+     const struct iwinfo_ops *iw;
+     if (strcmp(ifname, "global") == 0)
+         return INT_MIN;
+-    iw = iwinfo_backend(ifname);
++    iw = iwinfo_ops_for(ifname);
++    if (!iw)
++        return INT_MIN;
+ 
+     if (iw->assoclist(ifname, buf, &len)) {
+         dawnlog_warning("No information available\n");
+@@ -258,7 +282,9 @@
+     const struct iwinfo_ops *iw;
+     if (strcmp(ifname, "global") == 0)
+         return 0;
+-    iw = iwinfo_backend(ifname);
++    iw = iwinfo_ops_for(ifname);
++    if (!iw)
++        return 0;
+ 
+     static char buf[18] = { 0 };
+ 
+@@ -276,7 +302,9 @@
+     char buf[IWINFO_ESSID_MAX_SIZE+1] = { 0 };
+     if (strcmp(ifname, "global") == 0)
+         return 0;
+-    iw = iwinfo_backend(ifname);
++    iw = iwinfo_ops_for(ifname);
++    if (!iw)
++        return 0;
+     if (iw->ssid(ifname, buf))
+         memset(buf, 0, sizeof(buf));
+ 
+@@ -294,7 +322,9 @@
+     int ret = 0;
+     if (strcmp(ifname, "global") == 0)
+         return 0;
+-    iw = iwinfo_backend(ifname);
++    iw = iwinfo_ops_for(ifname);
++    if (!iw)
++        return 0;
+ 
+     int freq;
+     if (iw->frequency(ifname, &freq))
+@@ -342,7 +372,9 @@
+     const struct iwinfo_ops *iw;
+     if (strcmp(ifname, "global") == 0)
+         return 0;
+-    iw = iwinfo_backend(ifname);
++    iw = iwinfo_ops_for(ifname);
++    if (!iw)
++        return 0;
+     int htmodes = 0;
+ 
+     if (iw->htmodelist(ifname, &htmodes))
+@@ -362,7 +394,9 @@
+     const struct iwinfo_ops *iw;
+     if (strcmp(ifname, "global") == 0)
+         return 0;
+-    iw = iwinfo_backend(ifname);
++    iw = iwinfo_ops_for(ifname);
++    if (!iw)
++        return 0;
+     int htmodes = 0;
+ 
+     if (iw->htmodelist(ifname, &htmodes))
+diff -urN a/src/utils/ubus.c b/src/utils/ubus.c
+--- a/src/utils/ubus.c	2023-05-14 12:22:26.000000000 +0000
++++ b/src/utils/ubus.c	2026-11-14 09:54:40.211876081 +0000
+@@ -1,5 +1,6 @@
+ #include <dirent.h>
+ #include <libubus.h>
++#include <net/if.h>
+ 
+ #include "memory_utils.h"
+ #include "networksocket.h"
+@@ -1808,7 +1809,13 @@
+     while ((entry = readdir(dirp)) != NULL) {
+         if (entry->d_type == DT_SOCK) {
+             bool do_subscribe = true;
+-            if (strcmp(entry->d_name, "global") == 0)
++            /* Not every socket in the hostapd control directory is an
++             * interface: QSDK hostapd additionally creates "global" and one
++             * per-link MLO socket (<iface>_link<N>). Subscribing to those
++             * fails the ubus lookup on every update cycle, so require the
++             * name to be an actual network device.
++             */
++            if (if_nametoindex(entry->d_name) == 0)
+                 continue;
+             list_for_each_entry(sub, &hostapd_sock_list, list)
+             {

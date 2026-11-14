@@ -453,3 +453,50 @@ exit 5 的语义。同一缺陷还会把装配里任何“预期内失败”的�
 
 CI 复验（重新装配 → `FINGERPRINT_MATCH` → `publish=true` 发 `sources-v13`）记为
 `NOT TESTED`，以下一次运行为准。
+
+## 2026-11-14：dawn 每 15 秒 core 的第二个根因（`0025`）
+
+`v65`（`c244b04`）在真机上仍每约 15 秒在 `/tmp` 留下一个 `dawn.*.core`；`0023`
+的 neighbor_report 有界化已经生效（设备上的 dawn 二进制带截断告警字符串），
+所以那不是这台机器上重复崩溃的原因。
+
+从设备上取回的 core 判定：`get_rssi()` 里 `ldr x3,[x0,#208]` 解引用
+`iwinfo_backend()` 的返回值，`x0 = NULL`。原因是 QSDK hostapd 在
+`/var/run/hostapd/` 里除了每个 BSS 的控制 socket，还建了 `global` 与每条 MLO
+链路的 `<iface>_link<N>`；后者不是 netdev，libiwinfo 没有对应 backend，
+`iwinfo_backend()` 返回 NULL，而 dawn 2023.05.14 只跳过字面量 `"global"`，
+其余调用点全部直接解引用（`dawn_iwinfo.c` 里共 9 处）。`dawn_rssi` 每 15 秒
+跑一次，于是 procd（`respawn 3600 15 0`）无限重启，厂商 `core-upload.sh`
+每次把 core 写进 `/tmp`（TFTP 到 192.168.1.100 失败，文件保留）。
+`subscribe_to_new_interfaces()` 同时每轮对三个 `phy00.*_link0` 各报一次
+`Failed to lookup ID!`，是同一批 socket。
+
+`0025-dawn-skip-non-netdev-sockets.patch`（`package-patch`，
+落 `buildroot/qca/feeds/packages/net/dawn/patches/`）：
+
+- `dawn_iwinfo.c`：新增 `iwinfo_ops_for()`，唯一一处调用 `iwinfo_backend()`，
+  判空后返回 NULL；9 个调用点改为守卫分支，按各自既有语义返回（`get_rssi` /
+  `get_expected_throughput` 返回 `INT_MIN`，`compare_essid_iwinfo` `continue`，
+  其余返回 0）；
+- `ubus.c`：`subscribe_to_new_interfaces()` 把“跳过 `global`”改成
+  `if_nametoindex(entry->d_name) == 0 → continue`，MLO 链路 socket 一并排除。
+
+本机验证（静态）：
+
+- `patch -p1 --fuzz=0 --dry-run` 对 pristine 2023.05.14 源树通过；实际应用后
+  与手工修改副本逐字节一致；
+- 两个文件用装配树里 24.10 的 aarch64 musl 交叉编译器 `-O2 -fsyntax-only`
+  通过（仅剩上游原有告警）；
+- `assemble-sources.sh` 新增门禁：补丁必须在 `dawn/patches/`、内容必须含
+  守卫函数与 `if_nametoindex` 过滤，且 diff 里必须出现被替换掉的
+  `iw = iwinfo_backend(entry->d_name);` 行；
+- `known-delta.conf` 登记补丁文件的 `fresh-only`（目录条目由 `0023` 登记）；
+  `SERIES` 追加一行。
+
+同一提交里顺带把 `apps/luci-app-turboacc` 从 `1.0.4-r1` 升到 `1.3.0-r1`
+（`a5a4dd76`；`PROVENANCE.md` §2.7 与 pin 表同步）。1.3.0 去掉
+`+ucode-mod-ubus` 依赖、`ucode` 侧只 `import fs / uci`，冻结配置无需改动
+（`ucode-mod-ubus` 仍由 `luci-base` 带入）。
+
+状态：CI 重新装配 → 构建 → 真机复测记为 `NOT TESTED`，需新镜像刷机后确认
+`/tmp/dawn.*.core` 不再增长；刷机须用户另行批准。
