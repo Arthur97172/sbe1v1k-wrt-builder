@@ -332,20 +332,22 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 2026-11-08 用户要求移除 `luci-app-xpu-status`，改由同一维护者仓库
 `luci-app-corestatus`（状态页 CPU 占用/温度面板）取而代之，仓库总数为十个。
 2026-11-13 用户要求安装 `luci-app-turboacc`（转发路径加速的统一配置页），
-并把清单内插件再刷到最新 release tag；仓库总数变为十一个。
+并把清单内插件再刷到最新 release tag；仓库总数变为十一个。2026-11-14 用户
+要求把 `corestatus`、`ledfancontrol`、`meshassistant` 再刷到最新 release tag
+（`v1.0.4` / `1.1.1-r2` / `2.8.1-r1`，其余 pin 不动）。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
 | `luci-app-substore` | `luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2026-10-24T04:50:07Z | `docs(readme): 安装命令改用通配文件名，翻译包并入包管理器代码块（2.7.3-r3）` | GPL-3.0-or-later（`LICENSE`；Makefile 未设 `PKG_LICENSE`） | 3.3 MB |
 | `luci-app-fcc` | `luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 2026-11-08T13:03:42Z | `Let Ctrl+V paste into the Web Console and its browser window`（tag `1.2.4-r1`） | GPL-3.0（`LICENSE`） | 2.6 MB |
 | `luci-app-online-upgrade` | `luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 2026-10-24T04:11:06Z | `docs: 调整构建章节位置并合并从源码编译说明` | GPL-2.0-only（`LICENSE`；上游原作为 gooyjq） | 3.1 MB |
-| `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `5a14ef12bec6d4e9874a00ae76800032d5619028` | 2026-11-13T03:50:00Z | `Argon 主题下为功能区底部补留白，版本升到 1.1.1-r1`（tag `1.1.1-r1`） | GPL-3.0-only（`LICENSE`） | 236 KB |
+| `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `e709ccbc6d37e2cf67ae9e78f4aad3c661d5a083` | 2026-11-14T01:39:32Z | `daemon: 启动时探测温度通道，跳过读不出来的 hwmon`（tag `1.1.1-r2`） | GPL-3.0-only（`LICENSE`） | 240 KB |
 | `luci-app-nssecm` | `luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 2026-11-13T03:48:43Z | `nssecm: add bottom padding for Argon section card, bump to 1.0.1-r1`（tag `1.0.1-r1`） | GPL-3.0-only（`LICENSE`） | 100 KB |
 | `luci-app-tasks` | `luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 2026-11-13T02:53:33Z | `Bump version to 1.1.2-r1`（tag `1.1.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 344 KB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 2026-10-27T12:09:18Z | `feat: show the current LAN settings in the PPPoE and DH…` | GPL-3.0-only（`LICENSE`） | 1.6 MB |
-| `luci-app-corestatus` | `luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | 2026-11-08T06:11:22Z | `Makefile: bump PKG_VERSION to 1.0.2`（tag `v1.0.2`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 334 KB |
+| `luci-app-corestatus` | `luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | 2026-11-14T03:04:06Z | `Merge branch 'release-1.0.4'`（tag `v1.0.4`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 388 KB |
 | `luci-app-oxidns` | `luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | 2026-11-07T14:22:31Z | `fix(config): stop wiring steps into mapping sequence args`（tag `v1.4.9`，`PKG_VERSION 1.4.9`；`v1.4.9` 与 `v1.4.8` 指向同一提交） | GPL-3.0-or-later（`LICENSE`） | 1.9 MB |
-| `luci-app-meshassistant` | `luci-app-meshassistant` | `1529f85e924a6aeb164baed77f95b8e41fce3857` | 2026-11-11T23:28:36Z | `Document DHCP option 6, the lease watchdog and the test suite`（tag `2.7.12-r1`） | GPL-3.0-only（`LICENSE`） | 784 KB |
+| `luci-app-meshassistant` | `luci-app-meshassistant` | `4b3941ae51d9264163bf0929ec69922515cf9556` | 2026-11-14T05:23:13Z | `Adapt the encryption modes to the installed wpad build`（tag `2.8.1-r1`） | GPL-3.0-only（`LICENSE`） | 820 KB |
 | `luci-app-turboacc` | `luci-app-turboacc` | `47628b39861f0680318038bf60f5e8639cbd7462` | 2026-11-13T12:54:44Z | `CI: fix the ipk content check and build only the x86/64 SDKs`（tag `1.0.4-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 204 KB |
 
 十一个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。十一个应用
@@ -524,10 +526,10 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 <!-- pins:begin -->
 | 仓库 | commit | 备注 |
 | --- | --- | --- |
-| `apps/luci-app-corestatus` | `6a14de4eba2087d09baf3450682c6a31066f34fd` | v1.0.2（tag；PKG_VERSION 1.0.2；PKG_RELEASE 1） |
+| `apps/luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | v1.0.4（tag；PKG_VERSION 1.0.4；PKG_RELEASE 1） |
 | `apps/luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 1.2.4-r1（tag；PKG_VERSION 1.2.4） |
-| `apps/luci-app-ledfancontrol` | `5a14ef12bec6d4e9874a00ae76800032d5619028` | 1.1.1-r1（tag） |
-| `apps/luci-app-meshassistant` | `1529f85e924a6aeb164baed77f95b8e41fce3857` | 2.7.12-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
+| `apps/luci-app-ledfancontrol` | `e709ccbc6d37e2cf67ae9e78f4aad3c661d5a083` | 1.1.1-r2（tag；PKG_RELEASE 2） |
+| `apps/luci-app-meshassistant` | `4b3941ae51d9264163bf0929ec69922515cf9556` | 2.8.1-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 1.0.1-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
 | `apps/luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | v1.4.9（tag；PKG_VERSION 1.4.9；与 v1.4.8 同一提交） |

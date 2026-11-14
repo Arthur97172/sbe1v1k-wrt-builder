@@ -247,6 +247,8 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 端到端出固件（run `42449400629`，head `8faddba`） | PASS：全部 49 步 success——`Build` 86m57s、`Verify image (static)` 2s、`Collect release assets`、`Upload firmware artifact`、Release job 全过；发布 `v42-1-8faddba7`，**恰好 3 个固件资产**（fit-uImage 5,887,724 B / initramfs 96,576,444 B / sysupgrade 76,933,926 B）。这是本项目首次端到端产出可下载固件 |
 | 编译产物在真机启动/升级 | NOT TESTED |
 | 6 个厂商 Wi-Fi blob 的许可 | LICENSE_REVIEW_REQUIRED |
+| 2026-11-14 插件 pin 刷新（`luci-app-corestatus` `v1.0.2` → `v1.0.4`、`luci-app-ledfancontrol` `1.1.1-r1` → `1.1.1-r2`、`luci-app-meshassistant` `2.7.12-r1` → `2.8.1-r1`）：`scripts/ci/refresh-pins.sh --no-kernel` 与 `--apply` | PASS（首扫 3 项可更新、其余保持不动；`--apply` 后复扫 0 项可更新；三行都是 tag 相对旧 pin 的前进，非回退/分叉；`PROVENANCE.md` 的 pin 块由 `--apply` 同步；内核 pin 未动） |
+| 同批次的 CI 装配（push 触发 `sources-24.10-6.6.yml`） | NOT TESTED（本机未重跑全量装配；`known-delta.conf` 的 `apps/*` `any` 白名单下，插件内容变化只应产生已解释差异；结果以 CI 为准） |
 
 发布包由 runner 产出，`sbe1v1k-sources-24.10-6.6.tar.zst` 为 228,711,892 B；本地两次导出的
 是 228,502,877 B。两者**条目级指纹完全一致**（上面的 `entries`/`aggregate`/`recipe` 三项相同），
