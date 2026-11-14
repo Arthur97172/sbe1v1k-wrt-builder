@@ -18,11 +18,19 @@ libiwinfo has no 6 GHz band, so the 6 GHz section falls back to the list
 of another VAP reported by `iwinfo devices` (its rpc ACL is extended
 separately, see 0004).
 
+The txpower option belongs to the wifi-device subsection, so
+`wifiNetwork` is the radio device network: its own `getIfname()` yields
+the netid (`radio0_band0`), not a VAP name.  The VAP names come from the
+radio's `getWifiNetworks()` list, where every entry's `getIfname()` is
+the interface name (`phy00.0-0`, ...), which also keeps each band on its
+own list instead of the first usable one.
+
 Changes:
 
- - probe the associated VAP interface name (from the network model),
-   then the section itself, then every device `iwinfo devices` reports,
-   and use the first list with more than one usable entry;
+ - probe the radio's VAP interface names (from the network model), then
+   the radio device name and the section itself, then every device
+   `iwinfo devices` reports, and use the first list with more than one
+   usable entry;
  - skip entries outside the 0..63 dBm range that a real WLAN radio can
    use, which removes the 255 dBm sentinel;
  - append the section's configured `option txpower` to the list when the
@@ -34,10 +42,10 @@ Changes:
    `option txpower`, so the hint matches what was saved.
 
 diff --git a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
-index bdbba2d849..8a0b273ceb 100644
+index bdbba2d849..314d26b350 100644
 --- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
 +++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
-@@ -598,15 +598,82 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+@@ -598,15 +598,105 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
  		expect: { results: [] }
  	}),
  
@@ -82,13 +90,36 @@ index bdbba2d849..8a0b273ceb 100644
 -		return this.callTxPowerList(section_id).then(L.bind(function(pwrlist) {
 +		/* The section belongs to a wifi-device, and on QSDK band-split radios
 +		 * every band section resolves to the same wiphy: the phy level query
-+		 * never yields a usable list.  The interface name of the associated
-+		 * VAP (phy00.0-0, ...) does, except on 6 GHz where libiwinfo has no
-+		 * band at all.  Probe the VAP first, then the section, then every VAP
-+		 * iwinfo knows about. */
-+		const vap = this.wifiNetwork ? this.wifiNetwork.getIfname() : null;
++		 * never yields a usable list.  The interface names of the radio's VAPs
++		 * (phy00.0-0, ...) do, except on 6 GHz where libiwinfo has no band at
++		 * all.  Probe the VAPs first, then the device name and the section,
++		 * then every VAP iwinfo knows about. */
++		const self = this;
++		const vaps = (this.wifiNetwork && this.wifiNetwork.getWifiNetworks)
++			? this.wifiNetwork.getWifiNetworks().catch(function() { return []; })
++			: Promise.resolve([]);
 +
-+		return this.probePowerList([ vap, section_id ]).then(L.bind(function(pwrlist) {
++		return vaps.then(function(nets) {
++			const names = [];
++
++			for (const net of nets) {
++				const ifname = net.getIfname();
++
++				if (ifname)
++					names.push(ifname);
++			}
++
++			if (self.wifiNetwork) {
++				const devname = self.wifiNetwork.getIfname();
++
++				if (devname)
++					names.push(devname);
++			}
++
++			names.push(section_id);
++
++			return self.probePowerList(names);
++		}).then(L.bind(function(pwrlist) {
 +			if (this.usablePowerList(pwrlist).length > 1)
 +				return pwrlist;
 +
@@ -122,7 +153,7 @@ index bdbba2d849..8a0b273ceb 100644
  
  			return form.ListValue.prototype.load.apply(this, [section_id]);
  		}, this));
-@@ -617,10 +684,18 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+@@ -617,10 +707,18 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
  
  		widget.firstElementChild.style.width = 'auto';
  

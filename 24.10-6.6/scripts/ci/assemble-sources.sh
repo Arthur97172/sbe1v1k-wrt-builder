@@ -539,10 +539,10 @@ logmsg "  QSDK_BAND_SPLIT_OK luci wireless.js"
 # 出 2147483647 mW；同时列表里没有已配置的 txpower，保存表单会把 23 换成
 # 255 或直接删掉。真机实测：phy 级查询只有哨兵，2.4G/5G 的 VAP 接口名
 # （phy00.0-0/phy00.1-0）有完整 0..30 dBm 列表，6 GHz 的 VAP 也只有哨兵。
-# 缺一即停：按 VAP 接口名探测、devices 回退、过滤 0..63 之外的条目、把
+# 缺一即停：按射频 VAP 接口名探测、devices 回退、过滤 0..63 之外的条目、把
 # section 的 option txpower 补进列表、已列值不重复、当前功率 0 按配置值显示。
-grep -qF 'this.wifiNetwork.getIfname()' "$_ljs" \
-	|| die 4 "0003 未生效：txpower 列表未先按 VAP 接口名探测"
+grep -qF 'getWifiNetworks' "$_ljs" \
+	|| die 4 "0003 未生效：txpower 列表未按本射频的 VAP 接口名探测（wifiNetwork.getIfname() 是 radioX_bandN，不是 VAP 名）"
 grep -qF 'callDevices: rpc.declare' "$_ljs" \
 	|| die 4 "0003 未生效：txpower 列表缺 iwinfo devices 回退"
 grep -qF 'return p.dbm >= 0 && p.dbm <= 63;' "$_ljs" \

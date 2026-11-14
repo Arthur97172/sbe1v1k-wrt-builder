@@ -563,6 +563,9 @@ if [ -f "$LJS" ]; then
 	grep -qF 'probePowerList' "$LJS" \
 		&& ok "LuCI 按候选接口名逐个探测 txpower 列表（minify 后）" \
 		|| bad "LuCI 缺 txpower 列表探测（0003 未进镜像，phy 级查询只有哨兵）"
+	grep -qF 'getWifiNetworks' "$LJS" \
+		&& ok "LuCI 用本射频 VAP 接口名探测 txpower 列表（minify 后）" \
+		|| bad "LuCI 未按射频枚举 VAP 接口名（各频段会共用第一个可用列表）"
 	grep -Eq 'method: ?["'\'']devices["'\'']' "$LJS" \
 		&& ok "LuCI 在无可用列表时回退到 iwinfo devices（minify 后）" \
 		|| bad "LuCI 缺 iwinfo devices 回退（0003 未进镜像，6 GHz 只剩已配置值）"

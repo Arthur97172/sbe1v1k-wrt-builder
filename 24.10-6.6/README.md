@@ -245,15 +245,19 @@ section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函
   末项的 `uint8_t dbm`，于是变成 255，rpcd 再用它算 `dBm→mW` 时整数溢出得到
   2147483647 mW；而已配置的 `option txpower`（23）不在列表里，浏览器打开
   对话框时预选第一个选项，原样保存就会把 txpower 换成 255 或删掉。
-  `build/luci-patches/0003` 先按 **VAP 接口名**（`this.wifiNetwork.getIfname()`，
-  如 `phy00.0-0`）探测：真机实测 2.4G/5G 的 VAP 返回完整 `0..30 dBm` 列表，
-  phy 级与 6 GHz VAP（libiwinfo 没有 6 GHz band）都只有哨兵；VAP 无列表时回退
-  到 section 自身，再回退到 `iwinfo devices` 报告的其它 VAP。列表过滤
-  0..63 dBm 之外的条目，并把 section 自身的 `option txpower` 补进下拉、保持
-  选中——保存不再丢配置。“当前功率 0 dBm”是 QSDK ath12k 不回报当前发射功率时
-  nl80211 的 0，补丁改为显示已配置的 `option txpower`。`0004` 在
-  `luci-mod-network` 的 rpcd ACL 里放行只读的 `iwinfo devices`（否则 6 GHz
-  回退被拒）。限制都在 libiwinfo/rpcd 侧，只在 LuCI 前端做防御，不碰 C 代码。
+  `build/luci-patches/0003` 先按 **本射频的 VAP 接口名**探测：txpower 选项挂在
+  wifi-device 下，`wifiNetwork` 是射频网络，它自己的 `getIfname()` 只给出
+  `radio0_band0` 这类 netid，所以补丁从 `wifiNetwork.getWifiNetworks()` 枚举
+  该射频的每个 VAP，取各 iface 的 `getIfname()`（`phy00.0-0` 等）：真机实测
+  2.4G/5G 的 VAP 返回完整 `0..30 dBm` 列表，phy 级与 6 GHz VAP（libiwinfo
+  没有 6 GHz band）都只有哨兵；VAP 无列表时回退到射频设备名与 section 自身，
+  再回退到 `iwinfo devices` 报告的其它 VAP。这样每个频段用自己那份列表，
+  不会三个频段共用第一个可用列表。列表过滤 0..63 dBm 之外的条目，并把
+  section 自身的 `option txpower` 补进下拉、保持选中——保存不再丢配置。
+  “当前功率 0 dBm”是 QSDK ath12k 不回报当前发射功率时 nl80211 的 0，补丁改为
+  显示已配置的 `option txpower`。`0004` 在 `luci-mod-network` 的 rpcd ACL 里
+  放行只读的 `iwinfo devices`（否则 6 GHz 回退被拒）。限制都在
+  libiwinfo/rpcd 侧，只在 LuCI 前端做防御，不碰 C 代码。
 
 - **hostapd 拒载配置（所有 Wi-Fi 显示“已禁用”的真根因）**：QCA 的
   `wifi-scripts` 生成 `hostapd-phy00.X.conf` 时无条件追加
