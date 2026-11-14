@@ -112,6 +112,13 @@ CONFIG_PACKAGE_wpad-mesh-mbedtls=y
 # CONFIG_PACKAGE_wpad-basic-mbedtls is not set
 CONFIG_PACKAGE_sbe-wifi-firmware=y
 
+# 风扇与 RGB。这两个包本来由 DEVICE_PACKAGES 带进镜像，但 CONFIG_PWM 没开时
+# KCONFIG 依赖不满足、包被静默丢弃（v21 风扇满速的根因）。补丁 0025 打开
+# CONFIG_PWM/CONFIG_PWM_IPQ，这里再显式写死，配合 build/required-packages.txt
+# 的反查，任何一个环节回退都会在 Configure 阶段立刻 FAIL。
+CONFIG_PACKAGE_kmod-hwmon-pwmfan=y
+CONFIG_PACKAGE_kmod-leds-pwm=y
+
 # ---------------------------------------------------------------------------
 # 2026-11-13 用户请求：官方 LuCI 页、WireGuard、工具、18 个插件。
 #
