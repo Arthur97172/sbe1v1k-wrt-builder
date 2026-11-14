@@ -53,7 +53,10 @@ say()  { printf '%s\n' "$*"; }
 ok()   { printf 'PASS   %s\n' "$*"; }
 bad()  { printf 'FAIL   %s\n' "$*"; fail=1; }
 
-SBE_ROOT="$ROOT" SBE_BUILDROOT="$BR" "$PROJ/scripts/render-overlay.sh"
+# 这一步失败时脚本在 set -e 下直接退出；若不显式打印，CI 日志里只剩
+# "Process completed with exit code 1"，看不出是 overlay 渲染失败。
+SBE_ROOT="$ROOT" SBE_BUILDROOT="$BR" "$PROJ/scripts/render-overlay.sh" \
+	|| { bad "render-overlay.sh 失败：overlay 未渲染，后续逐字节比对全部不可信"; exit 1; }
 
 IMG="$OUT/sbe1v1k-squashfs-sysupgrade.bin"
 FIT="$OUT/sbe1v1k-fit-uImage.itb"
