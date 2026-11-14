@@ -25,7 +25,7 @@
 | 8 | 装配映射 | `build/assembly-map.conf` | 源存在；打完 files-6.6 仍为 525；DTS 含 `Spectrum SBE1V1K` 与 `sdhc_1`；`mmc.sh` 权限 744、SHA 固定 |
 | 9 | Wi-Fi blob | `sbe-wifi-firmware/files/FILES-SHA256` | `sha256sum -c` 6/6；许可仍是 `LICENSE_REVIEW_REQUIRED` |
 | 10 | 就地叠加 | `files-6.6/.` → `qca/src/linux-6.6/`；`bootloader/files/.` → `qca/src/u-boot-2025/` | 与两个包 Makefile 在解析期的 `cp` 一致；DTS 与 rtl8261n 落地；u-boot 叠加后恰好多出 381 个文件且无覆盖，`tools/sysupgrade.c` 在位 |
-| 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 21 条：20 条 `tree` + 1 条 `package-patch`（`0023` 只把补丁拷进 dawn 包的 `patches/`，由 OpenWrt 在拉源码后应用；`package-patch` 的目标必须以 `/patches/` 结尾，且补丁文件与落点目录都必须已在 `known-delta.conf` 登记——这两条平台脚本都会断言，否则第 16 步必然 `FINGERPRINT_MISMATCH`）；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
+| 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 22 条：20 条 `tree` + 2 条 `package-patch`（`0023`、`0025` 只把补丁拷进 dawn 包的 `patches/`，由 OpenWrt 在拉源码后应用；`package-patch` 的目标必须以 `/patches/` 结尾，且补丁文件与落点目录都必须已在 `known-delta.conf` 登记——这两条平台脚本都会断言，否则第 16 步必然 `FINGERPRINT_MISMATCH`）；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
 | 11b | LuCI 补丁 | `build/luci-patches/SERIES` | `tree` 模式，目标是 `sources/luci`（第 5 步整树替换之后）；`0018` 五条、`luci-patches/0001` 四条 grep 断言（其中一条断言 `rsn_override_key_mgmt` 的赋值行号早于 override 元素的发出行号）；`luci-patches/0002` 三条 grep 断言（频段表读 section `channels`、重建后恢复所选 band、空值不落盘） |
 | 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` | passwall-selected 7 个包从新的 pin 重新派生；`thirdparty-feed` 10 个链接无悬空（2026-11-07 第二批加入 argon 主题）。2026-11-07 起装配不再打任何第三方补丁（wifihistory 专用补丁随应用删除） |
 | 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 11 条 `src-link`、175 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
@@ -66,7 +66,7 @@
 | `build/assembly-map.conf` | 仓库内文件/目录 → 装配树位置 | rtl8261n、SBE DTS、base-files、本地包、6 个 blob、bandix-plus |
 | `build/p-b/SERIES` | 板级补丁（镜像定义、DTS 注册、pwm） | 3 条，`tree` |
 | `build/target-feed-fixes/SERIES` | `config-6.6`、`target.mk` 修正 | 2 条，`tree` |
-| `build/build-fixes/SERIES` | 构建系统补丁 | 21 条：20 条 `tree` + 1 条 `package-patch`（`0023` → dawn 包的 `patches/`；0004、0007、0020 空号，见文件头） |
+| `build/build-fixes/SERIES` | 构建系统补丁 | 22 条：20 条 `tree` + 2 条 `package-patch`（`0023`、`0025` → dawn 包的 `patches/`；0004、0007、0020 空号，见文件头） |
 | `build/luci-patches/SERIES` | LuCI 树补丁（`sources/luci`） | 2 条，`tree`；`build-fixes` 的 `tree` 目标是 `buildroot`，够不到 luci |
 | `build/openwrt-patches/package/system/procd/patches/0002-*.patch` | 替换上游同名补丁（rcS 上下文重排） | 1 个文件，由 `assembly-map.conf` 整文件覆盖 |
 | `build/feeds.conf.in` | 11 条相对 `src-link` | 不含宿主路径 |
