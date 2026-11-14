@@ -18,6 +18,9 @@
 #   6. apk/opkg 包数据库存在并打印包数量；
 #   7. 设备树里 mmc@7804000（eMMC）为 okay，且该 DTB 逐字节存在于两个 FIT 中
 #      （板子从 eMMC 启动，控制器关闭时真机无法启动）；
+#      设备树里 pwm@1941010 为 okay、pwm-fan 挂在通道 3 且有 cooling map，
+#      镜像含 pwm-fan.ko；FIT 内核 load/entry 为 0x42200000（v21 用
+#      0x41000000，落在 NSS 保留区里，真机不启动）；
 #   8. sysupgrade 镜像的 tar 段齐全（CONTROL/kernel/root），kernel 段与发布的
 #      FIT 逐字节一致；
 #   9. 镜像里的升级脚本按当前槽位写 eMMC（写死槽位会让升级写进没人读的分区，
@@ -105,6 +108,24 @@ if [ -n "$DTB" ] && [ -f "$DTB" ]; then
 		printf '%s\n' "$CHOSEN" | grep -q 'fstools_ignore_partname=1' \
 			&& ok "DTB 的 chosen/bootargs-append 带 fstools_ignore_partname=1" \
 			|| bad "DTB 的 chosen 没有 fstools_ignore_partname=1（fstools 会改用 rootfs_data 分区）"
+		# PWM 风扇（0025/0026）：控制器必须启用，pwm-fan 必须存在并挂上温控区。
+		# 缺任何一条，风扇都会停在 probe 时的 MAX_PWM（满速）。
+		PWMNODE=$(awk '/pwm@1941010/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		printf '%s\n' "$PWMNODE" | grep -q 'status = "okay"' \
+			&& ok "DTB 中 pwm@1941010 已启用" \
+			|| bad "DTB 中 pwm@1941010 未启用：风扇没有 PWM 控制器"
+		FANNODE=$(awk '/pwm-fan \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		if printf '%s\n' "$FANNODE" | grep -Eq 'pwms = <0x[0-9a-f]+ +0x0?3 ' &&
+		   printf '%s\n' "$FANNODE" | grep -q 'cooling-levels = <'; then
+			ok "DTB 含 pwm-fan 节点（PWM 通道 3 + cooling-levels）"
+		else
+			bad "DTB 缺少 pwm-fan 节点，或没有挂在 PWM 通道 3 / cooling-levels"
+		fi
+		if grep -q 'map-fan-0' "$DTBDEC"; then
+			ok "DTB 的 top-glue-thermal 有风扇 cooling map"
+		else
+			bad "DTB 没有风扇 cooling map：pwm-fan 不会降速"
+		fi
 	else
 		bad "无法反编译 DTB：$DTB"
 	fi
@@ -122,6 +143,23 @@ sys.exit(0 if b in a else 1)' "$f" "$DTB"; then
 	done
 else
 	bad "找不到编译出的 DTB（build_dir/target-*/linux-qualcommbe_ipq95xx/{image-*,linux-*/arch/arm64/boot/dts/qcom/}ipq9574-sbe1v1k.dtb）"
+fi
+
+# ---- FIT 装载地址（0024）-----------------------------------------------------
+# v21 的 FIT 把内核装到 0x41000000，落在厂商给 NSS 固件保留的
+# 0x40000000..0x42000000 里，真机不启动。生成 FIT 用的 .its 是明文，
+# 直接读它比逆 FIT 结构简单；本板两个设备都必须落在 0x42200000。
+ITS=$(ls "$BR"/build_dir/target-*/linux-qualcommbe_ipq95xx/*sbe1v1k-fit-uImage.itb.its \
+        2>/dev/null | head -n1 || true)
+if [ -n "$ITS" ]; then
+	if grep -q 'load = <0x42200000>' "$ITS" &&
+	   grep -q 'entry = <0x42200000>' "$ITS"; then
+		ok "FIT 内核 load/entry = 0x42200000（不落在 NSS 保留区）"
+	else
+		bad "FIT 装载地址不是 0x42200000（0x41000000 落在 NSS 保留区，真机起不来）"
+	fi
+else
+	bad "找不到 FIT 的 .its（无法校验装载地址）"
 fi
 
 # ---- 从最终镜像里解出 squashfs 根文件系统 ----------------------------------
@@ -325,6 +363,14 @@ if find "$ROOTFS/lib/modules" -name 'ath12k.ko*' | grep -q .; then
 	ok "镜像含 ath12k.ko"
 else
 	bad "镜像缺少 ath12k.ko"
+fi
+
+# 风扇：kmod-hwmon-pwmfan 装的是 pwm-fan.ko（PWM 控制器 CONFIG_PWM_IPQ 是内建
+# 的，没有单独 .ko）。v21 里这个 kmod 因 CONFIG_PWM 未开被静默丢弃，风扇满速。
+if find "$ROOTFS/lib/modules" -name 'pwm-fan.ko*' | grep -q .; then
+	ok "镜像含 pwm-fan.ko（kmod-hwmon-pwmfan）"
+else
+	bad "镜像缺少 pwm-fan.ko：CONFIG_PWM/SENSORS_PWM_FAN 未生效，风扇会停在满速"
 fi
 
 # Stage 2.6：校准生成器必须在镜像里，且在 kmodloader 之前执行

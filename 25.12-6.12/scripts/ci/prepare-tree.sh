@@ -140,6 +140,23 @@ grep -q 'fstools_ignore_partname=1' \
 grep -q 'ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"' \
 	"$BR/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network" \
 	|| { echo "补丁应用不完整：02_network 没有 spectrum,sbe1v1k 的 LAN/WAN 端口映射" >&2; exit 1; }
+# v21 的 FIT 把内核装到 0x41000000（Device/Default），落在厂商给 NSS 固件保留的
+# 0x40000000..0x42000000 里，设备起不来；PWM 驱动缺失时风扇恒为满速。两个都
+# 断在编译前，不要等真机刷入才发现。
+[ "$(grep -c '^	KERNEL_LOADADDR := 0x42200000$' \
+	"$BR/target/linux/qualcommbe/image/ipq95xx.mk")" = 2 ] \
+	|| { echo "补丁应用不完整：两个 SBE1V1K 设备没有 KERNEL_LOADADDR 0x42200000" >&2; exit 1; }
+grep -q '^CONFIG_PWM=y$' "$BR/target/linux/qualcommbe/config-6.12" \
+	|| { echo "补丁应用不完整：config-6.12 没有打开 CONFIG_PWM" >&2; exit 1; }
+for p in 0400 0401 0402 0403; do
+	ls "$BR"/target/linux/qualcommbe/patches-6.12/${p}-*.patch >/dev/null 2>&1 \
+		|| { echo "补丁应用不完整：缺少内核 PWM 补丁 $p" >&2; exit 1; }
+done
+SBE_DTS="$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts"
+grep -q '^	fan: pwm-fan {' "$SBE_DTS" \
+	|| { echo "补丁应用不完整：设备树没有 pwm-fan 节点" >&2; exit 1; }
+grep -q '^&pwm {' "$SBE_DTS" \
+	|| { echo "补丁应用不完整：设备树没有启用 &pwm" >&2; exit 1; }
 
 echo "[prepare] 安装项目自带软件包"
 for d in "$PROJ"/build/local-packages/*/; do

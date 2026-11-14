@@ -1,0 +1,49 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qualcommbe: ipq95xx: load the SBE1V1K kernel at 0x42200000
+
+Device/Default in target/linux/qualcommbe/image/Makefile sets
+KERNEL_LOADADDR := 0x41000000, and Build/fit-its copies it into the
+load/entry properties of the FIT kernel node.  The v21 image therefore
+asked the bootloader for 0x41000000, which the vendor memory map keeps
+out of limits for a kernel: the 24.10 board DTS carries this board's
+vendor reservation as nss@40000000, 32 MiB at 0x40000000..0x42000000.
+
+Known-good values for this board are 0x42200000 (the official OpenWrt
+image for askey,sbe1v1k, and what the upstream SBE1V1K flash guide
+prescribes; its pitfall list notes that 0x41000000 reboots) and
+0x42000000 (the 24.10-6.6 project image, whose DTS comment records the
+same reservation - it sits exactly on the boundary, which is why the
+official value is preferred here).  Set it per device so the other
+ipq95xx boards keep Device/Default.
+
+Observed on v21: fan at full speed and the system never comes up (the
+eMMC boot path stops before userspace).  There is no serial log yet to
+pin the exact stop point, hence the status line below.
+
+Status: static only, NOT TESTED on hardware.
+---
+diff -ruN a/target/linux/qualcommbe/image/ipq95xx.mk b/target/linux/qualcommbe/image/ipq95xx.mk
+--- a/target/linux/qualcommbe/image/ipq95xx.mk
++++ b/target/linux/qualcommbe/image/ipq95xx.mk
+@@ -52,6 +52,13 @@
+ 	DEVICE_DTS_CONFIG := config@rdp433
+ 	SOC := ipq9574
+ 	KERNEL_INSTALL := 1
++	# Device/Default ships 0x41000000, which is inside the 32 MiB NSS
++	# reservation (nss@40000000) of the vendor memory map and makes the
++	# eMMC boot fail (boot loop, no console).  0x42200000 is the address
++	# the official OpenWrt image for askey,sbe1v1k uses and the one the
++	# upstream flash guide prescribes for this board; 0x42000000 also
++	# works on 24.10 but sits exactly on the reservation boundary.
++	KERNEL_LOADADDR := 0x42200000
+ 	KERNEL_SIZE := 6096k
+ 	IMAGE_SIZE := 25344k
+ 	DEVICE_PACKAGES := kmod-leds-pwm kmod-hwmon-pwmfan \
+@@ -95,6 +102,7 @@
+ 	DEVICE_DTS_CONFIG := config@rdp433
+ 	SOC := ipq9574
+ 	KERNEL_INSTALL := 1
++	KERNEL_LOADADDR := 0x42200000
+ 	KERNEL_SIZE := 6096k
+ 	IMAGE_SIZE := 25344k
+ 	DEVICE_PACKAGES := kmod-leds-pwm kmod-hwmon-pwmfan kmod-qcom-ppe

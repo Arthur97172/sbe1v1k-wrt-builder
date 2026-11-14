@@ -31,7 +31,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭、WAN 侧放行 LuCI/SSH）
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
 ├── docs/
-│   └── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
+│   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
+│   └── V21_BOOT_AND_FAN_FIX.md  v21 起不来 + 风扇满速的静态定案（0024–0026）
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
@@ -51,7 +52,10 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0011-qualcommbe-sbe1v1k-board-ethernet-from-qsdk14.patch
 │   ├── 0012-qualcommbe-sbe1v1k-mainline-fallback-device.patch
 │   ├── 0013-0022-…patch      其余 Stage 2.x 补丁（NAT/桥接钩子、eMMC 等，见对应小节）
-│   └── 0023-qualcommbe-ipq95xx-sbe1v1k-board-network.patch   LAN/WAN 端口映射（board.json）
+│   ├── 0023-qualcommbe-ipq95xx-sbe1v1k-board-network.patch   LAN/WAN 端口映射（board.json）
+│   ├── 0024-qualcommbe-sbe1v1k-fix-kernel-loadaddr.patch     KERNEL_LOADADDR 0x42200000（v21 起不来的根因）
+│   ├── 0025-qualcommbe-sbe1v1k-pwm-driver.patch              内核 PWM 驱动 0400–0403 + CONFIG_PWM（风扇满速的根因）
+│   └── 0026-qualcommbe-sbe1v1k-pwm-fan.patch                 风扇 / 引脚 / 温控区 DTS
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
 │   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义
@@ -155,6 +159,35 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉了主线 PPE
 节点，镜像里若没有 NSS kmod 配套会完全没有以太网，所以 DTS 切换与
 `DEVICE_PACKAGES` 打包必须同批完成。
+
+### 内核装载地址（`patches/0024`）
+
+`Device/Default`（`target/linux/qualcommbe/image/Makefile`）给 `KERNEL_LOADADDR`
+的默认值是 `0x41000000`，`Build/fit-its` 把它原样写进 FIT 的 load/entry。这个
+地址落在厂商内存图给 NSS 固件保留的 32 MiB 窗口 `0x40000000..0x42000000`
+（24.10 板级 DTS 里同一个保留区写作 `nss@40000000`）里，v21 镜像因此在进
+用户态之前就停住，症状是风扇满速、系统起不来。本板已知可用值是官方 OpenWrt
+镜像的 `0x42200000`（上游刷机指引也写明 `0x41000000` 会重启）与 24.10 项目镜像的
+`0x42000000`（正好落在保留区边界上）。`patches/0024` 按设备覆盖为
+`0x42200000`，`Device/Default` 对其他 ipq95xx 板子保持不变。
+
+### 风扇与 PWM（`patches/0025`、`0026`）
+
+6.12 内核没有 IPQ9574 PWM 控制器驱动，`config-6.12` 也从未打开 `CONFIG_PWM`，
+所以 `kmod-hwmon-pwmfan` / `kmod-leds-pwm` 的 KCONFIG 符号
+（`CONFIG_SENSORS_PWM_FAN`、`CONFIG_LEDS_PWM`）依赖不满足、被静默丢弃，
+风扇只能停在硬件默认的满速。
+
+`patches/0025` 加入上游 OpenWrt qualcommbe 的四个内核补丁（0400 绑定、0401
+驱动、0402 `pwm@1941010` 节点、0403 周期计算修复——没有 0403，25 kHz 的
+短周期会塌成约 0% 高电平），并在 `config-6.12` 打开 `CONFIG_PWM` /
+`CONFIG_PWM_IPQ`。`patches/0026` 在板级 DTS 里接上通道 3（GPIO 53，风扇，
+40 µs 周期）、RGB 三通道的引脚复用、GPIO 40 的转速计输入，并把风扇挂成
+`top-glue-thermal`（tsens 15）的 cooling device。温控区是必需的：
+`pwm-fan` 的 probe 直接 `set_pwm(ctx, MAX_PWM)`，没有 cooling device 就不会降速。
+
+两个补丁都只做了静态验证（补丁 dry-run、驱动交叉编译、DTS 用 dtc 编译并反编译
+断言节点内容），设备行为仍是 `NOT TESTED`，详见 `docs/V21_BOOT_AND_FAN_FIX.md`。
 
 ### 板级 DTS 的 eMMC 控制器
 
@@ -511,7 +544,8 @@ uci 规则，fw4 语义一致）：`99-allow-luci-wan` 放行 tcp 80/443、`99-a
   Wi-Fi 插件；每台设备的校准数据来自 eMMC `0:ART`，镜像内没有，首次上机前
   仍需补一个 ART 提取脚本（见 Stage 2.5）。
 - 板级细节中只有 LAN/WAN 端口映射在 Stage 2.4 补上（依据厂商 QSDK 14 DTB）；
-  PWM LED/风扇、板级 MAC、LED/按键仍沿用 RDP433。
+  PWM 风扇与 RGB 引脚复用由 `patches/0025`/`0026` 补上（静态验证，`NOT TESTED`）；
+  板级 MAC、LED/按键仍沿用 RDP433。
 
 因此 Stage 1 产物只用于确认“25.12 + 6.12 能为本板编译出正确命名的镜像”，
 **在 Stage 2/3 完成前不要刷入设备**。

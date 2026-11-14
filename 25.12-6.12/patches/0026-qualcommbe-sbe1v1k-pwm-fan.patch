@@ -1,0 +1,152 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qualcommbe: sbe1v1k: add the PWM fan, pinmux and thermal zone
+
+Patch 0025 makes the PWM controller and pwm-fan available; this wires
+them up on the board:
+
+  - pwm_pins muxes GPIO 44/45/53/56 to the PWM function (channel 3 is
+    the fan on GPIO 53, channels 0-2 the RGB LED) and enables &pwm;
+  - fan_tach_pins keeps GPIO 40 as the tachometer input with a pull-up;
+  - the fan node uses channel 3 at a 40 us period (25 kHz) and the
+    official OpenWrt cooling levels <36 72 128 255>;
+  - four active trips (40/50/65/80 C, 2 C hysteresis) are merged into
+    top-glue-thermal, which already exists in ipq9574.dtsi with its
+    125 C critical trip, and map the fan as the cooling device.
+
+The thermal zone is not optional: drivers/hwmon/pwm-fan.c calls
+set_pwm(ctx, MAX_PWM) in probe(), so without a cooling device the fan
+starts and stays at 100%.
+
+Values are taken from the official OpenWrt device tree for this board.
+DTC compiles the result and the generated DTB contains the pwm node
+(status okay), the fan on channel 3 and the merged cooling maps.
+
+Status: static only, NOT TESTED on hardware.
+---
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -62,6 +62,87 @@
+ 	chosen {
+ 		bootargs-append = " fstools_ignore_partname=1";
+ 	};
++
++	/*
++	 * Fan and RGB status LED both hang off the IPQ9574 PWM block
++	 * (TCSR @0x1941010).  Channel 3 drives the 4-wire fan (GPIO 53) and
++	 * channel 0/1/2 the LED; only the fan is wired up here, because the
++	 * status LED is still described as gpio-leds by the RDP433 baseline
++	 * inherited from ipq9574-rdp-common.dtsi.
++	 *
++	 * pwm-fan starts at full duty in probe() and only slows down once a
++	 * cooling device lowers it (set_pwm(ctx, MAX_PWM) in
++	 * drivers/hwmon/pwm-fan.c).  The thermal zone below is therefore
++	 * required, not optional: without it the fan would stay at 100%.
++	 */
++	fan: pwm-fan {
++		compatible = "pwm-fan";
++		pwms = <&pwm 3 40000 0>;
++		pinctrl-0 = <&fan_tach_pins>;
++		pinctrl-names = "default";
++		/* tachometer on GPIO 40, two pulses per revolution */
++		interrupts-extended = <&tlmm 40 IRQ_TYPE_EDGE_FALLING>;
++		pulses-per-revolution = <2>;
++		#cooling-cells = <2>;
++		cooling-levels = <36 72 128 255>;
++	};
++
++	/*
++	 * top-glue-thermal (tsens 15) already exists in ipq9574.dtsi with
++	 * its critical trip; this adds the active trips and the fan as the
++	 * cooling device.  Duty levels follow the official OpenWrt image.
++	 */
++	thermal-zones {
++		top-glue-thermal {
++			trips {
++				fan_trip_0: fan-active-0 {
++					temperature = <40000>;
++					hysteresis = <2000>;
++					type = "active";
++				};
++
++				fan_trip_1: fan-active-1 {
++					temperature = <50000>;
++					hysteresis = <2000>;
++					type = "active";
++				};
++
++				fan_trip_2: fan-active-2 {
++					temperature = <65000>;
++					hysteresis = <2000>;
++					type = "active";
++				};
++
++				fan_trip_3: fan-active-3 {
++					temperature = <80000>;
++					hysteresis = <2000>;
++					type = "active";
++				};
++			};
++
++			cooling-maps {
++				map_fan_0: map-fan-0 {
++					trip = <&fan_trip_0>;
++					cooling-device = <&fan 0 0>;
++				};
++
++				map_fan_1: map-fan-1 {
++					trip = <&fan_trip_1>;
++					cooling-device = <&fan 1 1>;
++				};
++
++				map_fan_2: map-fan-2 {
++					trip = <&fan_trip_2>;
++					cooling-device = <&fan 2 2>;
++				};
++
++				map_fan_3: map-fan-3 {
++					trip = <&fan_trip_3>;
++					cooling-device = <&fan 3 3>;
++				};
++			};
++		};
++	};
+ };
+ 
+ /*
+@@ -271,6 +352,36 @@
+ 			bias-pull-down;
+ 		};
+ 	};
++
++	/*
++	 * PWM: GPIO 44/45/56 are the red/green/blue LED dies, GPIO 53 the
++	 * fan.  Only the fan node uses them today, but the pin group matches
++	 * the vendor DTB so the LED channels are muxed identically.
++	 */
++	pwm_pins: pwm-pins {
++		pwm {
++			pins = "gpio44", "gpio45", "gpio53", "gpio56";
++			function = "pwm";
++			drive-strength = <8>;
++		};
++	};
++
++	fan_tach_pins: fan-tach-pins {
++		pins = "gpio40";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++	};
++};
++
++/*
++ * The PWM node itself lives in ipq9574.dtsi (added by the pwm-ipq kernel
++ * patch series) and is disabled there; the fan node above needs it enabled.
++ */
++&pwm {
++	pinctrl-0 = <&pwm_pins>;
++	pinctrl-names = "default";
++	status = "okay";
+ };
+ 
+ /*

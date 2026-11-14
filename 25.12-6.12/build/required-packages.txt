@@ -30,6 +30,10 @@ liblzma
 wget-ssl
 ca-bundle
 ca-certificates
+# 风扇与 RGB：DEVICE_PACKAGES 里有它们，但 CONFIG_PWM 没开时 KCONFIG 依赖
+# 不满足、包被静默丢弃（v21 风扇满速的根因，补丁 0025/0026）。
+kmod-hwmon-pwmfan
+kmod-leds-pwm
 
 # --- 公共运行时与包变体 ----------------------------------------------------
 firewall4
