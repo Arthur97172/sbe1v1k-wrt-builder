@@ -341,7 +341,19 @@ jobs:
           VLINE: ${{ needs.build.outputs.vline }}
         run: |
           set -eu
+          # 步骤日志和 artifact 对匿名访问不可读，失败原因必须压成 ::error::
+          # 注解才看得到（同 Diagnose image verification 的做法）。
+          enc() {
+            awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+                if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 300) }'
+          }
           REL="$RUNNER_TEMP/release"
+          echo "TAG=${TAG:-<空>} SOURCE_TAG=${SOURCE_TAG:-<空>}"
+          ls -lh "$REL" || true
+          [ -n "${TAG:-}" ] || {
+            echo "::error::release_tag 输出为空：build 作业的 Record release tag 没有产出 tag"
+            exit 1
+          }
           n=$(find "$REL" -maxdepth 1 -type f | wc -l)
           [ "$n" = 3 ] || { echo "::error::固件资产应为 3 个，实际 $n"; exit 1; }
           # 每次运行一个独立 Release：tag 带 run/attempt/短 SHA，重跑不覆盖旧产物。
@@ -368,14 +380,22 @@ jobs:
           不宣称逐字节一致。产物未经真机验证前一律记为 UNVERIFIED。
           EOF
 
-          gh release create "$TAG" \
+          # 2026-11-14 的 run #70：这一步在 1 秒内以 exit 1 失败，日志匿名不可读，
+          # 无从判断是 tag 冲突、权限还是网络。把 gh 的输出压进注解，下次失败
+          # 无需登录就能定位。
+          if ! out=$(gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "SBE1V1K ${TAG}" \
             --notes-file "$REL/notes.md" \
             "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin" \
             "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb" \
-            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb"
+            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb" 2>&1); then
+            printf '%s\n' "$out"
+            echo "::error::gh release create ${TAG} 失败：$(printf '%s' "$out" | enc)"
+            gh api rate_limit --jq '.resources.core' || true
+            exit 1
+          fi
 
           n=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
           echo "release $TAG assets=$n"
