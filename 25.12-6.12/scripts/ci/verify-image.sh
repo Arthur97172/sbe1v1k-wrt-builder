@@ -130,24 +130,45 @@ if [ -n "$DTB" ] && [ -f "$DTB" ]; then
 		# 结论是三条硬条件——cpus 不能残留 operating-points-v2（否则
 		# cpufreq-dt 注册、重写 A73 PLL，静默死在用户态之前）、sleep-clk
 		# 不能带 clock-frequency、必须保留 nss@40000000。反编译编出的 DTB
-		# 检查，防止源文件写对了却没进镜像。
-		if grep -q 'operating-points-v2 = <' "$DTBDEC"; then
-			bad "DTB 的 CPU 仍带 operating-points-v2：cpufreq-dt 会注册并重写 A73 PLL，真机静默死亡"
+		# 检查，防止源文件写对了却没进镜像。0027 在 patches/disabled/ 时
+		# （v28 对照构建）断言方向相反：镜像必须是"三条都不做"的形态。
+		if ls "$PROJ"/patches/0027-*.patch >/dev/null 2>&1; then
+			if grep -q 'operating-points-v2 = <' "$DTBDEC"; then
+				bad "DTB 的 CPU 仍带 operating-points-v2：cpufreq-dt 会注册并重写 A73 PLL，真机静默死亡"
+			else
+				ok "DTB 的 CPU 没有 operating-points-v2（cpufreq-dt 不会注册）"
+			fi
+			SLP=$(awk '/sleep-clk \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+			if printf '%s\n' "$SLP" | grep -q 'clock-frequency'; then
+				bad "DTB 的 sleep-clk 带 clock-frequency（24.10：每个起不来的 DTB 都有它）"
+			else
+				ok "DTB 的 sleep-clk 没有 clock-frequency"
+			fi
+			NSSRM=$(awk '/nss@40000000 \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+			if printf '%s\n' "$NSSRM" | grep -q 'reg = <0x0*0 0x40000000 0x0*0 0x2000000>' &&
+			   printf '%s\n' "$NSSRM" | grep -q 'no-map'; then
+				ok "DTB 保留 nss@40000000（0x40000000..0x42000000，32 MiB，no-map）"
+			else
+				bad "DTB 没有 nss@40000000 保留区（内核会把 NSS 固件窗口当普通内存分配）"
+			fi
 		else
-			ok "DTB 的 CPU 没有 operating-points-v2（cpufreq-dt 不会注册）"
-		fi
-		SLP=$(awk '/sleep-clk \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
-		if printf '%s\n' "$SLP" | grep -q 'clock-frequency'; then
-			bad "DTB 的 sleep-clk 带 clock-frequency（24.10：每个起不来的 DTB 都有它）"
-		else
-			ok "DTB 的 sleep-clk 没有 clock-frequency"
-		fi
-		NSSRM=$(awk '/nss@40000000 \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
-		if printf '%s\n' "$NSSRM" | grep -q 'reg = <0x0*0 0x40000000 0x0*0 0x2000000>' &&
-		   printf '%s\n' "$NSSRM" | grep -q 'no-map'; then
-			ok "DTB 保留 nss@40000000（0x40000000..0x42000000，32 MiB，no-map）"
-		else
-			bad "DTB 没有 nss@40000000 保留区（内核会把 NSS 固件窗口当普通内存分配）"
+			if grep -q 'operating-points-v2 = <' "$DTBDEC"; then
+				ok "对照构建：DTB 的 CPU 仍带 operating-points-v2（0027 未启用）"
+			else
+				bad "对照构建不一致：DTB 的 CPU 没有 operating-points-v2，镜像不是去掉 0027 的形态"
+			fi
+			SLP=$(awk '/sleep-clk \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+			if printf '%s\n' "$SLP" | grep -q 'clock-frequency'; then
+				ok "对照构建：DTB 的 sleep-clk 仍带 clock-frequency（0027 未启用）"
+			else
+				bad "对照构建不一致：DTB 的 sleep-clk 没有 clock-frequency，镜像不是去掉 0027 的形态"
+			fi
+			NSSRM=$(awk '/nss@40000000 \{/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+			if printf '%s\n' "$NSSRM" | grep -q 'reg = <0x0*0 0x40000000 0x0*0 0x2000000>'; then
+				bad "对照构建不一致：DTB 仍有 nss@40000000 保留区，镜像不是去掉 0027 的形态"
+			else
+				ok "对照构建：DTB 没有 nss@40000000 保留区（0027 未启用）"
+			fi
 		fi
 	else
 		bad "无法反编译 DTB：$DTB"

@@ -161,14 +161,28 @@ grep -q '^&pwm {' "$SBE_DTS" \
 # operating-points-v2 让 cpufreq-dt 注册并重写 A73 PLL（v52–v54 静默死亡）、
 # sleep_clk 带速率、缺 nss@40000000（0x40000000..0x42000000）保留区。25.12 的
 # v24 三条都缺，刷入后起不来。补丁顺序一变就可能静默失效，编译前先断言。
-for n in 0 1 2 3; do
-	grep -q "^&CPU$n { /delete-property/ operating-points-v2; };" "$SBE_DTS" \
-		|| { echo "补丁应用不完整：设备树没有删除 CPU$n 的 operating-points-v2" >&2; exit 1; }
-done
-grep -q '^&sleep_clk { /delete-property/ clock-frequency; };' "$SBE_DTS" \
-	|| { echo "补丁应用不完整：设备树没有删除 sleep_clk 的速率" >&2; exit 1; }
-grep -q 'nss@40000000' "$SBE_DTS" \
-	|| { echo "补丁应用不完整：设备树没有 nss@40000000 保留区" >&2; exit 1; }
+# 0027 可能被移到 patches/disabled/ 做对照构建（v28，见那里的 README）：此时
+# 断言方向反过来，保证镜像确实是"去掉 0027"的形态，而不是补丁悄悄没生效。
+if ls "$PROJ"/patches/0027-*.patch >/dev/null 2>&1; then
+	for n in 0 1 2 3; do
+		grep -q "^&CPU$n { /delete-property/ operating-points-v2; };" "$SBE_DTS" \
+			|| { echo "补丁应用不完整：设备树没有删除 CPU$n 的 operating-points-v2" >&2; exit 1; }
+	done
+	grep -q '^&sleep_clk { /delete-property/ clock-frequency; };' "$SBE_DTS" \
+		|| { echo "补丁应用不完整：设备树没有删除 sleep_clk 的速率" >&2; exit 1; }
+	grep -q 'nss@40000000' "$SBE_DTS" \
+		|| { echo "补丁应用不完整：设备树没有 nss@40000000 保留区" >&2; exit 1; }
+else
+	echo "[prepare] 注意：0027 未启用（对照构建：保留 CPU OPP、sleep_clk 速率、无 NSS 保留区）"
+	for n in 0 1 2 3; do
+		! grep -q "^&CPU$n { /delete-property/ operating-points-v2; };" "$SBE_DTS" \
+			|| { echo "对照构建不一致：设备树仍删除了 CPU$n 的 operating-points-v2" >&2; exit 1; }
+	done
+	! grep -q '^&sleep_clk { /delete-property/ clock-frequency; };' "$SBE_DTS" \
+		|| { echo "对照构建不一致：设备树仍删除了 sleep_clk 的速率" >&2; exit 1; }
+	! grep -q 'nss@40000000' "$SBE_DTS" \
+		|| { echo "对照构建不一致：设备树仍有 nss@40000000 保留区" >&2; exit 1; }
+fi
 
 echo "[prepare] 安装项目自带软件包"
 for d in "$PROJ"/build/local-packages/*/; do

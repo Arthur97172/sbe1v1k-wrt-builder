@@ -248,11 +248,17 @@ jobs:
           TAG="v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}-25.12-6.12"
           REL="$RUNNER_TEMP/release"
           VLINE=$(grep -m1 '^ Version:' sources/buildroot-25.12-6.12/files/etc/banner | sed 's/^ *//')
+          # 0027 在 patches/disabled/ 时是 v28 对照构建，必须在 notes 里写明，
+          # 避免把对照镜像当成正常修复版刷机。
+          VARIANT="标准（0027 启动阻塞补丁已启用）"
+          ls 25.12-6.12/patches/0027-*.patch >/dev/null 2>&1 || \
+            VARIANT="**v28 对照构建：0027 未启用**（见 25.12-6.12/docs/V28_BISECT_0027.md）"
 
           cat > "$REL/notes.md" <<EOF
           Spectrum SBE1V1K (IPQ9574) firmware — OpenWrt 25.12 + 主线 Linux 6.12（Stage 2.5）
 
           - 版本行：${VLINE}
+          - 构建变体：${VARIANT}
           - 提交：\`${GITHUB_SHA}\`
           - 运行：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           - 基线：upstream qualcommbe/ipq95xx + RDP433 device tree + QSDK NSS 数据通路

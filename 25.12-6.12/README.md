@@ -56,7 +56,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0024-qualcommbe-sbe1v1k-fix-kernel-loadaddr.patch     KERNEL_LOADADDR 0x42200000（v21 起不来的根因）
 │   ├── 0025-qualcommbe-sbe1v1k-pwm-driver.patch              内核 PWM 驱动 0400–0403 + CONFIG_PWM（风扇满速的根因）
 │   ├── 0026-qualcommbe-sbe1v1k-pwm-fan.patch                 风扇 / 引脚 / 温控区 DTS
-│   └── 0027-qualcommbe-sbe1v1k-boot-blockers.patch           CPU OPP / sleep_clk / NSS 保留区（v24 起不来的根因）
+│   ├── disabled/                                            停用的补丁（不进构建，见其中的 README）
+│   │   └── 0027-qualcommbe-sbe1v1k-boot-blockers.patch      CPU OPP / sleep_clk / NSS 保留区（v28 对照构建暂停用）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
 │   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义
@@ -207,6 +208,11 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 
 ### 启动阻塞：CPU OPP、sleep_clk、NSS 保留区（`patches/0027`）
 
+> 2026-11-15：该补丁暂时移到 `patches/disabled/` 做 v28 对照构建（见
+> `docs/V28_BISECT_0027.md`）。停用时 `prepare-tree.sh` 与
+> `verify-image.sh` 的断言自动改为要求“三条都不做”的形态；恢复只需把
+> 文件移回 `patches/`。
+
 `v24` 刷进路由器 B 后链路有 carrier 但 LAN 零流量、拿不到 DHCP。FIT 装载
 地址（0024）、eMMC（0021）、升级 tar 都已核对无误；缺的是 24.10 在同一颗
 芯片上用真机试出来的三条启动条件，`patches/0027` 把它们搬进板级 DTS：
@@ -227,7 +233,12 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 
 `prepare-tree.sh` 在源码层断言这三条，`verify-image.sh` 反编译编出的 DTB 再
 断言一次（同一段检查对 v24 的 DTB 全部判失败）。静态验证记录见
-`docs/V21_BOOT_AND_FAN_FIX.md` §5；设备行为仍是 `NOT TESTED`。
+`docs/V21_BOOT_AND_FAN_FIX.md` §5。
+
+**真机状态**：v25、v26 带着 0027 仍未启动，且恢复模式取证证明它们从未
+到达用户态（overlay 尾部 ext4 `s_mnt_count = 0`），见
+`docs/V26_RECOVERY_DIAG_2026-11-15.md`。0027 因此从“已修复”降级为
+“待验证的假设”，当前以 v28 对照构建检验。
 
 ### 升级（sysupgrade）与 A/B 槽位（`patches/0022`）
 
