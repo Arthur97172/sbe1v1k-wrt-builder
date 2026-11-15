@@ -76,7 +76,7 @@ PLAN='1  预检：工具、pin 表格式、磁盘余量
 10 就地叠加层：files-6.6/. → qca/src/linux-6.6/；bootloader/files/. → qca/src/u-boot-2025/
 11 构建系统补丁：build/build-fixes/SERIES（全部 tree 模式；0004/0007 空号）
 12 第三方树：passwall-selected 派生、thirdparty-feeds.sh fetch
-13 feeds 接线：feeds.conf + 11 条 feeds/<name> + 175 条 package/feeds 软链（依赖上一步）
+13 feeds 接线：feeds.conf + 11 条 feeds/<name> + 178 条 package/feeds 软链（依赖上一步）
 14 冻结配置：.config / version / version.date + 断言
 15 文档：README.md、PROVENANCE.md
 16 树指纹：tree-fingerprint.sh（+ 与基准比对）'
@@ -609,10 +609,25 @@ SBE_ROOT="$STAGE" sh "$PROJ/scripts/thirdparty-feeds.sh" fetch >>"$LOG" 2>&1 \
 while read -r _name; do
 	[ -e "$SRC/thirdparty-feed/$_name" ] || die 4 "thirdparty-feed 软链悬空：$_name"
 done < <(awk '$1 == "link" || $1 == "local" {print $2}' "$TPCONF")
+
+# mosdns 一组（2026-11-15）：前两个来自 repo mosdns-luci（源码构建），第三个是
+# local-relayout 里的预编译二进制包装包；sha256 必须与文件里的一致，避免装配
+# 走样后仍能过指纹白名单。bandix 的 LuCI 前端已按要求移除，必须没有软链。
+_tf="$SRC/thirdparty-feed"
+[ -f "$_tf/luci-app-mosdns/Makefile" ] || die 4 "mosdns 前端包缺失：thirdparty-feed/luci-app-mosdns"
+[ -f "$_tf/geo2txt/Makefile" ]         || die 4 "geo2txt 包缺失：thirdparty-feed/geo2txt"
+[ -f "$_tf/mosdns/Makefile" ]          || die 4 "mosdns 二进制包装包缺失：thirdparty-feed/mosdns"
+grep -qF 'PKG_HASH:=4f1031ce2a8b44246b3e6efe0d92013dfb329226e8e62821dd18852bbcdf3b14' \
+	"$_tf/mosdns/Makefile" \
+	|| die 4 "mosdns 二进制包的 sha256 与装配仓库不一致"
+if [ -e "$_tf/luci-app-bandix-plus" ]; then
+	die 4 "luci-app-bandix-plus 前端已按要求移除，thirdparty-feed 里不应再有软链"
+fi
+logmsg "  TP_MOSDNS_OK luci-app-mosdns + geo2txt + prebuilt mosdns；bandix LuCI 已移除"
 logmsg "  TP_OK thirdparty-feed=$(find "$SRC/thirdparty-feed" -maxdepth 1 -type l | wc -l | tr -d ' ') links"
 
 # =============================================================== 13. feeds
-# 必须排在第三方树之后：feeds.conf 的 src-link 与 175 条 package/feeds 链接里
+# 必须排在第三方树之后：feeds.conf 的 src-link 与 178 条 package/feeds 链接里
 # 有 thirdparty/、passwall-selected/ 的目标，它们都由上一步产出。
 step "feeds 接线"
 install -m 0644 "$BUILD/feeds.conf.in" "$SRC/buildroot/feeds.conf"
@@ -652,7 +667,7 @@ while IFS=$'\t' read -r link target rest; do
 	[ -f "$SRC/$target/Makefile" ] || die 4 "软件包目标没有 Makefile：$target"
 	nl=$((nl + 1))
 done < "$BUILD/feeds-links.conf"
-[ "$nl" = 175 ] || die 4 "package/feeds 软链应有 175 条，实际 $nl"
+[ "$nl" = 178 ] || die 4 "package/feeds 软链应有 178 条，实际 $nl"
 logmsg "  FEEDS_OK src-link=$nf package-links=$nl base->package"
 
 # =============================================================== 14. 配置

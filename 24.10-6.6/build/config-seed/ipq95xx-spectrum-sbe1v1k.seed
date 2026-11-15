@@ -205,7 +205,10 @@ CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
 
 # G3.9 — apps requested by the user on 2026-10-22 (PassWall, Nikki,
 # OpenClash, poweroff, bandix-plus).  cpu-status and wifihistory were
-# removed on 2026-11-07 at the user's request.
+# removed on 2026-11-07 at the user's request; luci-app-bandix-plus was
+# replaced by luci-app-mosdns on 2026-11-15 (the bandix-plus *backend*
+# stays).  mosdns is the only prebuilt binary here besides bandix-plus:
+# its go.mod requires Go 1.24.9/1.26.0, the tree has 1.23.12.
 # Sources and licences: sources/PROVENANCE.md §2.9, docs/SECURITY_FINDINGS.md §7.9.
 # Proxy cores are the in-tree qca versions (xray-core 25.1.30, sing-box
 # 1.12.12) because the upstream passwall-packages releases need Go 1.25/1.27
@@ -273,8 +276,21 @@ CONFIG_PACKAGE_ruby-yaml=y
 # CONFIG_RUBY_ENABLE_YJIT is not set
 # Small apps.
 CONFIG_PACKAGE_luci-app-poweroff=y
-CONFIG_PACKAGE_luci-app-bandix-plus=y
+# 2026-11-15：用户要求移除 luci-app-bandix-plus 的 LuCI 前端，只保留后端
+# bandix-plus（流量采集/统计服务，自带 UCI 配置与 init 脚本）。
+# CONFIG_PACKAGE_luci-app-bandix-plus is not set
 CONFIG_PACKAGE_bandix-plus=y
+# mosdns DNS 分流器（2026-11-15 新增，替换 bandix 的 LuCI 前端）。
+# luci-app-mosdns 的 LUCI_DEPENDS 是 +mosdns +uclient-fetch +v2ray-geoip
+# +v2ray-geosite +geo2txt +ucode；这里把四个非 base 依赖显式列出便于反查。
+# 后端 mosdns 是 build/local-relayout/mosdns 的预编译二进制包（本树 golang
+# 1.23.12 编不了 go.mod 要求 1.26.0 的源码，理由见该 Makefile 头与 PROVENANCE）。
+CONFIG_PACKAGE_luci-app-mosdns=y
+CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y
+CONFIG_PACKAGE_mosdns=y
+CONFIG_PACKAGE_geo2txt=y
+CONFIG_PACKAGE_v2ray-geoip=y
+CONFIG_PACKAGE_v2ray-geosite=y
 CONFIG_PACKAGE_zoneinfo-all=y
 CONFIG_PACKAGE_conntrack=y
 # iw / iw-full are two variants of the same package/network/utils/iw and

@@ -168,8 +168,10 @@ base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两
     `luci-app-ledfancontrol`、`luci-app-meshassistant`、`luci-app-nssecm`、
     `luci-app-online-upgrade`、`luci-app-oxidns`、`luci-app-smartnetpilot`、
     `luci-app-substore`、`luci-app-tasks`、`luci-app-turboacc`
-  - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-bandix-plus`、`luci-app-nikki`、
-    `luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、`luci-theme-argon`
+  - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-mosdns`（含 `geo2txt`）、
+    `luci-app-nikki`、`luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、
+    `luci-theme-argon`；mosdns 后端是 `local-relayout/mosdns` 的预编译二进制包装包
+    （2026-11-15 取代 bandix 的 LuCI 前端；`bandix-plus` 后端服务仍在）
   - meshassistant 的运行依赖（上游 feed）：`batctl` / `kmod-batman-adv`（`routing`）、
     `luci-proto-batman-adv`（`luci`）、`dawn` / `socat`（`packages`）、`flock`（util-linux）
   - 代理后端（`sources/passwall-selected`）：`chinadns-ng`、`dns2socks`、`ipt2socks`、
@@ -434,7 +436,7 @@ git ls-remote <url> refs/heads/main          # 取 40 位 commit；禁止用分�
 
 要确认四件事：**包目录名**（= feeds 里的名字 = `.config` 里的 `CONFIG_PACKAGE_<名字>`）、
 目录里有 `Makefile`、许可证（记进 `PROVENANCE.md` §2.9）、以及它是否依赖同仓库的其它包
-（例如 `luci-app-bandix-plus` 要配后端 `bandix-plus`，两个都要接）。
+（例如 `luci-app-mosdns` 要配后端 `mosdns`，两个都要接）。
 
 #### 2. 文件 A：`build/thirdparty-feeds.conf`
 
@@ -468,18 +470,18 @@ buildroot/package/feeds/thirdparty/luci-app-foo	thirdparty/luci-app-foo
 - 两列都相对 `sources/`；第二列写**解析后的目标**（文件 A 的 `vendor-dir` + `subdir`），
   不要照抄软链文本；
 - 按链接路径排序插入 `thirdparty/` 段；
-- 同仓库带出来的依赖包（如 `luci-app-bandix-plus` 对应的 `bandix-plus`）各自一行。
+- 同仓库带出来的依赖包（如 `luci-app-mosdns` 对应的 `geo2txt`、预编译的 `mosdns`）各自一行。
 
 #### 4. 改装配脚本里的条数断言
 
 `scripts/ci/assemble-sources.sh` 的 feeds 接线步：
 
 ```sh
-[ "$nl" = 170 ] || die 4 "package/feeds 软链应有 170 条，实际 $nl"
+[ "$nl" = 178 ] || die 4 "package/feeds 软链应有 178 条，实际 $nl"
 ```
 
-加一行就改成 171，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
-（`grep -rn '170' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
+加一行就改成 179，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
+（`grep -rn '178' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
 `feeds.conf.in` 和同一步的 `[ "$nf" = 11 ]`。
 
 #### 5. 文件 B：`build/custom-packages.conf`
@@ -605,7 +607,7 @@ push 后 `sources-24.10-6.6.yml` 自动以 `publish=false` 验证；通过后手
 |---|---|---|
 | `build/thirdparty-feeds.conf` | 新仓库加 `repo`+`link`；旧仓库只加 `link` | 删 `link`；仓库不再被引用时删 `repo` |
 | `build/feeds-links.conf` | 加 `package/feeds/thirdparty/<名字>` 行（含依赖包） | 删对应行 |
-| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 170 ]` 改成新总数 | 改回去 |
+| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 178 ]` 改成新总数 | 改回去 |
 | `build/custom-packages.conf` | 加 `CUSTOM_PACKAGES="$CUSTOM_PACKAGES <名字>"` | 注释掉整行 |
 | `build/config-frozen/.config` | `make defconfig` 后整体替换 | 同左 |
 | `build/known-delta.conf` | 加 `fresh-only` 条目（新路径） | 删掉对应条目 |

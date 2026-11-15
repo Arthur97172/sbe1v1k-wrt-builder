@@ -275,6 +275,9 @@ for f in \
 	usr/bin/xray usr/bin/sing-box usr/bin/chinadns-ng usr/bin/dns2socks \
 	usr/bin/ipt2socks usr/bin/microsocks usr/bin/tcping usr/bin/obfs-local \
 	usr/bin/ssr-local usr/bin/ssr-redir usr/libexec/mihomo usr/bin/bandix-plus \
+	usr/bin/mosdns usr/bin/geo2txt etc/init.d/mosdns etc/config/mosdns \
+	usr/share/mosdns/mosdns.uc usr/share/luci/menu.d/luci-app-mosdns.json \
+	usr/share/rpcd/acl.d/luci-app-mosdns.json \
 	usr/bin/ruby usr/bin/ttyd \
 	etc/init.d/passwall etc/init.d/nikki etc/init.d/openclash \
 	etc/config/nikki etc/config/openclash \
@@ -286,6 +289,15 @@ for f in \
 	etc/uci-defaults/99-opkg-distfeeds
 do
 	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f"
+done
+
+# 2026-11-15：luci-app-bandix-plus 前端已按用户要求移除（后端 bandix-plus 保留）。
+# 镜像里不应再出现它的菜单、ACL 或前端资源；出现即说明文件 B / 冻结配置回退了。
+for f in usr/share/luci/menu.d/luci-app-bandix-plus.json \
+	usr/share/rpcd/acl.d/luci-app-bandix-plus.json \
+	www/luci-static/resources/view/bandix; do
+	[ -e "$ROOTFS/$f" ] && bad "luci-app-bandix-plus 已移除，镜像里不应有 /$f" \
+		|| ok "已移除 /$f（bandix LuCI 前端）"
 done
 
 # WAN 侧 LuCI：镜像默认带一条 Allow-LuCI-WAN（tcp 80/443 → ACCEPT），设备靠
