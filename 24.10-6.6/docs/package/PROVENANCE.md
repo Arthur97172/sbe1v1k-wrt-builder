@@ -436,9 +436,12 @@ poweroff 改用自己维护的仓库 `Arthur97172/luci-app-poweroff`，包名由
 git 历史与本表下方备注中）。**2026-11-07 用户要求移除 `luci-app-cpu-status`
 与 `luci-app-wifihistory`**（连同 `OneNAS-space/luci-app-cpu-status` 仓库、
 `openwrt/luci` 的 sparse 检出、43 文件断言与 wifihistory 专用补丁一并删除），
-并把其余第三方组件升到最新 release tag。**2026-11-15 用户要求移除
-`luci-app-bandix-plus` 的 LuCI 前端、改用 `sbwml/luci-app-mosdns`**：
-`timsaya/luci-app-bandix-plus` 仓库退出构建，`bandix-plus` 后端服务与数据保留；
+并把其余第三方组件升到最新 release tag。**2026-11-15 用户要求把 bandix 从
+固件中去掉（先移除 `luci-app-bandix-plus` 的 LuCI 前端，随后要求后端也一并
+移除）、改用 `sbwml/luci-app-mosdns`**：`timsaya/luci-app-bandix-plus` 与
+`timsaya/openwrt-bandix-plus` 两个仓库都退出构建，本地重排包
+`build/local-relayout/bandix-plus/` 及其专属依赖（`conntrack`、`iw-full`、
+`libtirpc`、`libnetfilter-*` 四个库）一并删除；
 mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本身因为
 `go.mod` 要求 Go 1.24.9/上游补丁抬到 1.26.0 而本树 `golang/host` 只有 1.23.12，
 改用上游 Release 的 aarch64 静态二进制包装包（`build/local-relayout/mosdns/`）。
@@ -460,7 +463,6 @@ mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本�
 | `OpenClash` | `vernesong/OpenClash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | 2026-10-11T13:10:57+08:00 | `0.48.002` | **MIT**（`LICENSE`，Copyright 2019-2026 vernesong） |
 | `luci-app-poweroff` | `Arthur97172/luci-app-poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | 2026-10-25T13:34:55Z | `docs: reorder README sections and add screenshot` | GPL-3.0-only（`LICENSE` 与 `PKG_LICENSE` 一致） |
 | `luci-app-mosdns` | `sbwml/luci-app-mosdns` | `dbdd91ab8ac8b079b6a3ca1a48d99e970d17111b` | 2026-10-25T18:29:46+08:00 | `mosdns: bump pkgrel to r15`（tag `v5.3.4-r15`） | GPL-3.0（`LICENSE`；仓库含 `mosdns/`、`luci-app-mosdns/`、`geo2txt/` 三个包目录，本构建只接后两个） |
-| `openwrt-bandix-plus` | `timsaya/openwrt-bandix-plus` | `fba9704300f2900451e00a1645e11b1f179204b8` | 2026-10-21T18:46:15+08:00 | `bandix-plus: bump to 0.1.3-r1` | Apache-2.0（`LICENSE`） |
 | `luci-theme-argon` | `jerrykuku/luci-theme-argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | 2026-11-13T10:32:39Z | `release: v3.1.4`（annotated tag `v3.1.4` 的 peel 目标） | Apache-2.0 + MIT（`LICENSE`；`PKG_LICENSE:=Apache-2.0 MIT`） |
 
 `sources/passwall-selected/`（新目录，不带 `.git`）是从
@@ -517,8 +519,8 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 `aarch64_cortex-a53-openwrt-24.10.tar.gz`（9,910,638 B，
 `PKG_HASH 4f1031ce…`），解包只取 `packages_ci/mosdns_5.3.4-r15_aarch64_cortex-a53.ipk`
 里的 `/usr/bin/mosdns`（15.1 MiB，ELF aarch64 静态链接、已 strip），
-包装包本身在 `build/local-relayout/mosdns/`（做法同 `bandix-plus`；
-GPL-3.0 文本随包提交）、`bandix-plus` 0.1.3-r1、`luci-theme-argon` **3.1.4**
+包装包本身在 `build/local-relayout/mosdns/`（GPL-3.0 文本随包提交）、
+`luci-theme-argon` **3.1.4**
 （`c5c0873e`，243 个受版本控制文件；仓库根目录即包目录，v3 起 `luci-app-argon-config`
 的设置页已并入主题包，发行里的同名包只是空迁移包，故本构建只接一个源包）。
 
@@ -531,12 +533,12 @@ GPL-3.0 文本随包提交）、`bandix-plus` 0.1.3-r1、`luci-theme-argon` **3.
 
 | 项目 | 值 |
 |---|---|
-| 接入方式 | `feeds.conf` 追加 `src-link thirdparty …/sources/thirdparty-feed` 与 `src-link passwall_selected …/sources/passwall-selected`；2026-11-07 又追加 `src-link routing qca/feeds/routing`（只为 meshassistant 的 batctl/kmod-batman-adv）。`thirdparty-feed` 只含 12 个指向固定 clone 的符号链接，避免把 `openwrt-passwall-packages` 的 60 多个包（含同名 `xray-core`/`sing-box`）索引进 feed |
+| 接入方式 | `feeds.conf` 追加 `src-link thirdparty …/sources/thirdparty-feed` 与 `src-link passwall_selected …/sources/passwall-selected`；2026-11-07 又追加 `src-link routing qca/feeds/routing`（只为 meshassistant 的 batctl/kmod-batman-adv）。`thirdparty-feed` 只含 11 个指向固定 clone 的符号链接，避免把 `openwrt-passwall-packages` 的 60 多个包（含同名 `xray-core`/`sing-box`）索引进 feed |
 | `feeds/packages` 路径 | 新建 `sources/buildroot/feeds/packages -> ../qca/feeds/packages` 软链，满足第三方包的 `include $(TOPDIR)/feeds/packages/lang/{golang,rust}/…` 与 luci 的 `findrev`；`packages` feed 仍未建立索引，包通过 `package/feeds/packages/` 手工符号链接可见 |
-| 构建期联网 | 首次下载各包 `PKG_SOURCE`/`PKG_MIRROR_HASH` 对应的 tarball 或 git 镜像；其中 **`chinadns-ng`、`bandix-plus` 与 `mosdns` 下载的是 GitHub Release 的 aarch64 预编译二进制**（`chinadns-ng+wolfssl_noasm@aarch64…`、`bandix-plus-0.1.3-aarch64.tar.gz`、`aarch64_cortex-a53-openwrt-24.10.tar.gz`，`PKG_HASH 42ddd494…` / `46de71c3…` / `4f1031ce…`）；`geo2txt` 下载 `sbwml/geo2txt` 1.0.0 的 codeload tarball；`mihomo-meta`、`xray-core`、`sing-box`、`yq` 首次需构建 `golang/host` |
+| 构建期联网 | 首次下载各包 `PKG_SOURCE`/`PKG_MIRROR_HASH` 对应的 tarball 或 git 镜像；其中 **`chinadns-ng` 与 `mosdns` 下载的是 GitHub Release 的 aarch64 预编译二进制**（`chinadns-ng+wolfssl_noasm@aarch64…`、`aarch64_cortex-a53-openwrt-24.10.tar.gz`，`PKG_HASH 42ddd494…` / `4f1031ce…`）；`geo2txt` 下载 `sbwml/geo2txt` 1.0.0 的 codeload tarball；`mihomo-meta`、`xray-core`、`sing-box`、`yq` 首次需构建 `golang/host` |
 | 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、corestatus（2026-11-08 起替换 xpu-status）无外部联网；`luci-app-mosdns` 的“更新”页会按用户点击从 sbwml 的公开镜像下载 geosite/geoip 与规则（`geo2txt` 解包），mosdns 本体按 `/etc/mosdns` 配置向上游 DNS 转发（默认关闭）；`luci-theme-argon` 3.1.4 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
-| 本地修改 | 无。`wifihistory` 原先的一行 include 改写随该应用一起删除（2026-11-07）；其余 8 个 clone `git status --porcelain` 为空 |
-| 供应链结论 | 全部公开 GitHub、逐 commit 固定；许可证以 GPL 系为主，`chinadns-ng`/`ipt2socks` 为 **AGPL**，`chinadns-ng`、`bandix-plus` 与 `mosdns` 为预编译二进制（`LICENSE_REVIEW_REQUIRED`）；运行期一律 `NOT TESTED` |
+| 本地修改 | 无。`wifihistory` 原先的一行 include 改写随该应用一起删除（2026-11-07）；其余 7 个 clone `git status --porcelain` 为空 |
+| 供应链结论 | 全部公开 GitHub、逐 commit 固定；许可证以 GPL 系为主，`chinadns-ng`/`ipt2socks` 为 **AGPL**，`chinadns-ng` 与 `mosdns` 为预编译二进制（`LICENSE_REVIEW_REQUIRED`）；运行期一律 `NOT TESTED` |
 
 下面是插件 pin 的机器可读快照：`scripts/ci/refresh-pins.sh` 每次运行都会在
 两个标记之间整段重写，因此 pin 刷新 PR 的 diff 里直接能看到“哪个仓库换了哪个
@@ -557,7 +559,6 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 1.1.2-r1（tag） |
 | `apps/luci-app-turboacc` | `a5a4dd76c84df8c5f2bd4b3fc01852e6cc23d976` | 1.3.0-r1（tag；PKG_VERSION 1.3.0；GPL-3.0-only；po/zh_Hans） |
 | `repo argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | thirdparty/luci-theme-argon |
-| `repo bandix-core` | `fba9704300f2900451e00a1645e11b1f179204b8` | thirdparty/openwrt-bandix-plus |
 | `repo mosdns-luci` | `dbdd91ab8ac8b079b6a3ca1a48d99e970d17111b` | thirdparty/luci-app-mosdns |
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |

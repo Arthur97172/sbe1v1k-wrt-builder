@@ -15,7 +15,7 @@
 # 口径（用户 2026-11-07 选定）：
 #   - 有 semver 形态 release tag 的仓库：取版本序最大的 tag；**不回退**——
 #     该 tag 相对当前 pin 是 behind/identical/diverged 时保持不动（tag 比分支头
-#     旧，例如 nikki / OpenClash / bandix；或干脆分叉）；
+#     旧，例如 nikki / OpenClash；或干脆分叉）；
 #   - 没有版本 tag 的仓库：取默认分支头（例如 passwall-packages）；
 #   - 远端读不到（无网、限流、仓库改名）→ 该行保持不动并告警，绝不猜。
 #

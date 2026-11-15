@@ -27,8 +27,8 @@
 | 10 | 就地叠加 | `files-6.6/.` → `qca/src/linux-6.6/`；`bootloader/files/.` → `qca/src/u-boot-2025/` | 与两个包 Makefile 在解析期的 `cp` 一致；DTS 与 rtl8261n 落地；u-boot 叠加后恰好多出 381 个文件且无覆盖，`tools/sysupgrade.c` 在位 |
 | 11 | 构建系统补丁 | `build/build-fixes/SERIES` + `build/openwrt-patches/` | 22 条：20 条 `tree` + 2 条 `package-patch`（`0023`、`0025` 只把补丁拷进 dawn 包的 `patches/`，由 OpenWrt 在拉源码后应用；`package-patch` 的目标必须以 `/patches/` 结尾，且补丁文件与落点目录都必须已在 `known-delta.conf` 登记——这两条平台脚本都会断言，否则第 16 步必然 `FINGERPRINT_MISMATCH`）；procd 的 `0002` 由第 8 步整文件替换，不得再往包 `patches/` 追加 |
 | 11b | LuCI 补丁 | `build/luci-patches/SERIES` | `tree` 模式，目标是 `sources/luci`（第 5 步整树替换之后）；`0018` 五条、`luci-patches/0001` 四条 grep 断言（其中一条断言 `rsn_override_key_mgmt` 的赋值行号早于 override 元素的发出行号）；`luci-patches/0002` 三条 grep 断言（频段表读 section `channels`、重建后恢复所选 band、空值不落盘）；`luci-patches/0003` 四条 grep 断言（过滤 255 dBm 哨兵、读入已配置的 txpower、补进下拉且不重复、当前功率 0 按未知显示） |
-| 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` | passwall-selected 7 个包从新的 pin 重新派生；`thirdparty-feed` 12 个链接无悬空（2026-11-07 第二批加入 argon 主题；2026-11-15 移除 bandix LuCI 前端、加入 luci-app-mosdns/geo2txt/mosdns，并断言 mosdns 包装包的 sha256 与仓库一致、bandix 前端软链不存在）。2026-11-07 起装配不再打任何第三方补丁（wifihistory 专用补丁随应用删除） |
-| 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 11 条 `src-link`、178 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
+| 12 | 第三方树 | `thirdparty-feeds.conf` + `passwall-selected.conf` | passwall-selected 7 个包从新的 pin 重新派生；`thirdparty-feed` 11 个链接无悬空（2026-11-07 第二批加入 argon 主题；2026-11-15 移除 bandix LuCI 前端、加入 luci-app-mosdns/geo2txt/mosdns，随后 bandix 后端也整体移除，并断言 mosdns 包装包的 sha256 与仓库一致、bandix 前后端软链都不存在）。2026-11-07 起装配不再打任何第三方补丁（wifihistory 专用补丁随应用删除） |
+| 13 | feeds 接线 | `feeds.conf.in` + `feeds-links.conf` | 11 条 `src-link`、177 条 `package/feeds` 软链；无宿主绝对路径；每条目标有 Makefile |
 | 14 | 冻结配置 | `build/config-frozen/` | `.config` 哈希；8 个 `CONFIG_FEED_*=y`；无 `uboot-2025`；`version.date=1792557977`；**选中包用到的 `qca/src` 本地树都在**（`MISSING_IMPLICIT`/`MISSING_EXPLICIT` 必须为 0） |
 | 15 | 文档 | `docs/package/` | 拷成 `sources/README.md`、`sources/PROVENANCE.md` |
 | 16 | 指纹 | `build/fingerprint-exclude.conf` | `--compare build/fingerprint/audited-24.10-6.6.tsv.zst`；未解释差异必须为 0 |
@@ -63,19 +63,18 @@
 |---|---|---|
 | `build/upstream-pins.conf` | 42 个上游仓库的 dest/url/commit/mode | 每行一个 40 位 SHA，没有分支名、没有 latest、没有镜像回退 |
 | `build/prune.conf` | 装配时整棵删除的路径 | 当前为空；曾删 `qca/src/u-boot-2025/`，2026-10-25 撤回（见 §3） |
-| `build/assembly-map.conf` | 仓库内文件/目录 → 装配树位置 | rtl8261n、SBE DTS、base-files、本地包、6 个 blob、bandix-plus、mosdns |
+| `build/assembly-map.conf` | 仓库内文件/目录 → 装配树位置 | rtl8261n、SBE DTS、base-files、本地包、6 个 blob、mosdns |
 | `build/p-b/SERIES` | 板级补丁（镜像定义、DTS 注册、pwm） | 3 条，`tree` |
 | `build/target-feed-fixes/SERIES` | `config-6.6`、`target.mk` 修正 | 2 条，`tree` |
 | `build/build-fixes/SERIES` | 构建系统补丁 | 22 条：20 条 `tree` + 2 条 `package-patch`（`0023`、`0025` → dawn 包的 `patches/`；0004、0007、0020 空号，见文件头） |
 | `build/luci-patches/SERIES` | LuCI 树补丁（`sources/luci`） | 3 条，`tree`；`build-fixes` 的 `tree` 目标是 `buildroot`，够不到 luci |
 | `build/openwrt-patches/package/system/procd/patches/0002-*.patch` | 替换上游同名补丁（rcS 上下文重排） | 1 个文件，由 `assembly-map.conf` 整文件覆盖 |
 | `build/feeds.conf.in` | 11 条相对 `src-link` | 不含宿主路径 |
-| `build/feeds-links.conf` | 178 条 `package/feeds/<feed>/<名字>` 软链 | 记**解析后**的目标，不记链接文本 |
+| `build/feeds-links.conf` | 177 条 `package/feeds/<feed>/<名字>` 软链 | 记**解析后**的目标，不记链接文本 |
 | `build/passwall-selected.conf` | 从 passwall-packages 复制的 7 个包 | 纯拷贝，无 `.git` |
 | `scripts/ci/refresh-pins.sh` | 把插件 pin 解析到最新 tag/分支头并只读检测内核；**不改内核 pin** | 每周由 `refresh-pins-24.10-6.6.yml` 运行，只开 PR 不合并 |
-| `build/config-frozen/{.config,version,version.date}` | 冻结配置 | 4,888 行；`version.date=1792557977` |
+| `build/config-frozen/{.config,version,version.date}` | 冻结配置 | 4,904 行；`version.date=1792557977` |
 | `build/local-packages/` | `sbe1v1k-defaults`、`sbe-wifi-firmware`（仅文本） | 6 个 blob 不提交 |
-| `build/local-relayout/bandix-plus/` | 人工重排的 bandix-plus（后端服务） | Makefile + LICENSE + files/ |
 | `build/local-relayout/mosdns/` | 预编译静态二进制的包装包（源码构建受 Go 版本限制） | Makefile + LICENSE |
 | `build/fingerprint-exclude.conf` | 指纹与导出共用的排除规则 | 133 条，逐条带注释 |
 | `build/fingerprint/audited-24.10-6.6.tsv.zst` | 已审计树的逐文件指纹 | 194,808 条；压缩后 6.7 MB |
