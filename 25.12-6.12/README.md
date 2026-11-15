@@ -56,8 +56,9 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0024-qualcommbe-sbe1v1k-fix-kernel-loadaddr.patch     KERNEL_LOADADDR 0x42200000（v21 起不来的根因）
 │   ├── 0025-qualcommbe-sbe1v1k-pwm-driver.patch              内核 PWM 驱动 0400–0403 + CONFIG_PWM（风扇满速的根因）
 │   ├── 0026-qualcommbe-sbe1v1k-pwm-fan.patch                 风扇 / 引脚 / 温控区 DTS
-│   ├── disabled/                                            停用的补丁（不进构建，见其中的 README）
-│   │   └── 0027-qualcommbe-sbe1v1k-boot-blockers.patch      CPU OPP / sleep_clk / NSS 保留区（v28 对照构建暂停用）
+│   ├── 0027-qualcommbe-sbe1v1k-boot-blockers.patch           CPU OPP / sleep_clk / NSS 保留区（v28 对照后恢复）
+│   ├── 0028-qualcommbe-sbe1v1k-emmc-core-reset.patch         eMMC 节点的 SDCC 核心复位（v29）
+│   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
 │   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义
@@ -206,12 +207,31 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 `okay`，并确认该 DTB 逐字节存在于两个交付 FIT 中。注意 eMMC 能起来不等于能
 升级：写入目标见下一节（`patches/0022`），真机升级状态仍是 `NOT TESTED`。
 
+### eMMC 核心复位（`patches/0028`，v29）
+
+2026-11-15 新增，v29 的唯一变量。官方 6.18.60 快照是**上游 trunk 的
+`askey_sbe1v1k` 构建**（FIT 描述可查），在本机能完整运行；把它的 DTB 与我们的
+DTB 在 `mmc@7804000` 上逐属性对齐，只差一条 `resets = <&gcc 0x25>`，即 6.12
+`reset/qcom,ipq9574-gcc.h` 里的 `GCC_SDCC_BCR`。
+
+`sdhci_msm_gcc_reset()` 用 `reset_control_get_optional_exclusive()` 取这条复位，
+DTB 里没有就静默跳过，控制器沿用引导器留下的状态。24.10 的 6.6 树也没有
+resets，但它带 `assigned-clocks = <&gcc GCC_SDCC1_ICE_CORE_CLK>` / 300 MHz；
+两个实测能跑的配置各带一种时钟/复位初始化，而 25.12 在此之前两样都没有。
+RAM 探针（stage-probe4..8）的现场表现与此一致：内核能到用户态，碰 eMMC 之后
+死锁，写从未落盘。
+
+`prepare-tree.sh` 断言板级 DTS 带这条复位，`verify-image.sh` 反编译交付 DTB
+再断言一次。**真机状态：v29 未测**，判据沿用 `docs/V28_BISECT_0027.md` §1 的
+尾部 ext4 三项（计数超过刷机基线 / `s_last_mounted` 非空 / inode 用量多于
+mkfs 缺省）。
+
 ### 启动阻塞：CPU OPP、sleep_clk、NSS 保留区（`patches/0027`）
 
-> 2026-11-15：该补丁暂时移到 `patches/disabled/` 做 v28 对照构建（见
-> `docs/V28_BISECT_0027.md`）。停用时 `prepare-tree.sh` 与
-> `verify-image.sh` 的断言自动改为要求“三条都不做”的形态；恢复只需把
-> 文件移回 `patches/`。
+> 2026-11-15：v28 对照构建（0027 移到 `patches/disabled/`）已经判定该补丁
+> **不是**回归源——v24（无）、v25/v26（有）、v28（无）四种组合都在用户态之前
+> 停住，见 `docs/V28_BISECT_0027.md`。v29 起文件移回 `patches/`，断言自动切回
+> “修复形态”。
 
 `v24` 刷进路由器 B 后链路有 carrier 但 LAN 零流量、拿不到 DHCP。FIT 装载
 地址（0024）、eMMC（0021）、升级 tar 都已核对无误；缺的是 24.10 在同一颗

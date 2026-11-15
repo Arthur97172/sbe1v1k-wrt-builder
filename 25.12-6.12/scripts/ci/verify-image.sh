@@ -96,7 +96,12 @@ if [ -n "$DTB" ] && [ -f "$DTB" ]; then
 		*'mmc@7804000 {'*)
 			printf '%s\n' "$NODE" | grep -q 'status = "okay"' \
 				&& ok "DTB 中 mmc@7804000（eMMC）status = okay" \
-				|| bad "DTB 中 mmc@7804000 未启用：内核拿不到 mmcblk0，根文件系统无法挂载" ;;
+				|| bad "DTB 中 mmc@7804000 未启用：内核拿不到 mmcblk0，根文件系统无法挂载"
+			# v29：SDCC 核心复位（0028）。sdhci_msm_gcc_reset() 的复位是可选
+			# 的，DTB 里没有就静默跳过；上游 6.18 的 DTB 带这一条。
+			printf '%s\n' "$NODE" | grep -q 'resets = <' \
+				&& ok "DTB 的 mmc@7804000 带 SDCC 核心复位" \
+				|| bad "DTB 的 mmc@7804000 没有 resets：核心复位被静默跳过（v29 要修的就是这条）" ;;
 		*) bad "DTB 中找不到 mmc@7804000 节点" ;;
 		esac
 		# overlay 的位置：厂商 GPT 里有 rootfs_data 分区，fstools 默认会去用它；

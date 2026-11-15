@@ -115,6 +115,12 @@ grep -q '^TARGET_DEVICES += spectrum_sbe1v1k$' \
 grep -q '^&sdhc_1 {' \
 	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
 	|| { echo "补丁应用不完整：设备树没有启用 eMMC 的 &sdhc_1 块" >&2; exit 1; }
+# v29 起 eMMC 节点还要带 SDCC 核心复位（0028）。上游 6.18 的 askey_sbe1v1k DTB
+# 有这一条；6.12 的 sdhci_msm_gcc_reset() 取的是可选复位，缺了不报错，真机上
+# 表现为读能返回、写卡死（stage-probe4..8）。补丁被静默丢弃时在这里失败。
+grep -q 'resets = <&gcc GCC_SDCC_BCR>;' \
+	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
+	|| { echo "补丁应用不完整：&sdhc_1 没有 SDCC 核心复位（0028）" >&2; exit 1; }
 
 # 写入目标同样要在编译前断言。25.12 的 sysupgrade 镜像必须改成 tar 容器
 # （emmc_upgrade_tar 只认它），升级脚本必须按当前槽位写 eMMC，设备树必须把

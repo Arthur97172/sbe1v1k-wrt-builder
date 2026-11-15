@@ -19,17 +19,42 @@
 2. **镜像本身完好**：FIT、gzip 内核（UTS 6.12.112，与 `/lib/modules/6.12.112`
    逐字匹配）、板级 DTB（含 `bootargs-append = " fstools_ignore_partname=1"`）、
    模块树（ext4/jbd2/mbcache 均在）全部核对通过。
-3. **决定性现场证据（本次首次拿到）：p27 尾部 ext4 自刷机时刻起从未被读写挂载。**
+3. **决定性现场证据（2026-11-15 修订版）：p27 尾部 ext4 自刷机时刻起没有任何
+   写入，也没有除"刷机脚本自己"以外的挂载。**
    - 尾部 ext4 的位置 = squashfs `bytes_used` 向上取整到 64 KiB =
-     **72 810 496**（字节），用 fstools 自己的算法核算一致；
-   - 其超级块 `s_mtime == s_wtime == s_lastcheck = 2026-11-15 06:01:38 UTC`
-     （即这次刷机时的 mkfs 时刻），`s_last_mounted` 为空，`s_mnt_count = 0`；
-   - ext4 源码里 rw 挂载本身就会写超级块（`ext4_fill_super()` 递增
-     `s_mnt_count`、更新 `s_mtime` 后 `ext4_commit_super()`），所以"挂过"必然
-     留痕。
+     **72 810 496**（字节），用 fstools 自己的算法核算一致。超级块在尾部起点
+     **+1024**（ext4 约定，卷引导块之后）；直接读尾部起点是卷引导块区域，全零，
+     早先据此得出的 `s_mnt_count = 0` 是**读错偏移**，作废。
+   - 正确读数：卷标 `rootfs_data`，`s_mtime == s_wtime == s_lastcheck =
+     2026-11-15 06:01:38 UTC`（= 刷机时的 mkfs 时刻），`s_last_mounted` 为空，
+     `s_mnt_count = 1`。
+   - 这 1 次**不是启动留下的**。v26 是在仍运行 v78 的 B 上直接刷入的（用户
+     从 v78 的升级界面刷机，刷机工具即本机构的 sysupgrade），板级
+     `lib/upgrade/mmc.sh` 的 `mmc_do_flash()` 写完 root 后会
+     `mkfs.ext4 -F -L rootfs_data` 再 `mount -t ext4` 到 `/tmp/new_root` 然后
+     umount；ext4 只在 rw 挂载时递增 `s_mnt_count`，所以**刷机脚本自己就留下
+     1**。带 `-n` 时没有配置要拷，`cp` 在源路径上就失败，不会打开目标文件，
+     `s_last_mounted` 因此保持为空。
+   - 判据因此是"相对刷机基线的增量"：v26 若走到 preinit 的 mount_root，overlay
+     会被**再**挂一次（`s_mnt_count` → 2），随后 `82_config_generate` 要写
+     `board.json`、uci-defaults 要落盘，必然打开文件（`s_last_mounted` 非空）
+     并消耗 inode。实测两者都没有。
+   - 即使把"1"解释成某一次启动挂载（即假设不是从 v78 刷、基线为 0），结论也
+     不变：挂上 overlay 之后 preinit 紧接着就要生成/读取配置，**一个文件都不
+     打开是不可能的**；`s_last_mounted` 为空与 inode 用量停在 mkfs 缺省这两项
+     独立地否定"用户态跑过"。
+   - v26 的尾部后来被 v28 那次刷机整块覆盖，所以 inode 级复核是在 **v28** 的
+     同位置做的（形态与 v26 相同）：只读 `dd` + `e2fsck -fn` 得到
+     `rootfs_data: 12/13440 files (0.0% non-contiguous), 8549/53824 blocks`，
+     与同几何下刚 `mkfs.ext4` 完的空文件系统**逐项相同**（12 个 inode 就是
+     mkfs 的缺省集合：根目录、lost+found 等），文件系统状态 clean。
+     **一个文件、一个目录都没被创建过。** 见 `V28_BISECT_0027.md` §3.2。
+     v26 本身保留的证词是超级块三项：计数 1（= 刷机基线）、`s_last_mounted`
+     空、mkfs 时间 = 刷机时间。
    - 另一条旁证：GPT 的 `p29 rootfs_data` 分区前 2 MiB 全零——说明**也没有**
      任何一次启动走到"按分区名格式化 rootfs_data"的路径。
    - ⇒ **每一次 v26 启动都没有完成 preinit 里的 overlay 建立。**
+     （`s_mnt_count` 单看数字会误导：它的基线由"谁刷的机"决定，见 §8。）
 4. **本地仿真证明 25.12 用户态的这条链路是健康的。** 用真机 dump 的 p27 前段 +
    镜像自带的 `/sbin/mount_root`（fstools 2026.05.23）在 qemu-aarch64 里复现：
    - `mount_root start ""`（PREINIT=1）**exit 0**，尾部 ext4 被正确找到并 rw
@@ -64,15 +89,26 @@ p27（squashfs，ro）。断电重启即可离开恢复模式，不需要任何�
 |---|---|---|
 | p27 squashfs `s_magic` | `hsqs`，compression=XZ | 有效 |
 | squashfs `bytes_used` | 72 803 387 | fstools 算法 `align64k` → 72 810 496 |
-| 72 810 496 处 ext4 超级块 | `0xEF53` 有效 | 位置与 fstools 预测逐字节一致 |
-| `s_mtime`/`s_wtime`/`s_lastcheck` | 均为 2026-11-15 06:01:38 UTC | = 刷机时刻（mkfs 时间），此后无任何写 |
-| `s_last_mounted` | 空串 | 从未挂载 |
-| `s_mnt_count` | 0 | 从未挂载 |
-| 目录内容 | 只有 `lost+found` | 从未使用 |
+| 尾部起点 +1024 处 ext4 超级块 | `0xEF53` 有效，卷标 `rootfs_data` | 位置与 fstools 预测逐字节一致 |
+| 尾部起点 +0 处（卷引导块） | 全零 | ext4 超级块不在偏移 0；早期曾误读这里 |
+| `s_mtime`/`s_wtime`/`s_lastcheck` | 均为 2026-11-15 06:01:38 UTC | = 刷机时刻（mmc.sh 的 mkfs+挂载），此后无任何写 |
+| `s_mnt_count` | 1 | = 刷机脚本自己的 rw 挂载；启动若挂过应为 2 |
+| `s_last_mounted` | 空串 | 该文件系统上从未打开过任何文件 |
+| inode 用量（`e2fsck -fn`）† | 12 / 13440 files，8549/53824 blocks | 与刚 mkfs 的空文件系统逐项相同，从未创建文件 |
+| 文件系统状态 | `clean` | 正常 umount，无幼 orphan |
 | p29 `rootfs_data` 分区 | 前 2 MiB 全零（未格式化） | 未走过 partname 路径 |
 
-刷机脚本在写盘时按对齐尺寸 mkfs 尾部 ext4（`-L rootfs_data`），所以 mkfs 时间戳
-是刷机时间，不是启动证据；而挂载计数/最后挂载点则是干净的启动证据。
+† v26 的尾部后来被 v28 那次刷机整块覆盖，这一行是 2026-11-15 在 **v28** 的同位置
+（同一偏移、同一几何）取得的读数；v26 保留的是超级块三行（计数 1、`s_last_mounted`
+空、mkfs 时间 = 刷机时间）。
+
+两个字段的语义决定了怎么读：
+`s_mnt_count` 只在 **rw 挂载**时递增（`ext4_fill_super()`），但它的**基线取决于
+谁刷的机**——本板的 `mmc_do_flash()` 写完 root 后自己会 mkfs 并 rw 挂载一次
+`/tmp/new_root`，所以"从 v78 刷入"的系统刷完就带 1。`s_last_mounted` 则是**该
+文件系统上第一次打开文件**时才写（`fs/ext4/file.c: ext4_sample_last_mounted`），
+只会反映真实使用。因此启动证据要看：计数是否超过刷机基线、`s_last_mounted`
+是否非空、inode 是否被消耗。三项在 v26 上全部指向"从未被用户态挂载使用"。
 
 ### 2.2 启动链参数（复核）
 
@@ -199,17 +235,20 @@ netdev 已注册——即**到过用户态**。加入 0027 之后（v25、v26）
    30 秒、2 分钟两个时间点的状态，以及蓝灯节奏是否变化。风扇始终满速 ⇒
    内核连用户态都没到（支持 H2）。风扇变低转 ⇒ 用户态跑过（推翻 §0.3 的解读，
    需要重新取证）。
-1. **串口（决定性）**：ttyMSM0 / 115200。注意先说清楚板子上调试 UART 的电压
+1. **串口（决定性，当前不可用）**：ttyMSM0 / 115200。注意先说清楚板子上调试
+   UART 的电压
    （IPQ9574 平台常见 1.8 V，接 3.3 V 适配器前必须核实丝印/原理图）。日志里
    要看三件事：`Booting Linux` / `mmc0` 探测 / `VFS: Mounted root` /
-   `Run /sbin/init`。
+   `Run /sbin/init`。**2026-11-15 用户补充：目前没有串口线，无法做 TTL 验证，
+   只能靠刷机验证**；这一项在拿到线之前从计划里移除，改走第 0/2/3 步。
 2. **v27 诊断构建（不依赖串口的内核可视化）**：把 25.12 DTS 的 `led-0`
    （GPIO 64）加 `linux,default-trigger = "heartbeat"`（或先用 24.10 DTS 里
    红/绿灯的 pwm-leds 节点移植过来）。LED 呼吸 = 内核活到 LED 子系统注册。
    若需要更细的分段，可在 DTS `chosen/bootargs-append` 加
    `initcall_debug` 等，但无串口时意义有限。
 3. **v28 对照构建**：以 v26 代码去掉 0027 重建。若 v28 到达用户态 ⇒ 0027 是
-   回归源，再按 OPP / sleep_clk / no-map 三项逐项 bisect。
+   回归源，再按 OPP / sleep_clk / no-map 三项逐项 bisect。**2026-11-15 已执行
+   （补丁移到 `patches/disabled/`），见 `docs/V28_BISECT_0027.md`**。
 4. （可选）**PSTORE_BLK 写 p33**：GPT 里有一个 128 MiB 的 `log` 分区，
    可用来在 panic 时落盘 dmesg。但"卡死"不产生 panic，价值有限；需要确认
    该分区没有其他用途后再考虑。
@@ -230,7 +269,8 @@ netdev 已注册——即**到过用户态**。加入 0027 之后（v25、v26）
 ## 7. 状态词
 
 - 静态核对（§2）：PASS。
-- 现场取证（§2.1）：PASS（只读取证，结论"尾部从未挂载"）。
+- 现场取证（§2.1）：PASS（只读取证，结论"尾部从未被启动使用；刷机脚本自身那次
+  挂载除外"）。
 - 用户态仿真（§3）：PASS（主链路）。
 - 故障根因定位：未定稿——锁定在内核/init 边界之前（H2），待 §5 第 0/1 步
   的证据。
@@ -261,7 +301,19 @@ netdev 已注册——即**到过用户态**。加入 0027 之后（v25、v26）
 - 该处 ext4 超级块（文件系统起点 +1024）magic `0xEF53`、**`s_mnt_count = 1`**、
   `s_last_mounted = "/"`。
 
-同一个读法在能正常启动的 24.10 上得到"挂载过一次"的痕迹，在 v26 上是 0，
-说明 §0.3 的判读成立，而不是方法本身失效。
+注意这里 `s_mnt_count` 同样是 1，与 v26 数字相同、含义不同——所以数量本身不作为
+判据，判据是三件事的组合：
 
-主机侧 dnsmasq/TFTP 已停止；设备留在 v78 正常状态，不需要再进恢复模式。
+| | 刷入方式 | 刷机基线 | `s_mnt_count` | `s_last_mounted` | inode 用量 |
+|---|---|---|---|---|---|
+| v26（v28 同位置复核†） | 从 v78 内刷（`mmc.sh` 自己 mkfs+挂载） | 1 | 1（**无启动挂载**） | 空 | 12/13440（空文件系统） |
+| v78（阳性对照） | 从恢复系统刷 `-F -n`（刷机工具本身不挂载） | 0 | 1（**= 启动后正常挂载**） | `"/"` | 已被启动写入使用 |
+
+同一个读法在能正常启动的 24.10 上得到"被启动挂载并打开过文件"的痕迹，在 v26 上
+得到"只有刷机脚本自己那一次挂载、此后无人使用"的形态，说明 §0.3 的判读成立，
+而不是方法本身失效。2026-11-15 对 v28 的复核（`V28_BISECT_0027.md` §3）把这条
+判据又正向验证了一遍。
+
+主机侧 dnsmasq/TFTP 仍在运行（供 RAM 恢复系统上网取证用）。**设备当前停在 RAM
+恢复系统**：v28 刷入后起不来，尚未回滚到 v78；回滚（恢复模式 `sysupgrade -F -n`）
+需用户单独批准，且必须在尾部取证之后再执行（刷回会整块重写 p27）。

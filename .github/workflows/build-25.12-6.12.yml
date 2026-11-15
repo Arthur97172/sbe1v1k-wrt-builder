@@ -253,12 +253,17 @@ jobs:
           VARIANT="标准（0027 启动阻塞补丁已启用）"
           ls 25.12-6.12/patches/0027-*.patch >/dev/null 2>&1 || \
             VARIANT="**v28 对照构建：0027 未启用**（见 25.12-6.12/docs/V28_BISECT_0027.md）"
+          # v29 起 eMMC 节点带 SDCC 核心复位（0028），notes 里点到，刷机时好对号。
+          RESET_NOTE="未启用"
+          ls 25.12-6.12/patches/0028-*.patch >/dev/null 2>&1 && \
+            RESET_NOTE="已启用（v29：&sdhc_1 的 GCC_SDCC_BCR 核心复位）"
 
           cat > "$REL/notes.md" <<EOF
           Spectrum SBE1V1K (IPQ9574) firmware — OpenWrt 25.12 + 主线 Linux 6.12（Stage 2.5）
 
           - 版本行：${VLINE}
           - 构建变体：${VARIANT}
+          - eMMC 核心复位（0028）：${RESET_NOTE}
           - 提交：\`${GITHUB_SHA}\`
           - 运行：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           - 基线：upstream qualcommbe/ipq95xx + RDP433 device tree + QSDK NSS 数据通路

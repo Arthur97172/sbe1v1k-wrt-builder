@@ -1,0 +1,39 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: add the SDCC core reset to the eMMC node
+
+v29 的唯一变量。官方 6.18.60 快照（上游 trunk 的 askey_sbe1v1k 构建）在本机
+能完整运行；把它的 DTB 与本树的 DTB 在 mmc@7804000 节点上逐属性对齐，只差
+这一条 `resets = <&gcc 0x25>`——6.12 的 reset/qcom,ipq9574-gcc.h 里它就是
+GCC_SDCC_BCR（37）。
+
+6.12 的 sdhci_msm_gcc_reset() 用 reset_control_get_optional_exclusive() 取这条
+复位，DTB 里没有就静默跳过，控制器沿用引导器留下的状态（assert/deassert 之间
+要求 3–4 个 32 kHz 睡眠时钟周期，代码里按 200 µs 处理）。24.10 的 6.6 树同样
+没有 resets，但它有 `assigned-clocks = <&gcc GCC_SDCC1_ICE_CORE_CLK>` /
+300 MHz；两个实测能跑的配置各带一种时钟/复位初始化，而 25.12 到这里为止两样
+都没有。探针（stage-probe4..8）的现场表现是：内核能到用户态，碰 eMMC 之后
+死锁，写入从未落盘。
+
+与 0027 无关：v24（无 0027）、v25/v26（有 0027）、v28（无 0027）四种组合在
+“到不了用户态”上完全一致。因此本补丁以生产形态（0027 启用）为基础，相对
+v26 只多这一行。
+
+分类：设备定义修正；不涉及内核代码。
+
+diff --git a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -391,6 +391,13 @@
+  * state above is the vendor's sdc-default-state.
+  */
+ &sdhc_1 {
++	/*
++	 * SDCC core reset (GCC_SDCC_BCR).  Upstream's 6.18 askey_sbe1v1k DTB
++	 * carries it; this tree does not, and sdhci_msm_gcc_reset() acquires it
++	 * with reset_control_get_optional_exclusive(), so its absence is silent
++	 * and the controller keeps whatever state the loader left behind.
++	 */
++	resets = <&gcc GCC_SDCC_BCR>;
+ 	pinctrl-0 = <&sdc_default_state>;
+ 	pinctrl-names = "default";
+ 	mmc-ddr-1_8v;
