@@ -385,8 +385,8 @@ if grep -qF '[ -e /etc/config/network ] || touch /etc/config/network' "$ROOTFS/e
 else
 	bad "board.d 01_network 保留了 && exit 0 守卫：升级后端口面板只会显示 eth0/eth1"
 fi
-# eth0 的桥成员在 netifd 之外维护（RTL8261N 假环回）。v79 起由"每秒轮询"
-# 改为事件驱动：主路径是 hotplug.d/iface + hotplug.d/net，procd 只跑 netlink
+# eth0 的桥成员在 netifd 之外维护（RTL8261N 假环回）。原来每秒轮询，现在是
+# 事件驱动：主路径是 hotplug.d/iface + hotplug.d/net，procd 只跑 netlink
 # 兜底监听。任何一环缺失都会退化成"桥重建后 eth0 不在桥上"，所以逐项断言。
 ETH0H="$ROOTFS/usr/sbin/eth0-lan-attach"
 if [ -x "$ETH0H" ] && grep -q 'ip monitor link' "$ETH0H"; then
@@ -395,7 +395,7 @@ else
 	bad "eth0-lan-attach 缺失或没有 netlink 监听"
 fi
 if [ -x "$ETH0H" ] && grep -qE 'while[[:space:]]+sleep[[:space:]]+1' "$ETH0H"; then
-	bad "eth0-lan-attach 仍是无条件每秒轮询（v79 已改为事件驱动）"
+	bad "eth0-lan-attach 仍是无条件每秒轮询（应为事件驱动）"
 else
 	ok "eth0-lan-attach 没有无条件轮询"
 fi
@@ -410,6 +410,12 @@ if grep -q 'eth0-lan-attach monitor' "$ROOTFS/etc/init.d/eth0-lan-attach" 2>/dev
 	ok "init.d/eth0-lan-attach 只跑 netlink 监听（monitor）"
 else
 	bad "init.d/eth0-lan-attach 没有以 monitor 模式启动"
+fi
+# 开机链接由 include/rootfs.mk 的 prepare_rootfs 生成（首行 rc.common + 0755）。
+if [ -L "$ROOTFS/etc/rc.d/S23eth0-lan-attach" ]; then
+	ok "/etc/rc.d/S23eth0-lan-attach -> $(readlink "$ROOTFS/etc/rc.d/S23eth0-lan-attach")"
+else
+	bad "缺少 /etc/rc.d/S23eth0-lan-attach（netlink 兜底不开机启动）"
 fi
 if grep -q 'init.d/eth0-lan-attach enable' "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan" &&
    grep -q 'del_list "network.$section.ports=eth0"' "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan"; then

@@ -121,7 +121,7 @@ eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp
 会在 `config_generate` 之后把它从生成的 `network.<br-lan>.ports` 里再删掉，
 桥接由 `/usr/sbin/eth0-lan-attach` 在 netifd 之外完成。
 
-挂接是事件驱动的，不再每秒轮询（v79 起）：
+挂接是事件驱动的，不再每秒轮询：
 
 | 触发点 | 覆盖的场景 |
 | --- | --- |

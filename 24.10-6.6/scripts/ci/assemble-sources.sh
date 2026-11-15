@@ -379,6 +379,16 @@ chmod 0744 "$_mmc"
   "44e461792b8969d655970a4cc054e4ad3a6d083828eed5578906be38139c7898" ] \
 	|| die 4 "mmc.sh 内容与审计树不符"
 
+# eth0 挂桥的事件驱动钩子（2026-11-15 取代每秒轮询）。known-delta 把它们登记为
+# fresh-only，这里逐条验证：文件确实进了目标 base-files、可执行、且调用既有 helper。
+for _h in etc/hotplug.d/iface/30-eth0-lan-attach etc/hotplug.d/net/20-eth0-lan-attach; do
+	_b="$SRC/buildroot/target/linux/feeds/ipq95xx/base-files/$_h"
+	[ -f "$_b" ] || die 4 "目标 base-files 缺 $_h（eth0 事件驱动挂桥钩子）"
+	[ -x "$_b" ] || die 4 "$_h 不可执行（hotplug-call 不会调用它）"
+	grep -q 'eth0-lan-attach attach' "$_b" || die 4 "$_h 未调用 eth0-lan-attach attach"
+done
+logmsg "  ETH0_HOOKS_OK hotplug.d/iface + hotplug.d/net 均调用 eth0-lan-attach attach"
+
 # =============================================================== 9. blob
 step "校验 Wi-Fi blob（FILES-SHA256）"
 _pkg="$SRC/buildroot/package/sbe-wifi-firmware"
