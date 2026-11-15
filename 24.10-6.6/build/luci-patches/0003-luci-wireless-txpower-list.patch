@@ -10,27 +10,29 @@ bogus "255 dBm" option, and the configured value (e.g. txpower 23) was
 not part of the list, so the browser preselected the bogus entry and
 Save & Apply replaced or dropped the option.
 
-Measured on SBE1V1K (ath12k, QSDK): `iwinfo phy00 txpowerlist` returns
-only the sentinel, while the per-VAP names do much better --
-`phy00.0-0` (2.4 GHz) and `phy00.1-0` (5 GHz) return the full 0..30 dBm
-list.  The 6 GHz VAP (`phy00.2-0`) also returns only the sentinel, as
-libiwinfo has no 6 GHz band, so the 6 GHz section falls back to the list
-of another VAP reported by `iwinfo devices` (its rpc ACL is extended
-separately, see 0004).
+Measured on SBE1V1K (ath12k, QSDK): the per-VAP interface names do much
+better -- `phy00.0-0` (2.4 GHz) and `phy00.1-0` (5 GHz) return the full
+0..30 dBm list, while the 6 GHz VAP (`phy00.2-0`) returns only the
+sentinel, as libiwinfo has no 6 GHz band.  A band-split section name
+(`radio0_band2`) happens to work as well: libiwinfo looks the section up
+in uci, follows its `path` option to the wiphy and then, with no channel
+to match, reports the first band of that wiphy -- i.e. the 2.4 GHz list.
+That path is incidental and silently degrades to the sentinel whenever
+the lookup fails, which leaves the 6 GHz select with the configured
+value as its only option.
 
-The txpower option belongs to the wifi-device subsection, so
-`wifiNetwork` is the radio device network: its own `getIfname()` yields
-the netid (`radio0_band0`), not a VAP name.  The VAP names come from the
-radio's `getWifiNetworks()` list, where every entry's `getIfname()` is
-the interface name (`phy00.0-0`, ...), which also keeps each band on its
-own list instead of the first usable one.
+The txpower option belongs to the wifi-device subsection, so `wifiNetwork`
+is the wifi-iface instance: its own `getIfname()` yields the VAP name
+(`phy00.2-0`).  There is no `getWifiNetworks()` on `WifiNetwork` (it
+exists on `WifiDevice`), so sibling VAP names are collected from the
+network model instead.
 
 Changes:
 
- - probe the radio's VAP interface names (from the network model), then
-   the radio device name and the section itself, then every device
-   `iwinfo devices` reports, and use the first list with more than one
-   usable entry;
+ - probe the section's own VAP interface name, then the section name,
+   then the VAP interface names of every configured wireless network
+   (from `network.getWifiDevices()`), then every device `iwinfo devices`
+   reports, and use the first list with more than one usable entry;
  - skip entries outside the 0..63 dBm range that a real WLAN radio can
    use, which removes the 255 dBm sentinel;
  - append the section's configured `option txpower` to the list when the
@@ -42,10 +44,10 @@ Changes:
    `option txpower`, so the hint matches what was saved.
 
 diff --git a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
-index bdbba2d849..314d26b350 100644
+index 8e6f748..bc59bc8 100644
 --- a/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
 +++ b/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
-@@ -598,15 +598,105 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+@@ -642,15 +642,120 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
  		expect: { results: [] }
  	}),
  
@@ -86,48 +88,63 @@ index bdbba2d849..314d26b350 100644
 +		return step(0);
 +	},
 +
- 	load: function(section_id) {
--		return this.callTxPowerList(section_id).then(L.bind(function(pwrlist) {
-+		/* The section belongs to a wifi-device, and on QSDK band-split radios
-+		 * every band section resolves to the same wiphy: the phy level query
-+		 * never yields a usable list.  The interface names of the radio's VAPs
-+		 * (phy00.0-0, ...) do, except on 6 GHz where libiwinfo has no band at
-+		 * all.  Probe the VAPs first, then the device name and the section,
-+		 * then every VAP iwinfo knows about. */
-+		const self = this;
-+		const vaps = (this.wifiNetwork && this.wifiNetwork.getWifiNetworks)
-+			? this.wifiNetwork.getWifiNetworks().catch(function() { return []; })
-+			: Promise.resolve([]);
-+
-+		return vaps.then(function(nets) {
++	/* Collect the interface names of every configured wireless network.
++	 * The VAP bindings are resolved through the network model, so this works
++	 * for radios whose own VAP libiwinfo cannot describe and does not depend
++	 * on the rpcd ACL of `iwinfo devices`. */
++	collectVapNames: function() {
++		return network.getWifiDevices().then(function(devices) {
++			return Promise.all(devices.map(function(dev) {
++				return dev.getWifiNetworks();
++			}));
++		}).then(function(networks) {
 +			const names = [];
 +
-+			for (const net of nets) {
-+				const ifname = net.getIfname();
++			for (const nets of networks)
++				for (const net of nets) {
++					const ifname = net.getIfname();
 +
-+				if (ifname)
-+					names.push(ifname);
-+			}
++					if (ifname)
++						names.push(ifname);
++				}
 +
-+			if (self.wifiNetwork) {
-+				const devname = self.wifiNetwork.getIfname();
++			return names;
++		}).catch(function() {
++			return [];
++		});
++	},
 +
-+				if (devname)
-+					names.push(devname);
-+			}
+ 	load: function(section_id) {
+-		return this.callTxPowerList(section_id).then(L.bind(function(pwrlist) {
++		/* The option belongs to the wifi-device section.  On QSDK band-split
++		 * radios every band section resolves to the same wiphy; a phy level
++		 * query never yields a usable list.  The interface name of the
++		 * section's own VAP (phy00.0-0, ...) does, except on 6 GHz where
++		 * libiwinfo has no band at all.  Probe the own VAP and the section
++		 * first, then the VAPs of the whole configuration, then every device
++		 * `iwinfo devices` reports. */
++		const vap = this.wifiNetwork ? this.wifiNetwork.getIfname() : null;
 +
-+			names.push(section_id);
++		const probeSiblings = L.bind(function() {
++			return this.collectVapNames().then(L.bind(function(names) {
++				return this.probePowerList(names);
++			}, this));
++		}, this);
 +
-+			return self.probePowerList(names);
-+		}).then(L.bind(function(pwrlist) {
++		return this.probePowerList([ vap, section_id ]).then(L.bind(function(pwrlist) {
 +			if (this.usablePowerList(pwrlist).length > 1)
 +				return pwrlist;
 +
-+			return this.callDevices().then(L.bind(function(devs) {
-+				return this.probePowerList(devs ? devs.devices : null);
-+			}, this)).catch(function() {
-+				return pwrlist;
-+			});
++			return probeSiblings().then(L.bind(function(list) {
++				if (this.usablePowerList(list).length > 1)
++					return list;
++
++				return this.callDevices().then(L.bind(function(devs) {
++					return this.probePowerList(devs ? devs.devices : null);
++				}, this)).catch(function() {
++					return list;
++				});
++			}, this));
 +		}, this)).then(L.bind(function(pwrlist) {
  			this.powerval = this.wifiNetwork ? this.wifiNetwork.getTXPower() : null;
  			this.poweroff = this.wifiNetwork ? this.wifiNetwork.getTXPowerOffset() : null;
@@ -153,7 +170,7 @@ index bdbba2d849..314d26b350 100644
  
  			return form.ListValue.prototype.load.apply(this, [section_id]);
  		}, this));
-@@ -617,10 +707,18 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
+@@ -661,10 +766,18 @@ var CBIWifiTxPowerValue = form.ListValue.extend({
  
  		widget.firstElementChild.style.width = 'auto';
  

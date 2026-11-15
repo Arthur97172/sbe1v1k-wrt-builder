@@ -537,12 +537,20 @@ logmsg "  QSDK_BAND_SPLIT_OK luci wireless.js"
 # 0003 修「最大传输功率」下拉：iwinfo 对 phy/band-split section 的查询拿不到
 # 频率条目，把 -1（未知）哨兵塞进 uint8_t 的 dbm 字段变成 255 dBm，rpcd 再算
 # 出 2147483647 mW；同时列表里没有已配置的 txpower，保存表单会把 23 换成
-# 255 或直接删掉。真机实测：phy 级查询只有哨兵，2.4G/5G 的 VAP 接口名
-# （phy00.0-0/phy00.1-0）有完整 0..30 dBm 列表，6 GHz 的 VAP 也只有哨兵。
-# 缺一即停：按射频 VAP 接口名探测、devices 回退、过滤 0..63 之外的条目、把
-# section 的 option txpower 补进列表、已列值不重复、当前功率 0 按配置值显示。
+# 255 或直接删掉。真机实测（2026-11-15，v73）：phy 级查询只有哨兵，
+# 2.4G/5G 的 VAP 接口名（phy00.0-0/phy00.1-0）有完整 0..30 dBm 列表，6 GHz
+# 的 VAP 也只有哨兵；`iwinfo radio0_band2 txpowerlist` 能出全表，是 libiwinfo
+# 按 section 的 uci path 找到 wiphy 后拿它第一个 band 充数——偶然路径，查不到
+# 就退回哨兵。因此 6 GHz 的列表必须能从无线模型枚举 sibling VAP 借到。
+# 缺一即停：自己的 VAP→section→全配置 VAP（network.getWifiDevices）探测、
+# devices 最后回退、过滤 0..63 之外的条目、把 section 的 option txpower 补进
+# 列表、已列值不重复、当前功率 0 按配置值显示。
 grep -qF 'getWifiNetworks' "$_ljs" \
-	|| die 4 "0003 未生效：txpower 列表未按本射频的 VAP 接口名探测（wifiNetwork.getIfname() 是 radioX_bandN，不是 VAP 名）"
+	|| die 4 "0003 未生效：txpower 列表未按 VAP 接口名探测（wifiNetwork.getIfname() 是 radioX_bandN，不是 VAP 名）"
+grep -qF 'collectVapNames: function()' "$_ljs" \
+	|| die 4 "0003 未生效：txpower 列表未从无线模型枚举全配置的 VAP 接口名（6 GHz 只能靠 section 名被 libiwinfo 偶然解析）"
+grep -qF 'network.getWifiDevices()' "$_ljs" \
+	|| die 4 "0003 未生效：VAP 枚举没有走 network.getWifiDevices()"
 grep -qF 'callDevices: rpc.declare' "$_ljs" \
 	|| die 4 "0003 未生效：txpower 列表缺 iwinfo devices 回退"
 grep -qF 'return p.dbm >= 0 && p.dbm <= 63;' "$_ljs" \
