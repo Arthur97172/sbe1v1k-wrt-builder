@@ -302,18 +302,18 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
 # CONFIG_PACKAGE_luci-app-argon-config is not set
 
-# --- Bandix Plus ----------------------------------------------------------
-# 后端是 GitHub Releases 的预编译二进制（aarch64 哈希固定在 Makefile 里）。
-CONFIG_PACKAGE_luci-app-bandix-plus=y
-CONFIG_PACKAGE_luci-i18n-bandix-plus-zh-cn=y
-CONFIG_PACKAGE_bandix-plus=y
+# --- mosdns ---------------------------------------------------------------
+# 2026-11-15 按用户要求取代 bandix：前端、后端、geo2txt 三个包都从
+# sbwml/luci-app-mosdns 源码构建（mosdns 用树内 Go 1.26 编译；中文包由
+# luci-app-mosdns 的 po/zh_Hans 生成）。
+CONFIG_PACKAGE_luci-app-mosdns=y
+CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y
+CONFIG_PACKAGE_mosdns=y
+CONFIG_PACKAGE_geo2txt=y
+CONFIG_PACKAGE_v2ray-geoip=y
+CONFIG_PACKAGE_v2ray-geosite=y
+# 通用时区数据（24.10 起保留的包，不是 bandix 专属依赖）。
 CONFIG_PACKAGE_zoneinfo-all=y
-CONFIG_PACKAGE_conntrack=y
-CONFIG_PACKAGE_libtirpc=y
-CONFIG_PACKAGE_libnetfilter-conntrack=y
-CONFIG_PACKAGE_libnetfilter-cttimeout=y
-CONFIG_PACKAGE_libnetfilter-cthelper=y
-CONFIG_PACKAGE_libnetfilter-queue=y
 # iw / iw-full 是同一个包的两种变体，都装 /usr/sbin/iw；meshassistant 的
 # +iw 依赖由 iw-full 的 PROVIDES 满足，只选 full 变体，避免文件冲突。
 # CONFIG_PACKAGE_iw is not set
@@ -325,3 +325,8 @@ CONFIG_PACKAGE_iw-full=y
 # CONFIG_PACKAGE_luci-app-cpu-status is not set
 # CONFIG_PACKAGE_luci-app-wifihistory is not set
 # CONFIG_PACKAGE_luci-app-poweroffdevice is not set
+# 2026-11-15 用户要求 bandix 前后端整体移出固件（24.10 同日先做）；清单、
+# 装备脚本与依赖都已删除，这里再显式关闭，防止以后被依赖带回。
+# CONFIG_PACKAGE_luci-app-bandix-plus is not set
+# CONFIG_PACKAGE_luci-i18n-bandix-plus-zh-cn is not set
+# CONFIG_PACKAGE_bandix-plus is not set

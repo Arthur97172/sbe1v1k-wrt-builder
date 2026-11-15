@@ -506,8 +506,14 @@ esac
 
 # ---- 代理内核与插件后端：包数据库之外再确认可执行文件确实落地 ---------------
 # （包名对但安装路径变了，同样是一次交付事故。）
-for f in usr/bin/xray usr/bin/sing-box usr/bin/bandix-plus etc/init.d/bandix-plus; do
+for f in usr/bin/xray usr/bin/sing-box usr/bin/mosdns etc/init.d/mosdns etc/config/mosdns; do
 	if [ -e "$ROOTFS/$f" ]; then ok "存在 /$f"; else bad "缺少 /$f"; fi
+done
+# bandix 已于 2026-11-15 前后端整体移除（先前端换 mosdns，随后后端也删）；
+# 包数据库之外再按文件兜一层底，防止旧装配树残留。
+for f in usr/bin/bandix-plus etc/init.d/bandix-plus etc/config/bandix_plus \
+	www/luci-static/resources/view/bandix; do
+	if [ -e "$ROOTFS/$f" ]; then bad "bandix 已移除，镜像里不应有 /$f"; else ok "无 /$f（bandix 已移除）"; fi
 done
 if [ -e "$ROOTFS/usr/libexec/mihomo" ] || [ -e "$ROOTFS/usr/bin/mihomo" ]; then
 	ok "存在 mihomo 二进制（usr/libexec/mihomo 或 usr/bin/mihomo）"

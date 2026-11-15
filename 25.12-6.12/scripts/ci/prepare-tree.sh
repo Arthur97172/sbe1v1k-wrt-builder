@@ -199,7 +199,7 @@ for d in "$PROJ"/build/local-packages/*/; do
 	echo "[prepare]   package/$name"
 done
 
-# 18 个第三方插件（12 个自维护 + passwall/nikki/openclash/bandix/argon）。
+# 18 个第三方插件（12 个自维护 + passwall/nikki/openclash/mosdns/argon）。
 # 默认在每次构建时解析各仓库最新版本 tag；只有新提交是 thirdparty-pins.conf
 # 里 pin 的后代才采用，分叉/回退/远端不可达都保持 pin（不中断构建）。
 # 实际提交记录在 <装配树>/.sbe-plugins.tsv，供 release notes 与日志引用；

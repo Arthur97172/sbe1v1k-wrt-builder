@@ -1,6 +1,6 @@
 # 25.12-6.12 第三方插件清单与来源
 
-本文件是 `build/thirdparty-pins.conf` 的人读版本：18 个插件、19 个仓库的
+本文件是 `build/thirdparty-pins.conf` 的人读版本：18 个插件、18 个仓库的
 来源、布局、中文包、运行时依赖与风险。机器可读的唯一来源仍是
 `thirdparty-pins.conf`；包是否真的进了镜像由 `build/required-packages.txt`
 与 `scripts/ci/check-packages.sh` 反查（见 README「必装包反查」）。
@@ -35,10 +35,10 @@
 | 15 | OpenClash | luci-app-openclash | vernesong/OpenClash | 0.48.002 | 无独立包（自带 .lmo） | LICENSE_REVIEW_REQUIRED |
 | 16 | Argon 主题 | luci-theme-argon | jerrykuku/luci-theme-argon | 3.1.4-r20261113 | luci-i18n-argon-config-zh-cn | LICENSE_REVIEW_REQUIRED |
 | 17 | Argon 设置 | （并入 luci-theme-argon） | 同上 | — | 同上 | 同上 |
-| 18 | Bandix Plus | luci-app-bandix-plus + bandix-plus | timsaya/luci-app-bandix-plus + timsaya/openwrt-bandix-plus | 0.1.3-r2 / 0.1.3-r1 | luci-i18n-bandix-plus-zh-cn | LICENSE_REVIEW_REQUIRED |
+| 18 | mosdns | luci-app-mosdns + mosdns（+ geo2txt） | sbwml/luci-app-mosdns | 1.7.15-r1 / 5.3.4-r15 | luci-i18n-mosdns-zh-cn | LICENSE_REVIEW_REQUIRED |
 
 合计：12 个自维护应用 + 6 组第三方仓库。带出的后端/内核包
-（xray-core、sing-box、mihomo-meta、bandix-plus 等）见第四节。
+（xray-core、sing-box、mihomo-meta、mosdns、geo2txt 等）见第四节。
 
 ## 二、布局与安装方式
 
@@ -52,8 +52,7 @@
 | openwrt-passwall-packages | `chinadns-ng`、`dns2socks`、`ipt2socks`、`shadowsocksr-libev`、`simple-obfs`、`tcping` | 6 个子目录子集，不整仓安装 |
 | OpenWrt-nikki | `nikki/`、`luci-app-nikki/`、`mihomo-meta/` | mihomo-meta 从源码用树内 golang 编译 |
 | OpenClash | `luci-app-openclash/` | 中文 `.lmo` 由包内 po2lmo 直接编译进 i18n 目录 |
-| luci-app-bandix-plus | `luci-app-bandix-plus/` | 前端 |
-| openwrt-bandix-plus | `openwrt-bandix-plus/` | 后端；目录名与包名 `bandix-plus` 不同，无需重排 |
+| luci-app-mosdns | `mosdns/`、`luci-app-mosdns/`、`geo2txt/` | 一条清单行三个包目录；mosdns 从源码用树内 golang 编译 |
 | luci-theme-argon | 仓库根（`.`） | 主题包；设置页已并入 |
 
 安装脚本额外做两件事：
@@ -75,7 +74,7 @@
 
 - po 目录名决定有没有包：只有 `po/zh_cn`（而非 `zh_Hans`）目录的仓库
   不会生成 `luci-i18n-*-zh-cn` 包，例如 OpenClash（它自己编译 `.lmo`）。
-- po 文件名无关紧要（如 bandix 的 `bandix_plus.po`），目录名才是关键。
+- po 文件名无关紧要（如 mosdns 的 `mosdns.po`），目录名才是关键。
 - `luci-proto-wireguard` 没有 `po/`，25.12 不存在
   `luci-i18n-wireguard-zh-cn`，字符串回落到 luci-base 的中文包。
 - `luci-theme-argon` 的消息域是 `argon-config`，所以中文包叫
@@ -146,15 +145,18 @@ mesh 的 batman 组件等），便于反查。
 - 中文包 `luci-i18n-argon-config-zh-cn` 随主题包安装。
 - 风险：上游若把 compat 目录改回实体包，重名检查/seed 断言会先失败。
 
-### Bandix Plus（第 18 项）
+### mosdns（第 18 项，2026-11-15 取代 bandix）
 
-- 前后端两个仓库：`luci-app-bandix-plus`（UI）与 `openwrt-bandix-plus`
-  （后端，包名 `bandix-plus`）。
-- 后端是 GitHub Releases 的预编译 aarch64 二进制，`PKG_HASH` 固定在
-  Makefile 里。
-- 依赖 conntrack、libtirpc、libnetfilter-conntrack/-cttimeout/-cthelper/-
-  queue、zoneinfo-all，均已在 seed 显式选择。
-- 风险：上游 Releases 404 或哈希不符时构建失败；回退为禁用前后端两项。
+- 一个仓库三个包：`mosdns`（后端，Go 源码）、`luci-app-mosdns`（UI，含
+  `po/zh_Hans`，生成 `luci-i18n-mosdns-zh-cn`）、`geo2txt`（geosite/geoip
+  解包工具，C）。一条清单行写三个 subdir，一次装齐。
+- 与 24.10 不同，25.12 树内 golang 为 1.26/1.27，`mosdns` 直接源码编译
+  （仓库的 `100-mosdns-update-dependencies.patch` 把 go.mod 升到 1.26.0），
+  不再需要预编译二进制包装包。
+- 前端依赖 `v2ray-geoip`、`v2ray-geosite`（官方 packages feed）、
+  `uclient-fetch`、`ucode`，seed 显式选择便于反查。
+- 风险：mosdns 新版的 go.mod 若超过树内 Go 版本，构建会失败；回退为保持
+  pin（或临时禁用 mosdns 一组），不影响其他插件。
 
 ## 五、构建时自动跟新与复现
 
@@ -182,6 +184,8 @@ mesh 的 batman 组件等），便于反查。
 | luci-app-wifihistory | 源码在官方 luci feed，未选，seed 显式关闭 | 同上 |
 | luci-app-poweroffdevice | 无符号；`luci-app-poweroff` 是另一个包 | 同上 |
 | luci-app-argon-config | 与主题包冲突，显式关闭 | 见上节 |
+| luci-app-bandix-plus | 2026-11-15 前后端整体移除（同 24.10，先前端换 mosdns） | seed 显式关闭，`!` 反查 |
+| bandix-plus | 同上；后端服务与专属依赖（conntrack/libtirpc/libnetfilter-*）一并移除 | 同上 |
 | mihomo-alpha | 只要 mihomo-meta | — |
 | wget-nossl | wget 只能选一个 TLS 变体 | 取 wget-ssl |
 
@@ -194,6 +198,9 @@ defconfig 结果和镜像 apk 数据库三处反查。
   `db` 四种模式，2026-11-13 本地装配树实测
   `seed PASS / index PASS 92 / config PASS 98 / FAIL 0`。状态词 `PASS`
   只覆盖「包存在且被选中」，不覆盖编译与运行。
+- 2026-11-15 bandix 前后端换成 mosdns 后只重跑了 `seed` 模式：
+  `PASS 101 / FAIL 0`；`index` / `config` / `db` 依赖装配树与镜像，
+  以 CI 下一次构建为准。
 - 编译：只能由 CI 的 `Build` 步骤验证（约 3 小时）。
 - 设备：全部 `NOT TESTED`。
 - 授权：第三方插件 `LICENSE_REVIEW_REQUIRED`；随镜像公开分发前须逐仓库

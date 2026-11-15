@@ -128,27 +128,28 @@ ruby-yaml
 luci-theme-argon
 ?luci-i18n-argon-config-zh-cn
 
-# --- Bandix Plus -----------------------------------------------------------
-luci-app-bandix-plus
-?luci-i18n-bandix-plus-zh-cn
-bandix-plus
+# --- mosdns（2026-11-15 取代 bandix）---------------------------------------
+# 三个包都来自 sbwml/luci-app-mosdns：luci-app-mosdns（前端，po/zh_Hans 生成
+# 中文包）、mosdns（后端，Go 源码用树内 golang 1.26 编译）、geo2txt。
+# v2ray-geoip / v2ray-geosite 是前端依赖，来自官方 packages feed。
+luci-app-mosdns
+luci-i18n-mosdns-zh-cn
+mosdns
+geo2txt
+v2ray-geoip
+v2ray-geosite
+# 通用时区数据：沿用 24.10 的取舍（早于 bandix 引入）继续保留。
 zoneinfo-all
-conntrack
-libtirpc
-# 这四个库的 Makefile 带 ABI_VERSION（conntrack=3、cttimeout=1、cthelper=0、
-# queue=1），安装名会被拼成 conntrack3 / cttimeout1 / cthelp0 / queue1
-# （include/package-pack.mk）。这里写包名（= .config 符号名），镜像反查由
-# check-packages.sh db 接受 ABI 形式，不要把本清单改成带后缀的名字。
-libnetfilter-conntrack
-libnetfilter-cttimeout
-libnetfilter-cthelper
-libnetfilter-queue
 
 # --- 必须缺席 --------------------------------------------------------------
 # 2026-11-07 从 24.10 移除；25.12 从未集成，这里防止被依赖或 seed 带回。
 !luci-app-cpu-status
 !luci-app-wifihistory
 !luci-app-poweroffdevice
+# 2026-11-15 按用户要求把 bandix 前后端移出 25.12（与 24.10 同日处理一致）。
+!luci-app-bandix-plus
+!luci-i18n-bandix-plus-zh-cn
+!bandix-plus
 # Argon v3 的空迁移包：与 luci-theme-argon 文件冲突。
 !luci-app-argon-config
 # 只要 mihomo-meta。

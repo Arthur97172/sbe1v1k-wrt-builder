@@ -26,7 +26,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── deterministic-bin/    date 垫片（固定 SOURCE_DATE_EPOCH）
 │   ├── config-seed/          defconfig 种子
 │   ├── required-packages.txt 必装 / 可选 / 必禁包清单（四处反查的唯一来源）
-│   ├── thirdparty-pins.conf  18 个插件、19 个仓库的来源与离线 pin
+│   ├── thirdparty-pins.conf  18 个插件、18 个仓库的来源与离线 pin
 │   └── local-packages/       项目自带软件包
 │       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭、WAN 侧放行 LuCI/SSH）
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
@@ -695,8 +695,8 @@ release notes 附插件提交表与内核检测结论。
 
 `build/required-packages.txt` 是包选择的唯一反查源：一行一个包名，
 `?name` 为可选（缺了只告警，典型是上游没有中文包），`!name` 为必须缺席
-（cpu-status / wifihistory / poweroffdevice / argon-config / mihomo-alpha /
-wget-nossl）。`scripts/ci/check-packages.sh` 有四个模式：
+（cpu-status / wifihistory / poweroffdevice / bandix 前后端 / argon-config /
+mihomo-alpha / wget-nossl）。`scripts/ci/check-packages.sh` 有四个模式：
 
 | 模式 | 输入 | 时机 |
 |---|---|---|
