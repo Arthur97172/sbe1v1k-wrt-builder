@@ -696,7 +696,9 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
   否则镜像里留的是旧脚本（`verify-image.sh` 第 9 项会以 FAIL 指出）。CI 每次
   都是新树，不受影响。
 
-真机升级状态：`NOT TESTED`。
+真机升级状态：`NOT TESTED`（2026-11-15 用户把 B 机升级到 v78-1-627a88de 后做了
+全面测试并报告通过，但升级所用流程未记录，本条不据此关闭；旁证与范围见
+[docs/V78_FIELD_VERIFICATION-2026-11-15.md](docs/V78_FIELD_VERIFICATION-2026-11-15.md)）。
 
 ## CI
 
@@ -739,3 +741,7 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
   一律显式写：overlay 里的入口用调用脚本的返回码，包内脚本（如
   `sbe1v1k-defaults`）用 `exit 0` / `exit 1` 表达“已应用”/“保留重试”。
 - 构建与校验过程不接触任何设备；产物未经真机验证前记为 `UNVERIFIED`。
+- 全锥形 NAT：2026-11-15 评估结论为**不做**（fw4 无支持、内核模块与 fw4 补丁
+  都要外挂且参考实现已停更、与 NSS/ECM 加速的兼容性未验证；UPnP IGD 已覆盖
+  大部分场景），详见
+  [docs/FULLCONE_NAT_EVAL-2026-11-15.md](docs/FULLCONE_NAT_EVAL-2026-11-15.md)。
