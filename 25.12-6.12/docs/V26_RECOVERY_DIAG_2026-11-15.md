@@ -235,3 +235,33 @@ netdev 已注册——即**到过用户态**。加入 0027 之后（v25、v26）
 - 故障根因定位：未定稿——锁定在内核/init 边界之前（H2），待 §5 第 0/1 步
   的证据。
 - 设备行为：v26 启动失败，NOT RESOLVED。
+
+---
+
+## 8. 回滚 v78 与取证方法的阳性对照（同日，用户批准后执行）
+
+用户批准"先刷回 24.10 v78 恢复可用状态"，据此在 RAM 恢复系统上执行：
+
+- 镜像：Release `v78-1-627a88de` 的
+  `openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin`，
+  84 153 126 B，SHA-256 `b95505c8…626728`。传至 `/tmp/v78.bin` 后两端
+  SHA-256 一致，再 `sysupgrade -F -n`（`-F` 绕过 askey/spectrum 板名不一致）。
+- 约 56 s 后恢复：`DISTRIB_REVISION='sbe1v1k-g3.5c'`、内核 6.6.147、
+  `opkg` 里 `mosdns 5.3.4-r15` + `luci-app-mosdns 1.7.15-r1`（v78 指纹）；
+  `/dev/loop0 on /overlay type ext4 (rw,noatime)`、`br-lan 192.168.1.1/24`、
+  三个 VAP（WiFi_2.4G/5G/6G）UP。
+- 写入确认：p25 前 6 MiB SHA-256 `573cf513…` → `27e144b4…`，p27 前 4 MiB
+  `edcf9d1d…` → `56316768…`，确为整机重写而非部分。
+
+**阳性对照（证明 §2.1 的读数方法本身可靠）：**
+
+- 从 v78 镜像解析 squashfs：`bytes_used = 78 235 547`，64 KiB 对齐
+  → **78 249 984**；
+- 设备上 `/sys/block/loop0/loop/offset` = **78 249 984**（逐字节一致）；
+- 该处 ext4 超级块（文件系统起点 +1024）magic `0xEF53`、**`s_mnt_count = 1`**、
+  `s_last_mounted = "/"`。
+
+同一个读法在能正常启动的 24.10 上得到"挂载过一次"的痕迹，在 v26 上是 0，
+说明 §0.3 的判读成立，而不是方法本身失效。
+
+主机侧 dnsmasq/TFTP 已停止；设备留在 v78 正常状态，不需要再进恢复模式。
