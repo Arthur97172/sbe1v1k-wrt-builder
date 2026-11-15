@@ -290,23 +290,37 @@ section 不会被改写。装配脚本对 0002 的三处改动与无线自愈函
   MAC +0x10/+0x11/+0x12，本机 `90:d3:cf:3c:34:b6/b7/b8`），已有配置的 MAC
   不覆盖。真机验证：A 机 2026-11-13 PASS（2.4G `b6` ch11、5G `b7` ch40
   两个 BSS 起来并广播）。
-- **6 GHz 取决于固件 regdomain（TW 不可用）**：2026-11-13 起默认国家码为
-  **US**、默认 6G 信道为 **37**（用户提供的默认值；同日 2.4G htmode 改为
-  `EHT20`），因此新装默认按 US regdomain 配置；下面这段 TW 限制适用于把
-  国家码设回 TW 的场景。ath12k 的 self-managed 规则来自固件 WMI；TW 的固件
-  规则里没有 6 GHz 信道（`iw phy` 中 6 GHz 全部 `(disabled)`，dmesg
-  `pdev is not supported for this country`，即 QSDK 补丁
-  `0104-wifi-ath12k-disable-pdev-for-non-supported-country` 的
+- **6 GHz 取决于固件 `regdb.bin`（打包件里 TW 不可用，可替换恢复）**：
+  2026-11-13 起默认国家码为 **US**、默认 6G 信道为 **37**（用户提供的默认值；
+  同日 2.4G htmode 改为 `EHT20`），因此新装默认按 US regdomain 配置；下面
+  这段 TW 限制适用于把国家码设回 TW 的场景。ath12k 的 self-managed 规则
+  来自固件：国家码经 hostapd/`iw reg set` 实时下发固件（2026-11-15 B 机
+  实测 US↔TW 即时切换、无需重启），各频段可用信道由固件侧的 `regdb.bin`
+  决定，完全不看 wireless-regdb。镜像打包的 `regdb.bin`（`09bf84…`，
+  WLAN.WBE.1.6 时代）里 TW 没有 6 GHz 信道（`iw phy` 中 6 GHz 全部
+  `(disabled)`，dmesg `pdev is not supported for this country`，即 QSDK
+  补丁 `0104-wifi-ath12k-disable-pdev-for-non-supported-country` 的
   `-EOPNOTSUPP` 分支）。把 country 换成 US 后 6 GHz 立即可用，证明硬件与
-  驱动链路正常，唯一阻塞是固件 regdomain。`wireless-defaults` 因此每次
+  驱动链路正常，打包件的固件规则是唯一阻塞。`wireless-defaults` 因此每次
   开机探测：没有任何可用 6 GHz 信道时把 `radio0_band2` 置 `disabled='1'`
   并记 `spectrum_6g_fw_blocked='1'`（避免 hostapd 反复失败），信道恢复
   可见时自动解除。另测得 `channel 61` + `EHT320` 会被驱动拒绝
   （`Failed to set beacon parameters (ret=-22)`），US 下 `channel 37` +
-  `EHT320` 可正常广播，故 2026-11-13 起默认信道改为 37。真机验证：A 机
+  `EHT320` 可正常广播，故 2026-11-13 起默认信道改为 37。
+  **TW 6 GHz 可用替换 `regdb.bin` 恢复（2026-11-15 B 机真机验证）**：把
+  `extracted/rootfs/lib/firmware/qcn9224/regdb.bin`（厂 rootfs 提取件，
+  `3b064e…`，WLAN.WBE.1.5 时代，236 国）覆盖到
+  `/overlay/upper/lib/firmware/ath12k/QCN92XX/hw1.0/regdb.bin` 后重启（不改
+  squashfs），TW 下 6 GHz 出现 24 个可用信道 5955–6415 MHz（6435 起
+  `(disabled)`，符合 TW 5945–6425 规则），6G 在 ch37 EHT320 广播
+  （23 dBm），三频全部起站、无 `pdev` 报错；同一台机换回打包件即复现
+  "TW 下 0 个可用 6G 信道"。回滚：删掉该 overlay 文件并重启。该提取件
+  来源与许可证待评审（`LICENSE_REVIEW_REQUIRED`），与 firmware-2.bin 1.6
+  只做过短时兼容验证，因此**当前未打包，默认仍为 US**。真机验证：A 机
   2026-11-13 PASS（TW：6G 射频自动禁用、2.4G/5G 正常；US 临时测试：三频
-  BSS 全部起来，6G 在 ch37 EHT320 广播）。固件将来提供 TW 6 GHz 规则时，
-  开机探测会自动重新启用该射频。
+  BSS 全部起来，6G 在 ch37 EHT320 广播）；B 机 2026-11-15 PASS（打包件 +
+  TW：0 个可用 6G 信道；提取件 + TW：三频起站、6G ch37 EHT320 广播）。
+  固件将来提供 TW 6 GHz 规则时，开机探测会自动重新启用该射频。
 
 ## 本机构建
 
