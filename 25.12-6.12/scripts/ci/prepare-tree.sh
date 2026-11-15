@@ -121,6 +121,14 @@ grep -q '^&sdhc_1 {' \
 grep -q 'resets = <&gcc GCC_SDCC_BCR>;' \
 	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
 	|| { echo "补丁应用不完整：&sdhc_1 没有 SDCC 核心复位（0028）" >&2; exit 1; }
+# 0029：板级 dts 必须关掉 RDP433 基线的 QPIC NAND。目标补丁 0104 在
+# ipq9574-rdp-common.dtsi 里启用 &qpic_nand 并把它挂到 gpio0-5 的 qspi 复用上，
+# 与 eMMC 的 sdc_default_state 是同一组焊球（gpio5 clk、gpio4 cmd、
+# gpio0-3/6-9 data）。开着时 eMMC 完全不枚举：2026-11-15 的 RAM 探针里，
+# 开 = 红灯无 mmcblk*，关 = 绿灯 mmcblk0 + mmcblk0p27。补丁丢了就在这里失败。
+grep -q '^&qpic_nand { status = "disabled"; };$' \
+	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
+	|| { echo "补丁应用不完整：设备树没有禁用 QPIC NAND（0029）" >&2; exit 1; }
 
 # 写入目标同样要在编译前断言。25.12 的 sysupgrade 镜像必须改成 tar 容器
 # （emmc_upgrade_tar 只认它），升级脚本必须按当前槽位写 eMMC，设备树必须把

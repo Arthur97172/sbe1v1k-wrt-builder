@@ -17,7 +17,8 @@
 #      （本机与 CI 用同一判据：2026-10-24 决定 CI 镜像也带 blob。）
 #   6. apk/opkg 包数据库存在并打印包数量；
 #   7. 设备树里 mmc@7804000（eMMC）为 okay，且该 DTB 逐字节存在于两个 FIT 中
-#      （板子从 eMMC 启动，控制器关闭时真机无法启动）；
+#      （板子从 eMMC 启动，控制器关闭时真机无法启动）；QPIC NAND
+#      （spi@79b0000）为 disabled（开着会抢走 eMMC 的引脚复用）；
 #      设备树里 pwm@1941010 为 okay、pwm-fan 挂在通道 3 且有 cooling map，
 #      镜像含 pwm-fan.ko；FIT 内核 load/entry 为 0x42200000（v21 用
 #      0x41000000，落在 NSS 保留区里，真机不启动）；
@@ -104,6 +105,13 @@ if [ -n "$DTB" ] && [ -f "$DTB" ]; then
 				|| bad "DTB 的 mmc@7804000 没有 resets：核心复位被静默跳过（v29 要修的就是这条）" ;;
 		*) bad "DTB 中找不到 mmc@7804000 节点" ;;
 		esac
+		# v33：RDP433 基线的 QPIC NAND 必须关掉（0029）。目标补丁 0104 在
+		# ipq9574-rdp-common.dtsi 里启用它并把 gpio0-5 复用成 qspi，与 eMMC 的
+		# sdc_default_state 是同一组焊球；开着时 eMMC 完全不枚举（v32 真机）。
+		QPIC=$(awk '/spi@79b0000/{on=1} on{print} on && /^[[:space:]]*\};/{exit}' "$DTBDEC")
+		printf '%s\n' "$QPIC" | grep -q 'status = "disabled"' \
+			&& ok "DTB 中 QPIC NAND（spi@79b0000）已关闭" \
+			|| bad "DTB 中 QPIC NAND 未关闭：qspi 引脚复用会抢走 eMMC 的 sdc 引脚（v32 起不来的根因）"
 		# overlay 的位置：厂商 GPT 里有 rootfs_data 分区，fstools 默认会去用它；
 		# 本项目的模型是 overlay 建在 rootfs 分区尾部（升级时只需写 HLOS/rootfs
 		# 两个分区）。靠 chosen/bootargs-append 传 fstools_ignore_partname=1，

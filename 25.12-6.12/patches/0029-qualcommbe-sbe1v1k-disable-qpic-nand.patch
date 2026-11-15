@@ -1,0 +1,51 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: disable the RDP433 QPIC NAND node
+
+板级 dts（0009 建立）从 RDP433 基线派生，`#include "ipq9574-rdp-common.dtsi"`。
+OpenWrt 目标自带的 0104-arm64-dts-qcom-ipq9574-Enable-SPI-NAND-for-ipq9574.patch
+在该 dtsi 里打开 `&qpic_nand`（status = "okay"），并给它挂上
+`qpic-snand-default-state`：gpio5 → qspi_clk、gpio4 → qspi_cs、gpio0-3 →
+qspi_data。
+
+eMMC SDC1 用的正是同一组焊球（sdc_default_state：gpio5 sdc_clk、gpio4
+sdc_cmd、gpio0-3/6-9 sdc_data、gpio10 sdc_rclk）。RDP433 是 norplusnand 板，
+SBE1V1K 不是：它的启动链在 SPI NOR（spi@78b5000），根文件系统在 eMMC，板上
+没有 NAND。两个节点同时启用时，后探测的 snand 驱动把引脚复用改成 qspi，
+sdhci 的 eMMC 初始化随之失败。
+
+真机证据（2026-11-15，TFTP RAM 探针，不写闪存）：
+
+  0c  v32 内核 + v32 DTB         → 白闪 + 红灯（完全没有 mmcblk*）
+  0d  官方 6.18 内核 + 官方 DTB   → 完整 RAM 系统，dmesg 里 mmcblk0 与 43 个分区
+  0e  v32 内核 + 官方 6.18 DTB   → 绿灯（mmcblk0 + mmcblk0p27 都在）：6.12 内核无辜
+  0f  v32 内核 + 本补丁改过的 DTB → 见验证
+
+官方 6.18.60 快照的 DTB 里 spi@79b0000 正是 status = "disabled"。
+
+分类：设备定义修正；不涉及内核代码。
+
+diff --git a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -712,3 +712,21 @@
+ 		status = "okay";
+ 	};
+ };
++
++/*
++ * RDP433 baseline residue: the board file inherits
++ * ipq9574-rdp-common.dtsi, and the upstream target patch
++ * 0104-arm64-dts-qcom-ipq9574-Enable-SPI-NAND-for-ipq9574.patch enables
++ * &qpic_nand there with qpic-snand-default-state, which muxes GPIO5 to
++ * qspi_clk, GPIO4 to qspi_cs and GPIO0-3 to qspi_data.  Those are the same
++ * balls the eMMC controller uses (sdc_default_state: gpio5 sdc_clk, gpio4
++ * sdc_cmd, gpio0-3/6-9 sdc_data), and SBE1V1K has no NAND: its boot chain
++ * lives on the SPI NOR (spi@78b5000) and the root filesystem on the eMMC.
++ * With qpic_nand enabled the NAND driver takes the pin mux away from
++ * sdhci and the eMMC never enumerates (hardware evidence: 2026-11-15, the
++ * RAM probe reports mmcblk0/mmcblk0p27 with this node disabled and no
++ * mmcblk at all with it enabled; the official 6.18 DTB leaves it
++ * disabled as well).
++ */
++&qpic_bam { status = "disabled"; };
++&qpic_nand { status = "disabled"; };

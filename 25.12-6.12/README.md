@@ -58,6 +58,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0026-qualcommbe-sbe1v1k-pwm-fan.patch                 风扇 / 引脚 / 温控区 DTS
 │   ├── 0027-qualcommbe-sbe1v1k-boot-blockers.patch           CPU OPP / sleep_clk / NSS 保留区（v28 对照后恢复）
 │   ├── 0028-qualcommbe-sbe1v1k-emmc-core-reset.patch         eMMC 节点的 SDCC 核心复位（v29）
+│   ├── 0029-qualcommbe-sbe1v1k-disable-qpic-nand.patch       关掉 RDP433 基线的 QPIC NAND（v32 无 eMMC 的根因）
 │   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
@@ -225,6 +226,30 @@ RAM 探针（stage-probe4..8）的现场表现与此一致：内核能到用户�
 再断言一次。**真机状态：v29 未测**，判据沿用 `docs/V28_BISECT_0027.md` §1 的
 尾部 ext4 三项（计数超过刷机基线 / `s_last_mounted` 非空 / inode 用量多于
 mkfs 缺省）。
+
+### RDP433 基线的 QPIC NAND（`patches/0029`，v33）
+
+v32 刷入路由器 B 后完全起不来：链路无 carrier、无 DHCP。2026-11-15 用 TFTP
+RAM 探针（不写闪存）把故障钳到 eMMC：v32 内核 + v32 DTB 时用户态正常（白闪 +
+风扇心跳）但 `/sys/class/block` 里没有任何 `mmcblk*`；同一内核换官方 6.18.60
+快照的 DTB 就出现 `mmcblk0` 与 p27。内核无辜，问题在 DTB。
+
+根因：板级 dts 从 RDP433 基线派生，`#include "ipq9574-rdp-common.dtsi"`；
+OpenWrt 目标自带的 `0104-arm64-dts-qcom-ipq9574-Enable-SPI-NAND-for-ipq9574.patch`
+在该 dtsi 里打开 `&qpic_nand` 并挂上 `qpic-snand-default-state`
+（gpio5→qspi_clk、gpio4→qspi_cs、gpio0-3→qspi_data）。这和 eMMC 的
+`sdc_default_state` 是同一组焊球。RDP433 是 norplusnand 板，SBE1V1K 不是
+（启动链在 SPI NOR `spi@78b5000`，根在 eMMC，板上无 NAND）；两个节点同时启用
+时后探测的 snand 驱动抢走引脚复用，eMMC 初始化失败。官方 DTB 里该节点正是
+`disabled`。
+
+`patches/0029` 在板级 dts 关闭 `&qpic_nand` 与 `&qpic_bam`；`prepare-tree.sh`
+在编译前断言这条，丢失时直接失败。`verify-image.sh` 反编译交付 DTB 的检查
+不变（`mmc@7804000` okay）。**真机状态：stage 0f 探针（v32 内核 + 禁用 QPIC
+NAND 的 v32 DTB）2026-11-15 实测 PASS**——绿灯快节奏（2 s/0.5 s），即
+`mmcblk0` 与 `mmcblk0p27` 都出现；同一探针在 QPIC NAND 启用时是红灯（无任何
+`mmcblk*`）。v33 镜像未刷入。
+
 
 ### 启动阻塞：CPU OPP、sleep_clk、NSS 保留区（`patches/0027`）
 
