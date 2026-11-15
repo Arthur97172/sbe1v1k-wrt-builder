@@ -436,6 +436,18 @@ if grep -q 'append base_cfg "disable_iface_during_cac=' "$ROOTFS/lib/netifd/wire
 else
 	ok "mac80211.sh 不再发 disable_iface_during_cac/athnewind"
 fi
+# build-fixes/0026 给四个只对 QSDK 环境成立的动作加守卫：wlanconfig（镜像不带
+# 这个专有工具）、mlo_add_flag/fq_limit 的空串比较、iw set_intf_offload、
+# ppe_vp_rfs 模块参数。镜像里复查同一组标记，漏应用时直接在这里失败。
+if grep -q 'command -v wlanconfig' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
+   ! grep -qF '[ $mlo_add_flag -eq 0 ]' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
+   grep -qF 'if [ "${fq_limit:-0}" -gt 0 ]; then' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
+   grep -qF '[ -e /sys/module/mac80211/parameters/ppe_vp_rfs ]' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
+   ! grep -qF 'echo 1 > /tmp/mlo_support.txt&' "$ROOTFS/lib/wifi/pre_post_wifi_operations.sh"; then
+	ok "wifi-scripts 已带 QSDK 专有动作守卫（0026）"
+else
+	bad "wifi-scripts 缺 0026 守卫：日志会刷 wlanconfig/out of range/usage，HMMC 拒绝表不生效"
+fi
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
 	[ -e "$ROOTFS/$f" ] && bad "不应存在 /$f" || ok "缺席 /$f"

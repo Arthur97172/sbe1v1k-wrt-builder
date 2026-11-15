@@ -1,0 +1,159 @@
+Subject: [PATCH] wifi-scripts: guard QSDK-only wifi helpers and helpers that this image lacks
+
+A boot of the v87-2 image on the SBE1V1K logs four script-level defects in
+the QCA wifi-scripts (qca/feeds/wlan-open/mac80211).  None of them break
+the radios, but each one either spams the log or silently skips work.
+
+1. wlanconfig is not in this image.  configure_mcast_denylist() calls it
+   unconditionally for every VAP (9 VAPs x 6 lines per boot), so every
+   call logs "wlanconfig: not found" and the HMMC multicast deny list is
+   never programmed.  Later QSDK drops guard the same function with
+   `command -v wlanconfig ... || return 0`; do the same here.
+
+2. /tmp/mlo_support.txt is written in the background
+   (pre_post_wifi_operations.sh) and read back by mac80211.sh with
+   `[ $mlo_add_flag -eq 0 ]`.  When the reader wins the race the file is
+   still empty and busybox sh answers "0: unknown operand" /
+   "out of range".  Write the file synchronously and normalize the value
+   at every read site (only "1" counts as on), then compare it quoted at
+   all six sites.
+
+   mac80211_set_fq_limit() has the same shape with $fq_limit, which is
+   empty when the phy has no data section: `[ "" -gt 0 ]` is a
+   "out of range" too.  Default it to 0 inside the test.
+
+3. mac80211_set_vif_txpower() ends with
+   `iw dev <if> set_intf_offload type <ppe_vp>`.  set_intf_offload is a
+   QSDK extension to iw; the feeds/base iw-full 6.9 shipped here has no
+   such subcommand and answers EINVAL plus the usage text on every VAP.
+   Only issue the call when a PPE VP type was actually configured, and
+   drop stderr.
+
+4. The same path writes
+   /sys/module/mac80211/parameters/ppe_vp_rfs.  This mac80211 (QSDK
+   14.0.1595.1670) exports ppe_vp_accel but not ppe_vp_rfs, so the write
+   only logs a permission error.  Guard it with a file test; the
+   neighbouring rfs_core_mask/ppe_rfs_feature writes do exist and stay
+   unconditional.
+
+The guards are no-ops on a build that does ship the QSDK tools or module
+parameters, so the script keeps working if those pieces are ever added.
+
+---
+--- a/qca/feeds/wlan-open/mac80211/files/lib/wifi/pre_post_wifi_operations.sh	2026-11-15 23:25:15.842130224 +0000
++++ b/qca/feeds/wlan-open/mac80211/files/lib/wifi/pre_post_wifi_operations.sh	2026-11-15 23:25:15.843468514 +0000
+@@ -331,7 +331,9 @@
+ 		echo "Interface is already up or wireless config is not present or sequence remove link then add link is not followed" > /dev/ttyMSM0
+ 		return
+ 	fi
+-	echo 1 > /tmp/mlo_support.txt&
++	# Not backgrounded: mac80211.sh reads this file and used to race
++	# the write, seeing an empty file and "sh: out of range".
++	echo 1 > /tmp/mlo_support.txt
+ 	band=$(echo $link | cut -d "_" -f 2)
+ 	input_file=/var/run/hostapd-${1}_${band}.conf
+ 	if [ ! -f $input_file ]; then
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh	2026-11-15 23:25:15.841942629 +0000
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh	2026-11-15 23:25:15.843240538 +0000
+@@ -22,6 +22,10 @@
+ # $1 = VAP interface name
+ # $2 = "add" (wifi up) or "del" (wifi down)
+ configure_mcast_denylist() {
++	# wlanconfig is a QSDK-only tool and this image ships none of it;
++	# every call would only log "wlanconfig: not found" and leave the
++	# HMMC deny list unset.  Done the same way as later QSDK drops.
++	command -v wlanconfig >/dev/null 2>&1 || return 0
+ 	local vap="$1"
+ 	local action="$2"
+ 
+@@ -126,7 +130,8 @@
+ 
+ mlo_add_flag=0
+ [ -f /tmp/mlo_support.txt ] && mlo_add_flag=$(cat /tmp/mlo_support.txt)
+-if [ $mlo_add_flag -eq 0 ]; then
++[ "$mlo_add_flag" = 1 ] || mlo_add_flag=0
++if [ "$mlo_add_flag" -eq 0 ]; then
+ 	mac80211_update_mld_configs
+ 	init_wireless_driver "$@"
+ fi
+@@ -2170,7 +2175,8 @@
+ 	esac
+ 
+ 	[ -f /tmp/mlo_support.txt ] && mlo_add_flag=$(cat /tmp/mlo_support.txt)
+-	if [ $mlo_add_flag -eq 0 ]; then
++	[ "$mlo_add_flag" = 1 ] || mlo_add_flag=0
++	if [ "$mlo_add_flag" -eq 0 ]; then
+ 		[ "$mode" == "ap" ] && {
+ 			[ -z "$wpa_psk_file" ] && hostapd_set_psk "$ifname"
+ 			[ -z "$vlan_file" ] && hostapd_set_vlan "$ifname"
+@@ -2722,7 +2728,12 @@
+ 		fi
+ 	fi
+ 
+-	iw dev "$ifname" set_intf_offload type "$ppe_vp"
++	# set_intf_offload is a QSDK extension to iw; the feeds/base iw
++	# shipped here has no such subcommand and answers EINVAL plus the
++	# usage text.  Only issue it when a PPE VP type was configured.
++	if [ -n "$ppe_vp" ]; then
++		iw dev "$ifname" set_intf_offload type "$ppe_vp" 2>/dev/null
++	fi
+ }
+ 
+ mac80211_set_fq_limit() {
+@@ -2733,7 +2744,7 @@
+         json_select config
+         json_get_vars fq_limit
+ 
+-        if [ "$fq_limit" -gt 0 ]; then
++        if [ "${fq_limit:-0}" -gt 0 ]; then
+                 tc qdisc add dev "$ifname" parent :1 fq_codel limit "$fq_limit"
+                 tc qdisc add dev "$ifname" parent :2 fq_codel limit "$fq_limit"
+                 tc qdisc add dev "$ifname" parent :3 fq_codel limit "$fq_limit"
+@@ -3257,7 +3268,8 @@
+         fi
+ 
+ 	[ -f /tmp/mlo_support.txt ] && mlo_add_flag=$(cat /tmp/mlo_support.txt)
+-	if [ $mlo_add_flag -eq 0 ]; then
++	[ "$mlo_add_flag" = 1 ] || mlo_add_flag=0
++	if [ "$mlo_add_flag" -eq 0 ]; then
+ 		json_select data && {
+ 			json_get_var prev_rxantenna rxantenna
+ 			json_get_var prev_txantenna txantenna
+@@ -3292,13 +3304,17 @@
+ 	fi
+ 
+ 	[ -f /tmp/mlo_support.txt ] && mlo_add_flag=$(cat /tmp/mlo_support.txt)
+-	if [ $mlo_add_flag -eq 0 ]; then
++	[ "$mlo_add_flag" = 1 ] || mlo_add_flag=0
++	if [ "$mlo_add_flag" -eq 0 ]; then
+ 		if [ "$(cat /sys/module/ath12k/parameters/ppe_rfs_support)" == 'Y' ]; then
+ 			# Note: ppe_vp_accel and ppe_vp_rfs are mutually exclusive.
+ 			#       ppe_vp_accel enables PPE acceleration path and ppe_vp_rfs
+ 			#       is expected to enable only flow steering for VLAN type
+ 			#       interface (eg: WDS root).
+-			echo 1 >> /sys/module/mac80211/parameters/ppe_vp_rfs
++			# mac80211 in this build has no ppe_vp_rfs parameter (only
++			# ppe_vp_accel); writing it just logs a permission error.
++			[ -e /sys/module/mac80211/parameters/ppe_vp_rfs ] && \
++				echo 1 >> /sys/module/mac80211/parameters/ppe_vp_rfs
+ 			# Note: Format is default MLO mask followed by band specific core masks
+ 			#       in order of 2 GHz, 5 GHz and 6GHz bands
+ 			#       echo <DEFAULT/ MLO MASK>,<2GHZ MASK>,<5GHZ MASK>,<6GHZ_MASK>
+@@ -3322,7 +3338,7 @@
+ 	# convert channel to frequency
+ 	[ "$auto_channel" -gt 0 ] || freq="$(get_freq "$phy" "$channel" "$band")"
+ 
+-	if [ $mlo_add_flag -eq 0 ]; then
++	if [ "$mlo_add_flag" -eq 0 ]; then
+ 		[ -n "$country" ] && {
+ 			iw reg get | grep -q "^country $country:" || {
+ 				iw reg set "$country"
+@@ -3405,7 +3421,7 @@
+ 	macidx=0
+ 	staidx=0
+ 
+-	if [ $mlo_add_flag -eq 0 ]; then
++	if [ "$mlo_add_flag" -eq 0 ]; then
+ 		[ -n "$chanbw" ] && {
+ 			for file in /sys/kernel/debug/ieee80211/$phy/ath9k*/chanbw /sys/kernel/debug/ieee80211/$phy/ath5k/bwmode; do
+ 				[ -f "$file" ] && echo "$chanbw" > "$file"

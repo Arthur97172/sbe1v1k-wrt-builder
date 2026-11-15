@@ -517,6 +517,40 @@ for _k in CSwOpts athnewind rptr_mgr_mode channel uplink_csa; do
 done
 logmsg "  SUPPLICANT_EXTN_OPTS_OK wifi-scripts（supplicant 配置不再带扩展全局项）"
 
+# 0026 给 wifi-scripts 里四个只对 QSDK 环境成立的动作加守卫：wlanconfig（镜像
+# 不带这个专有工具）、mlo_add_flag/fq_limit 的空串比较、iw set_intf_offload
+# （feeds/base 的 iw 没有这个扩展子命令）、ppe_vp_rfs 模块参数（本版 mac80211
+# 只导出 ppe_vp_accel）。四条在 v87-2 真机日志里分别刷屏或静默失效。补丁应用
+# 成功不等于内容正确，逐条断言，失败即停。
+_ws26="$SRC/buildroot/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh"
+_pp26="$SRC/buildroot/qca/feeds/wlan-open/mac80211/files/lib/wifi/pre_post_wifi_operations.sh"
+[ "$(grep -cF 'command -v wlanconfig >/dev/null 2>&1 || return 0' "$_ws26")" = 1 ] \
+	|| die 4 "0026 未生效：configure_mcast_denylist() 的 wlanconfig 守卫不是恰好一处"
+grep -A4 '^configure_mcast_denylist() {$' "$_ws26" | grep -q 'command -v wlanconfig' \
+	|| die 4 "0026 位置错误：wlanconfig 守卫不在 configure_mcast_denylist() 开头"
+[ "$(grep -cF '[ "$mlo_add_flag" = 1 ] || mlo_add_flag=0' "$_ws26")" = 4 ] \
+	|| die 4 "0026 未生效：mlo_add_flag 的 4 处读取点没有全部归一化"
+if grep -qF '[ $mlo_add_flag -eq 0 ]' "$_ws26"; then
+	die 4 "0026 未生效：仍有未加引号的 [ \$mlo_add_flag -eq 0 ]（读侧竞态时会 out of range）"
+fi
+[ "$(grep -cF 'if [ "$mlo_add_flag" -eq 0 ]; then' "$_ws26")" = 6 ] \
+	|| die 4 "0026 未生效：加引号的 mlo_add_flag 比较不是 6 处"
+grep -qF 'if [ "${fq_limit:-0}" -gt 0 ]; then' "$_ws26" \
+	|| die 4 "0026 未生效：mac80211_set_fq_limit 的 fq_limit 未按空串归一化"
+grep -qF 'if [ -n "$ppe_vp" ]; then' "$_ws26" \
+	|| die 4 "0026 未生效：set_intf_offload 未按 ppe_vp 是否配置门控"
+if grep -q 'set_intf_offload type "\$ppe_vp"$' "$_ws26"; then
+	die 4 "0026 未生效：仍有不带 stderr 重定向的 set_intf_offload 调用"
+fi
+grep -qF '[ -e /sys/module/mac80211/parameters/ppe_vp_rfs ] && \' "$_ws26" \
+	|| die 4 "0026 未生效：ppe_vp_rfs 写入前没有存在性判断"
+if grep -qF 'echo 1 > /tmp/mlo_support.txt&' "$_pp26"; then
+	die 4 "0026 未生效：/tmp/mlo_support.txt 仍以后台方式写（读取侧会竞态）"
+fi
+grep -qxF '	echo 1 > /tmp/mlo_support.txt' "$_pp26" \
+	|| die 4 "0026 未生效：pre_post_wifi_operations.sh 缺同步写 mlo_support 的一行"
+logmsg "  QSDK_ONLY_WIFI_HELPERS_GUARDED wifi-scripts（wlanconfig/mlo/fq_limit/offload/rfs）"
+
 # =============================================================== 11b. luci
 step "LuCI 补丁（build/luci-patches/SERIES）"
 apply_series "$BUILD/luci-patches/SERIES"
