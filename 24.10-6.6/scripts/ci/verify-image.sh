@@ -385,6 +385,38 @@ if grep -qF '[ -e /etc/config/network ] || touch /etc/config/network' "$ROOTFS/e
 else
 	bad "board.d 01_network 保留了 && exit 0 守卫：升级后端口面板只会显示 eth0/eth1"
 fi
+# eth0 的桥成员在 netifd 之外维护（RTL8261N 假环回）。v79 起由"每秒轮询"
+# 改为事件驱动：主路径是 hotplug.d/iface + hotplug.d/net，procd 只跑 netlink
+# 兜底监听。任何一环缺失都会退化成"桥重建后 eth0 不在桥上"，所以逐项断言。
+ETH0H="$ROOTFS/usr/sbin/eth0-lan-attach"
+if [ -x "$ETH0H" ] && grep -q 'ip monitor link' "$ETH0H"; then
+	ok "eth0-lan-attach 提供 netlink 监听（ip monitor link）"
+else
+	bad "eth0-lan-attach 缺失或没有 netlink 监听"
+fi
+if [ -x "$ETH0H" ] && grep -qE 'while[[:space:]]+sleep[[:space:]]+1' "$ETH0H"; then
+	bad "eth0-lan-attach 仍是无条件每秒轮询（v79 已改为事件驱动）"
+else
+	ok "eth0-lan-attach 没有无条件轮询"
+fi
+for h in etc/hotplug.d/iface/30-eth0-lan-attach etc/hotplug.d/net/20-eth0-lan-attach; do
+	if [ -x "$ROOTFS/$h" ] && grep -q 'eth0-lan-attach attach' "$ROOTFS/$h"; then
+		ok "hotplug 钩子存在：$h"
+	else
+		bad "hotplug 钩子缺失或没有调用 attach：$h"
+	fi
+done
+if grep -q 'eth0-lan-attach monitor' "$ROOTFS/etc/init.d/eth0-lan-attach" 2>/dev/null; then
+	ok "init.d/eth0-lan-attach 只跑 netlink 监听（monitor）"
+else
+	bad "init.d/eth0-lan-attach 没有以 monitor 模式启动"
+fi
+if grep -q 'init.d/eth0-lan-attach enable' "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan" &&
+   grep -q 'del_list "network.$section.ports=eth0"' "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan"; then
+	ok "uci-defaults 从 br-lan ports 摘除 eth0 并启用 attach 服务"
+else
+	bad "uci-defaults 没有摘除 eth0 或没有启用 attach 服务"
+fi
 # QCA wifi-scripts 原本无条件向 hostapd 配置发 disable_iface_during_cac 与
 # athnewind，这两项只有 qcn-app-extns 解析；镜像用 noextns 变体，hostapd 把
 # 它们当 unknown configuration item，整份配置 2 errors 后 add_iface 失败，

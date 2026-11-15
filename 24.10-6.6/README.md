@@ -119,7 +119,26 @@ src/gz openwrt_telephony https://downloads.openwrt.org/releases/24.10-SNAPSHOT/p
 eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp1 打进 10G
 假环回。所以 board.json 只负责“显示”，首启脚本 `99-spectrum-eth0-unmanaged-lan`
 会在 `config_generate` 之后把它从生成的 `network.<br-lan>.ports` 里再删掉，
-桥接由 `/usr/sbin/eth0-lan-attach`（procd 服务）在 netifd 之外完成。
+桥接由 `/usr/sbin/eth0-lan-attach` 在 netifd 之外完成。
+
+挂接是事件驱动的，不再每秒轮询（v79 起）：
+
+| 触发点 | 覆盖的场景 |
+| --- | --- |
+| `/etc/hotplug.d/iface/30-eth0-lan-attach`（`ifup`/`ifupdate` + `lan`） | 主路径：netifd 应用完 lan 配置后立刻补挂 |
+| `/etc/hotplug.d/net/20-eth0-lan-attach`（`add`/`change` + `br-lan`/`eth0`） | 桥新建/重建、eth0 重新出现，包括 netifd 重启 |
+| `/etc/init.d/eth0-lan-attach`（START=23，procd 常驻） | 兜底：`ip monitor link` netlink 监听，只看 `br-lan`/`eth0` 事件 |
+
+三个入口都调用同一个 `eth0-lan-attach attach`：先读
+`/sys/class/net/eth0/master`，已经挂在 `br-lan` 上就什么都不做；否则
+`ip link set eth0 up` + `ip link set eth0 master br-lan`，最多重试 5 次（每次
+1 秒）后放弃并写 syslog（`logger -t eth0-lan-attach`）。hotplug 钩子把 helper
+放到后台执行，不阻塞 `hotplug-call` 里的其它脚本。需要手工接管桥成员时
+`touch /var/run/eth0-lan-attach.disabled` 即可让 attach 停手（tmpfs，重启失效）。
+
+这套机制是绕开驱动的临时措施：根治办法是修 RTL8261N/dp1 在 teardown 后进入
+假 10G 环回的驱动问题（`build/kernel-overlay/drivers/net/phy/rtl8261n`），修好后
+连同 helper、两个 hotplug 钩子和 init 服务一起删除。
 
 注意 sysupgrade 路径：`/etc/config/network` 会被保留，而 `01_network` 早先以
 `[ -e /etc/config/network ] && exit 0` 开头，升级后 SBE 分支整段被跳过，
@@ -128,6 +147,9 @@ board.json 网络段改由 `99-default_network` 写成 `"lan": "eth0"`，端口�
 board.json 网络段在升级路径下照常写入；`verify-image.sh` 对该守卫形式有断言。
 A 机升级刷入后删除 board.json 重跑 `board_detect`，已确认
 `lan.ports = [eth2, eth3, eth0]`（真机 PASS，2026-11-13）。
+`verify-image.sh` 同时断言事件驱动结构：helper 含 `ip monitor link` 且没有
+`while sleep 1` 轮询、两个 hotplug 钩子存在并调用 `attach`、init 服务以
+`monitor` 模式启动。事件驱动版本真机行为 `NOT TESTED`。
 
 ### 以太网端口 MAC 固定化
 
