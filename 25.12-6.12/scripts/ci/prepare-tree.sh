@@ -25,6 +25,15 @@
 #   5. 写入 version（REVISION）与 version.date（固定 SOURCE_DATE_EPOCH）；
 #   6. 重建 host-bin（Ubuntu runner 上没有 /usr/bin/gnu* 前缀）。
 #
+# 构建变体（SBE_VARIANT，默认 production）：
+#   production  正式固件。上述全部步骤。
+#   diag        25.12 启动失败的 RAM 诊断镜像（见
+#               docs/CONTROL_EXPERIMENT_PLAN-2026-11-16.md）。装配方式相同
+#               （QSDK NSS/SSDK 必须保留），但不装第三方插件：diag seed 只用
+#               官方 feed 与本地包，构建可离线复现。overlay 叠加 files-diag/。
+#   mainline    对照实验 M 变体：不装配 QSDK NSS，走主线 PPE 数据通路。
+#               overlay 叠加 files-mainline/。
+#
 # 用法：scripts/ci/prepare-tree.sh [工作区根目录]
 # 只允许在 CI 中运行（会改写 host-bin 指向）。
 
@@ -40,6 +49,16 @@ PROJ=$(CDPATH= cd -- "$SELF/../.." && pwd)          # <repo>/25.12-6.12
 ROOT=${1:-$(CDPATH= cd -- "$PROJ/.." && pwd)}       # 工作区根（含 sources/）
 BR="$ROOT/sources/buildroot-25.12-6.12"
 EPOCH=${SBE_SOURCE_DATE_EPOCH:-1792713600}          # 2026-10-23T00:00:00Z
+
+VARIANT=${SBE_VARIANT:-production}
+case "$VARIANT" in
+production|diag|mainline) ;;
+*)
+	echo "未知 SBE_VARIANT=$VARIANT（可选 production|diag|mainline）" >&2
+	exit 1
+	;;
+esac
+echo "[prepare] 构建变体 SBE_VARIANT=$VARIANT"
 
 OPENWRT_URL=${OPENWRT_URL:-https://github.com/openwrt/openwrt.git}
 OPENWRT_BRANCH=${OPENWRT_BRANCH:-openwrt-25.12}
@@ -223,9 +242,15 @@ done
 # 实际提交记录在 <装配树>/.sbe-plugins.tsv，供 release notes 与日志引用；
 # SBE_PLUGIN_MODE=pinned 可精确复现旧镜像。
 echo "[prepare] 安装第三方插件（SBE_PLUGIN_MODE=${SBE_PLUGIN_MODE:-latest}）"
-"$SELF/fetch-plugins.sh" "$ROOT"
-[ -s "$BR/.sbe-plugins.tsv" ] \
-	|| { echo "插件安装没有产出 $BR/.sbe-plugins.tsv" >&2; exit 1; }
+if [ "$VARIANT" = production ]; then
+	"$SELF/fetch-plugins.sh" "$ROOT"
+	[ -s "$BR/.sbe-plugins.tsv" ] \
+		|| { echo "插件安装没有产出 $BR/.sbe-plugins.tsv" >&2; exit 1; }
+else
+	# diag/mainline 的 seed 不引用任何第三方插件：不联网解析 tag，构建
+	# 保持可复现，也不会因为某个插件仓库不可达而拖垮诊断构建。
+	echo "[prepare] $VARIANT 变体：跳过第三方插件装配"
+fi
 
 # NSS 源码不在仓库里（QSDK 厂商树有数十 GB）。默认设备 spectrum_sbe1v1k
 # 的 DEVICE_PACKAGES 依赖 kmod-qca-ssdk-nohnat / kmod-qca-nss-dp /
@@ -236,6 +261,11 @@ echo "[prepare] 安装第三方插件（SBE_PLUGIN_MODE=${SBE_PLUGIN_MODE:-lates
 # 自产方式：对 QSDK 基座做 blob:none 部分克隆 + 只检出 qca/src/nss，
 # 用 export-nss-src.sh 重打 tar.gz，再与 nss/nss-src.tar.gz.sha256 比对。
 # 这样 CI 不再需要任何人工上传的 Release 资产，而校验强度不变（哈希相同）。
+if [ "$VARIANT" = mainline ]; then
+	# M 变体（对照实验）：设备定义 spectrum_sbe1v1k_mainline 走主线 PPE，
+	# 不消费 qca-ssdk / qca-nss-*，因此完全不装配 QSDK NSS 源码包。
+	echo "[prepare] mainline 变体：不装配 QSDK NSS（主线 PPE 数据通路）"
+else
 NSS_SHA_FILE=$PROJ/nss/nss-src.tar.gz.sha256
 NSS_CACHE=$ROOT/.sbe-cache
 NSS_QSDK_URL=${SBE_NSS_QSDK_URL:-https://github.com/everything411/qsdk}
@@ -327,6 +357,39 @@ for f in "$PROJ/files/etc/nss.conf" "$PROJ/files/usr/sbin/nss-load" \
          "$PROJ/files/etc/init.d/nss"; do
 	[ -e "$f" ] || { echo "缺少 NSS 档位控制器文件 $f" >&2; exit 1; }
 done
+fi
+
+if [ "$VARIANT" = diag ]; then
+	# D 变体（RAM 诊断镜像）：NSS 包全部保留（用户要求 QSDK NSS/SSDK），但
+	# 启动档位必须是 off —— 先区分“NSS 触发复位”与“其他复位源”，再逐层
+	# nss-load。overlay 与 seed 缺一项，这次构建就不是对照实验的形态。
+	[ -f "$PROJ/files-diag/etc/nss.conf" ] \
+		|| { echo "diag 变体缺少 files-diag/etc/nss.conf" >&2; exit 1; }
+	grep -qx 'tier=off' "$PROJ/files-diag/etc/nss.conf" \
+		|| { echo "files-diag/etc/nss.conf 的 tier 不是 off" >&2; exit 1; }
+	grep -qx 'fallback=off' "$PROJ/files-diag/etc/nss.conf" \
+		|| { echo "files-diag/etc/nss.conf 的 fallback 不是 off（会绕过诊断档位）" >&2; exit 1; }
+	[ -f "$PROJ/files-diag/usr/sbin/sbe-diag-beacon" ] \
+		|| { echo "diag 变体缺少 files-diag/usr/sbin/sbe-diag-beacon" >&2; exit 1; }
+	[ -f "$PROJ/files-diag/etc/dropbear/authorized_keys" ] \
+		|| { echo "diag 变体缺少 dropbear authorized_keys（SSH 进不去就取不到证据）" >&2; exit 1; }
+	[ -f "$PROJ/build/config-seed/ipq95xx-spectrum-sbe1v1k-diag.seed" ] \
+		|| { echo "diag 变体缺少 build/config-seed/ipq95xx-spectrum-sbe1v1k-diag.seed" >&2; exit 1; }
+	[ -f "$PROJ/build/required-packages-diag.txt" ] \
+		|| { echo "diag 变体缺少 build/required-packages-diag.txt" >&2; exit 1; }
+fi
+if [ "$VARIANT" = mainline ]; then
+	[ -d "$PROJ/files-mainline" ] \
+		|| { echo "mainline 变体缺少 files-mainline/" >&2; exit 1; }
+	grep -qx 'tier=off' "$PROJ/files-mainline/etc/nss.conf" 2>/dev/null \
+		|| { echo "files-mainline/etc/nss.conf 的 tier 不是 off（S15 会刷 INCOMPLETE 噪声）" >&2; exit 1; }
+	[ -f "$PROJ/files-mainline/etc/dropbear/authorized_keys" ] \
+		|| { echo "mainline 变体缺少 dropbear authorized_keys（能启动时取证据用）" >&2; exit 1; }
+	[ -f "$PROJ/build/config-seed/ipq95xx-spectrum-sbe1v1k-mainline.seed" ] \
+		|| { echo "mainline 变体缺少 build/config-seed/ipq95xx-spectrum-sbe1v1k-mainline.seed" >&2; exit 1; }
+	[ -f "$PROJ/build/required-packages-mainline.txt" ] \
+		|| { echo "mainline 变体缺少 build/required-packages-mainline.txt" >&2; exit 1; }
+fi
 
 echo "[prepare] 写入 version / version.date"
 printf '%s\n' "$REVISION" > "$BR/version"

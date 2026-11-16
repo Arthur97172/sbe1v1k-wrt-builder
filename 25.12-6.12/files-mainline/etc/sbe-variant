@@ -1,0 +1,2 @@
+variant=mainline
+purpose=25.12 RAM control (M): mainline PPE, no QSDK NSS, see 25.12-6.12/docs/CONTROL_EXPERIMENT_PLAN-2026-11-16.md

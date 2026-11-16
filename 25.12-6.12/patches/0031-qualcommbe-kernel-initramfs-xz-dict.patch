@@ -1,0 +1,39 @@
+diff -ruN a/target/linux/qualcommbe/patches-6.12/0800-initramfs-xz-large-dict.patch b/target/linux/qualcommbe/patches-6.12/0800-initramfs-xz-large-dict.patch
+--- a/target/linux/qualcommbe/patches-6.12/0800-initramfs-xz-large-dict.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.12/0800-initramfs-xz-large-dict.patch	2026-11-16 14:27:52.832851157 +0000
+@@ -0,0 +1,35 @@
++From: SBE1V1K diagnostic build <noreply@example.invalid>
++Subject: [PATCH] initramfs: use -9e and a 128 MiB xz dictionary for the built-in cpio
++
++OpenWrt compresses the kernel's built-in initramfs with
++`xz --check=crc32 --lzma2=dict=1MiB` (scripts/Makefile.lib, cmd_xzmisc).
++That is fine for small images, but this project's full initramfs is
++~90 MiB of cpio, and the SBE1V1K recovery bootloader has two hard limits:
++
++  - tftpboot moves at most 65535 x 512 B = ~32 MiB per file with the
++    stock 512-byte block size (this is how the recovery kit loads the
++    FIT);
++  - bootm decompresses the FIT kernel into a region bounded by
++    CONFIG_SYS_BOOTM_LEN (~64 MiB), which the uncompressed cpio already
++    exceeds (measured on 24.10, 2026-11: 82.5 MiB fails, 64 MiB works).
++
++`xz -9e` with a 128 MiB dictionary keeps the same container (xz, crc32
++check) and brings the initramfs FIT back below both limits.  The kernel's
++XZ decompressor allocates the dictionary with vmalloc at boot and the
++board has 2 GiB of RAM.  This mirrors 24.10-6.6 build-fixes/0019, whose
++output the RAM-boot path of this board has already validated.
++
++Classification: project build-time tuning.  Upstream 6.12 has no reason
++to carry this; the diagnostic RAM image is the only consumer.
++
++--- a/scripts/Makefile.lib
+++++ b/scripts/Makefile.lib
++@@ -444,7 +444,7 @@
++                      $(size_append); } > $@
++ 
++ quiet_cmd_xzmisc = XZMISC  $@
++-      cmd_xzmisc = cat $(real-prereqs) | $(XZ) --check=crc32 --lzma2=dict=1MiB > $@
+++      cmd_xzmisc = cat $(real-prereqs) | $(XZ) -9e --check=crc32 --lzma2=dict=128MiB > $@
++ 
++ # ZSTD
++ # ---------------------------------------------------------------------------

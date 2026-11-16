@@ -8,6 +8,8 @@
 #   scripts/ci/check-packages.sh db     <rootfs 目录>   （apk 或 opkg 数据库）
 #
 # required-packages.txt 语法：name 必装、?name 可选（缺失只告警）、!name 必禁。
+# 变体构建用 SBE_REQUIRED_LIST=<另一份清单> 换清单（diag/mainline 各一份，
+# 见 build/required-packages-*.txt）。
 # 无法识别的包名（上游改名或删包）一律以 FAIL 指名，绝不静默跳过。
 # 状态词：PASS / FAIL / WARN / UNVERIFIED；任一 FAIL → exit 1。
 #
@@ -23,7 +25,7 @@ export LC_ALL
 
 SELF=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJ=$(CDPATH= cd -- "$SELF/../.." && pwd)
-LIST=$PROJ/build/required-packages.txt
+LIST=${SBE_REQUIRED_LIST:-$PROJ/build/required-packages.txt}
 [ -f "$LIST" ] || { echo "缺少 $LIST" >&2; exit 2; }
 
 usage() { sed -n '/^# 用法：/,/^# 状态词/p' "$0" | sed 's/^# \{0,1\}//'; }

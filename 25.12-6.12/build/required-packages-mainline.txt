@@ -1,0 +1,52 @@
+# 25.12-6.12 M 变体（mainline）的必装 / 必禁清单。
+#
+# 语法同 build/required-packages.txt（见 check-packages.sh）：
+#   name 必装、?name 可选、!name 必禁。
+#
+# M 变体的定义就是「不装 QSDK NSS/SSDK，改走主线 PPE」，所以 NSS 组件在这里
+# 是必禁项；这与正式固件相反，是本变体唯一的目的。
+
+# --- 主线 PPE --------------------------------------------------------------
+kmod-qcom-ppe
+
+# --- 无线 -----------------------------------------------------------------
+kmod-mac80211
+kmod-ath12k
+wifi-scripts
+wpad-mesh-mbedtls
+!wpad-basic-mbedtls
+sbe-wifi-firmware
+
+# --- PWM ------------------------------------------------------------------
+kmod-hwmon-pwmfan
+kmod-leds-pwm
+
+# --- 登录与网络 -----------------------------------------------------------
+dropbear
+firewall4
+dnsmasq-full
+!dnsmasq
+ip-full
+!ip-tiny
+iw-full
+!iw
+sbe1v1k-defaults
+
+# --- 取证工具 -------------------------------------------------------------
+tcpdump
+ethtool
+
+# --- QSDK NSS 必须缺席 -----------------------------------------------------
+!kmod-qca-nss-ppe
+!kmod-qca-nss-ppe-vp
+!kmod-qca-nss-ppe-rule
+!kmod-qca-nss-ppe-ds
+!kmod-qca-nss-ppe-bridge-mgr
+!kmod-qca-nss-ppe-vlan-mgr
+!kmod-qca-nss-ppe-ath-clients
+!kmod-qca-nss-sfe
+!kmod-qca-nss-ecm-standard
+
+# --- 诊断镜像要小，不要 Web UI --------------------------------------------
+!luci-base
+!luci-light

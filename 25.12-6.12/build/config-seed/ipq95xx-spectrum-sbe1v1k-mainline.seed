@@ -1,0 +1,58 @@
+# 25.12-6.12 对照实验 M 变体种子（SBE_VARIANT=mainline）— 主线 PPE 数据通路。
+#
+# 用途：docs/CONTROL_EXPERIMENT_PLAN-2026-11-16.md 的 M 变体。设备定义
+# spectrum_sbe1v1k_mainline（补丁 0012）用上游 ipq9574-rdp433 设备树和
+# kmod-qcom-ppe，完全不装 QSDK NSS/SSDK。它回答的问题是：如果换成主线
+# 数据通路还是 3-4 分钟复位，那问题就不在 QSDK NSS 栈里。
+#
+# 与 D 变体一样只产 initramfs（TFTP RAM 启动、不写 eMMC），XZ 压缩同 0031。
+# 注意：这不影响正式固件对 QSDK NSS/SSDK 的选择 —— 生产设备仍用
+# spectrum_sbe1v1k（files/etc/nss.conf tier=wired）。
+CONFIG_TARGET_qualcommbe=y
+CONFIG_TARGET_qualcommbe_ipq95xx=y
+CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_spectrum_sbe1v1k_mainline=y
+
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+# CONFIG_TARGET_ROOTFS_SQUASHFS is not set
+CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y
+# CONFIG_TARGET_INITRAMFS_COMPRESSION_NONE is not set
+
+# 主线 PPE：M 变体的整条数据通路（ipq9574-rdp433 DTS 里的 PPE 节点未被
+# SBE1V1K 的 0009 补丁删除，这个设备走上游驱动）。
+CONFIG_PACKAGE_kmod-qcom-ppe=y
+
+# 无线同 D 变体：ath12k + 厂商固件/BDF，三频 SSID 作为管理面。
+CONFIG_PACKAGE_kmod-mac80211=y
+CONFIG_PACKAGE_kmod-ath12k=y
+CONFIG_PACKAGE_wifi-scripts=y
+CONFIG_PACKAGE_wpad-mesh-mbedtls=y
+# CONFIG_PACKAGE_wpad-basic-mbedtls is not set
+CONFIG_PACKAGE_sbe-wifi-firmware=y
+
+CONFIG_PACKAGE_kmod-hwmon-pwmfan=y
+CONFIG_PACKAGE_kmod-leds-pwm=y
+
+CONFIG_PACKAGE_dropbear=y
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_dnsmasq-full=y
+# CONFIG_PACKAGE_dnsmasq is not set
+CONFIG_PACKAGE_ip-full=y
+# CONFIG_PACKAGE_ip-tiny is not set
+CONFIG_PACKAGE_iw-full=y
+# CONFIG_PACKAGE_iw is not set
+CONFIG_PACKAGE_tcpdump=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_sbe1v1k-defaults=y
+
+# QSDK NSS 组件必须缺席：M 变体的定义就是不装它们。
+# CONFIG_PACKAGE_kmod-qca-nss-ppe is not set
+# CONFIG_PACKAGE_kmod-qca-nss-ppe-vp is not set
+# CONFIG_PACKAGE_kmod-qca-nss-ppe-rule is not set
+# CONFIG_PACKAGE_kmod-qca-nss-ppe-ds is not set
+# CONFIG_PACKAGE_kmod-qca-nss-ppe-bridge-mgr is not set
+# CONFIG_PACKAGE_kmod-qca-nss-ppe-vlan-mgr is not set
+# CONFIG_PACKAGE_kmod-qca-nss-ppe-ath-clients is not set
+# CONFIG_PACKAGE_kmod-qca-nss-sfe is not set
+# CONFIG_PACKAGE_kmod-qca-nss-ecm-standard is not set
+# CONFIG_PACKAGE_luci-base is not set
+# CONFIG_PACKAGE_luci-light is not set

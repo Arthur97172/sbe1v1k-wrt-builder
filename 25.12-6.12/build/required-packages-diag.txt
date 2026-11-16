@@ -1,0 +1,53 @@
+# 25.12-6.12 诊断变体（diag）的必装 / 必禁清单。
+#
+# 由 check-packages.sh 读取（SBE_REQUIRED_LIST=build/required-packages-diag.txt）：
+#   name    必须在 seed 里 =y、在索引里唯一、defconfig 后仍 =y、镜像里有
+#   ?name   可选（缺失只告警）
+#   !name   必须缺席
+#
+# 设备定义（DEVICE_PACKAGES）带来的 kmod-qca-ssdk-nohnat / kmod-qca-nss-dp /
+# kmod-qca-nss-ppe 不在 seed 里，无法用 seed 模式反查；它们由
+# scripts/ci/verify-diag.sh 在装配树 apk 数据库里单独断言 —— 这是「QSDK
+# NSS/SSDK 必须保留」这一硬要求的镜像级证据。
+
+# --- QSDK NSS / SSDK（与生产同一组件集；启动档位由 files-diag 设为 off）---
+kmod-qca-nss-ppe-vp
+kmod-qca-nss-ppe-rule
+kmod-qca-nss-ppe-ds
+kmod-qca-nss-ppe-bridge-mgr
+kmod-qca-nss-ppe-vlan-mgr
+kmod-qca-nss-ppe-ath-clients
+kmod-qca-nss-sfe
+kmod-qca-nss-ecm-standard
+!kmod-qcom-ppe
+
+# --- 无线（诊断管理面 + 6GHz 取证）---------------------------------------
+kmod-mac80211
+kmod-ath12k
+wifi-scripts
+wpad-mesh-mbedtls
+!wpad-basic-mbedtls
+sbe-wifi-firmware
+
+# --- PWM（风扇与信标）-----------------------------------------------------
+kmod-hwmon-pwmfan
+kmod-leds-pwm
+
+# --- 登录与网络 -----------------------------------------------------------
+dropbear
+firewall4
+dnsmasq-full
+!dnsmasq
+ip-full
+!ip-tiny
+iw-full
+!iw
+sbe1v1k-defaults
+
+# --- 取证工具 -------------------------------------------------------------
+tcpdump
+ethtool
+
+# --- 必须缺席：诊断镜像要小，且不需要 Web UI ------------------------------
+!luci-base
+!luci-light

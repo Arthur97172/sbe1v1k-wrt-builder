@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+# 诊断镜像的板面信标。放在 rcS 最后（S99）：能跑到这里本身就说明整套
+# 用户态启动完成（S10 网络、S15nss、WiFi 等都已执行过），白闪因此可以
+# 当作「25.12 走到用户态」的判据。
+#
+# 常驻后台循环，不经 procd 管理（USE_PROCD=0）：信标挂了不应拖住系统，
+# 也不应触发 respawn 噪声。
+
+START=99
+STOP=10
+USE_PROCD=0
+
+start() {
+	/usr/sbin/sbe-diag-beacon >/dev/null 2>&1 &
+}
+
+stop() {
+	killall sbe-diag-beacon 2>/dev/null
+}

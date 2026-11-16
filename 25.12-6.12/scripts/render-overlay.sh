@@ -9,8 +9,14 @@
 # 同时用整体替换的方式同步 overlay：先删掉装配树里的 files/，再从本项目复制，
 # 这样源码包里残留的旧 banner 不可能泄漏进镜像。
 #
+# 变体 overlay：SBE_VARIANT=diag（或 mainline）时，在 files/ 之上再叠一层
+# files-<variant>/。只用于诊断/对照构建，生产构建（默认 production）行为不变。
+# 变体目录允许覆盖任意文件，但没有 banner 检查的豁免：banner 仍必须来自
+# files/ 并可渲染。
+#
 # 用法：
 #   scripts/render-overlay.sh            # 自动定位 <root>/sources/buildroot-25.12-6.12
+#   SBE_VARIANT=diag scripts/render-overlay.sh
 #   SBE_ROOT=/path SBE_BUILDROOT=/path scripts/render-overlay.sh
 
 set -euo pipefail
@@ -43,6 +49,20 @@ fi
 
 BR=${SBE_BUILDROOT:-$ROOT/sources/$TREE_NAME}
 SRC=$PROJ/files
+
+VARIANT=${SBE_VARIANT:-production}
+case "$VARIANT" in
+production|diag|mainline) ;;
+*)
+	echo "render-overlay: 未知 SBE_VARIANT=$VARIANT（可选 production|diag|mainline）" >&2
+	exit 1
+	;;
+esac
+VSRC=
+if [ "$VARIANT" != production ]; then
+	VSRC=$PROJ/files-$VARIANT
+	[ -d "$VSRC" ] || { echo "render-overlay: SBE_VARIANT=$VARIANT 但缺少 $VSRC" >&2; exit 1; }
+fi
 
 [ -d "$BR" ] || { echo "render-overlay: 缺少装配树 $BR" >&2; exit 1; }
 [ -d "$SRC" ] || { echo "render-overlay: 缺少 overlay $SRC" >&2; exit 1; }
@@ -84,10 +104,23 @@ echo "[render] VERSION_DIST=$VD"
 echo "[render] REVISION=$RV"
 echo "[render] VERSION_CODE=$VC"
 
+echo "[render] VARIANT=$VARIANT"
 echo "[render] overlay: $SRC -> $BR/files"
 rm -rf "$BR/files"
 mkdir -p "$BR/files"
 cp -a "$SRC/." "$BR/files/"
+
+if [ -n "$VSRC" ]; then
+	echo "[render] overlay($VARIANT): $VSRC -> $BR/files（叠加）"
+	cp -a "$VSRC/." "$BR/files/"
+fi
+
+# dropbear 只在精确匹配客户端公钥时接受登录，私钥永远不进镜像；
+# 文件权限收紧到 600，避免仅靠默认 umask。
+AK=$BR/files/etc/dropbear/authorized_keys
+if [ -f "$AK" ]; then
+	chmod 600 "$AK"
+fi
 
 BANNER=$BR/files/etc/banner
 [ -f "$BANNER" ] || { echo "render-overlay: 缺少 $BANNER" >&2; exit 1; }

@@ -1,0 +1,218 @@
+#!/bin/sh
+# sbe-diag-beacon — 25.12 诊断镜像（SBE_VARIANT=diag）的板面信标与状态采样。
+#
+# 板子没有串口；RAM 镜像不写 eMMC，重启后证据全丢。所以诊断镜像必须能
+# 只靠「灯 + 风扇」把状态讲清楚，并且把机器可读的快照留在 /tmp 里，等 SSH
+# 进来取走。
+#
+# 灯序（RGB 由 pwmchip0 的 0=红 / 1=绿 / 2=蓝 驱动，周期 16 us，活跃高）：
+#
+#   启动：白闪 3 次（红绿蓝同亮 0.6 s、灭 0.6 s）
+#           ⇒ 看到白闪 = /init 已经把控制权交给用户态（rcS 跑到了 S99）
+#   之后每轮（约 9 s）：
+#     红 1 次            轮次分界
+#     绿 N 次            N = 已装载的 NSS 模块数（qca_ssdk / qca_nss_dp /
+#                        qca_nss_ppe 三者计）。tier=off 启动时 N=0，即不亮；
+#                        手工 nss-load 每成功一层，N 加一。
+#     蓝 2 次            hostapd 在跑（WiFi 管理面可用）
+#     蓝 1 次            hostapd 没起来
+#   每轮末尾风扇短促加速 0.8 s（确认风扇/hwmon 链路还活着）。
+#
+# PWM 不可用时退化为任意 gpio LED 的心跳闪烁（此时颜色语义无效），并在
+# /tmp/sbe-diag-status 里记 pwm=0。
+#
+# 所有状态同时写 /dev/kmsg（dmesg -w 可回溯，配 netconsole/SSH 都能取）与
+# /tmp/sbe-diag-status（最近一轮快照）。
+
+PWMCHIP=/sys/class/pwm/pwmchip0
+KMSG=/dev/kmsg
+STATUS=/tmp/sbe-diag-status
+CONF=/etc/nss.conf
+
+PERIOD_LED=16000
+
+say() {
+	echo "sbe-diag: $*"
+	echo "sbe-diag: $*" > "$KMSG" 2>/dev/null
+	return 0
+}
+
+# ---- PWM 通道准备 -----------------------------------------------------------
+pwm_ok=0
+
+pwm_prepare() {
+	ch=$1
+	[ -d "$PWMCHIP" ] || return 1
+	[ -e "$PWMCHIP/pwm$ch" ] || echo "$ch" > "$PWMCHIP/export" 2>/dev/null
+	[ -d "$PWMCHIP/pwm$ch" ] || return 1
+	echo $PERIOD_LED > "$PWMCHIP/pwm$ch/period" 2>/dev/null || return 1
+	echo 0 > "$PWMCHIP/pwm$ch/duty_cycle" 2>/dev/null
+	echo 1 > "$PWMCHIP/pwm$ch/enable" 2>/dev/null
+	return 0
+}
+
+pwm_init() {
+	[ -d "$PWMCHIP" ] || return 1
+	n=0
+	for ch in 0 1 2; do
+		pwm_prepare "$ch" && n=$((n + 1))
+	done
+	[ "$n" -eq 3 ] || return 1
+	pwm_ok=1
+	return 0
+}
+
+# 通用 LED 回退：取第一个可写的 brightness 当心跳灯。
+gen_led=
+for b in /sys/class/leds/*/brightness; do
+	[ -w "$b" ] || continue
+	gen_led=$b
+	break
+done
+
+ch_on() {
+	echo $PERIOD_LED > "$PWMCHIP/pwm$1/duty_cycle" 2>/dev/null
+}
+
+ch_off() {
+	echo 0 > "$PWMCHIP/pwm$1/duty_cycle" 2>/dev/null
+}
+
+color_on() {
+	case $1 in
+	red)   ch_on 0 ;;
+	green) ch_on 1 ;;
+	blue)  ch_on 2 ;;
+	white) ch_on 0; ch_on 1; ch_on 2 ;;
+	esac
+}
+
+color_off() {
+	ch_off 0
+	ch_off 1
+	ch_off 2
+}
+
+gen_on()  { [ -n "$gen_led" ] && echo 1 > "$gen_led" 2>/dev/null; }
+gen_off() { [ -n "$gen_led" ] && echo 0 > "$gen_led" 2>/dev/null; }
+
+light_on() {
+	if [ "$pwm_ok" = 1 ]; then color_on "$1"; else gen_on; fi
+}
+
+light_off() {
+	if [ "$pwm_ok" = 1 ]; then color_off; else gen_off; fi
+}
+
+blink() {
+	# blink <color> <on_s> <off_s> <count>
+	c=$1; on=$2; off=$3; n=$4
+	i=0
+	while [ "$i" -lt "$n" ]; do
+		light_on "$c"
+		sleep "$on"
+		light_off
+		sleep "$off"
+		i=$((i + 1))
+	done
+}
+
+# ---- 风扇心跳（pwm-fan 的 hwmon 节点；找不到就静默跳过）-------------------
+fanpwm=
+for d in /sys/class/hwmon/hwmon*; do
+	[ -f "$d/name" ] || continue
+	case "$(cat "$d/name" 2>/dev/null)" in
+	pwmfan) fanpwm=$d/pwm1; break ;;
+	esac
+done
+
+fan_pulse() {
+	[ -n "$fanpwm" ] && [ -w "$fanpwm" ] || return 0
+	old=$(cat "$fanpwm" 2>/dev/null)
+	echo 255 > "$fanpwm" 2>/dev/null
+	sleep 0.8
+	case "$old" in
+	''|*[!0-9]*) echo 128 > "$fanpwm" 2>/dev/null ;;
+	*) echo "$old" > "$fanpwm" 2>/dev/null ;;
+	esac
+	return 0
+}
+
+# ---- 状态采样 ---------------------------------------------------------------
+nss_count() {
+	n=0
+	for m in qca_ssdk qca_nss_dp qca_nss_ppe; do
+		[ -d "/sys/module/$m" ] && n=$((n + 1))
+	done
+	echo "$n"
+}
+
+carrier_count() {
+	n=0
+	for p in eth0 eth1 eth2 eth3; do
+		[ "$(cat "/sys/class/net/$p/carrier" 2>/dev/null)" = 1 ] && n=$((n + 1))
+	done
+	echo "$n"
+}
+
+hostapd_pid() {
+	pidof hostapd 2>/dev/null
+}
+
+snapshot() {
+	up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+	tier=$(sed -n 's/^tier=//p' "$CONF" 2>/dev/null)
+	{
+		echo "uptime=${up}s tier=${tier:-unknown} pwm=$pwm_ok"
+		echo "nss_modules=$(nss_count)/3 carrier_ports=$(carrier_count)"
+		echo "hostapd=$(hostapd_pid)"
+		echo "mmc: $(ls /dev/mmcblk* 2>/dev/null | tr '\n' ' ')"
+		echo "-- ip -br link"
+		ip -br link 2>&1
+		echo "-- nss-load status"
+		/usr/sbin/nss-load status 2>&1 | tail -n 30
+		echo "-- lsmod (qca)"
+		grep -E '^(qca|nss|ppd)' /proc/modules 2>/dev/null
+	} > "$STATUS.tmp" 2>&1
+	mv "$STATUS.tmp" "$STATUS" 2>/dev/null
+}
+
+# ---- 启动 ---------------------------------------------------------------
+say "beacon start (uptime $(cut -d' ' -f1 /proc/uptime)s)"
+
+if ! pwm_init; then
+	pwm_ok=0
+	say "pwmchip0 不可用：改用通用 LED 心跳（颜色语义失效）"
+fi
+
+# 早期快照：把开机的 dmesg/logread 固化成文件，等 SSH 进来直接拿。
+(
+	sleep 15
+	dmesg > /tmp/sbe-diag-dmesg-early 2>/dev/null
+	logread > /tmp/sbe-diag-logread-early 2>/dev/null
+	say "early snapshot saved (dmesg/logread)"
+) &
+
+# 白闪 3 次：用户态已接力。
+blink white 0.6 0.6 3
+say "userspace alive: rcS reached S99"
+
+cycle=0
+while :; do
+	cycle=$((cycle + 1))
+	snapshot
+	n=$(nss_count)
+	h=$(hostapd_pid)
+
+	say "cycle=$cycle uptime=$(cut -d' ' -f1 /proc/uptime)s nss=$n/3 hostapd=${h:-none} carrier=$(carrier_count)"
+
+	blink red 0.4 0.6 1
+	[ "$n" -gt 0 ] && blink green 0.4 0.3 "$n"
+	if [ -n "$h" ]; then
+		blink blue 0.4 0.3 2
+	else
+		blink blue 0.4 0.3 1
+	fi
+	fan_pulse
+	sleep 3
+done

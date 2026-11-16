@@ -26,6 +26,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── deterministic-bin/    date 垫片（固定 SOURCE_DATE_EPOCH）
 │   ├── config-seed/          defconfig 种子
 │   ├── required-packages.txt 必装 / 可选 / 必禁包清单（四处反查的唯一来源）
+│   ├── required-packages-diag.txt      diag 变体的对应清单
+│   ├── required-packages-mainline.txt  mainline 变体的对应清单
 │   ├── thirdparty-pins.conf  18 个插件、18 个仓库的来源与离线 pin
 │   └── local-packages/       项目自带软件包
 │       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭、WAN 侧放行 LuCI/SSH）
@@ -34,7 +36,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
 │   ├── NSS_AUTOLOAD_OFF.md   NSS 禁自动加载 / 分层装载的机制与定位流程
 │   ├── V21_BOOT_AND_FAN_FIX.md  v21/v24 起不来 + 风扇满速的静态定案（0024–0027）
-│   └── V41_BOOT_LOOP_2026-11-16.md  run 41（b0a7389）真机启动循环：观察记录、判读与回滚
+│   ├── V41_BOOT_LOOP_2026-11-16.md  run 41（b0a7389）真机启动循环：观察记录、判读与回滚
+│   └── CONTROL_EXPERIMENT_PLAN-2026-11-16.md  对照实验（diag/mainline 变体）方案与判读表
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/nss.conf              NSS 档位（tier/fallback/budget，默认 wired）
@@ -51,6 +54,13 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── usr/sbin/nss-load                       NSS 分层装载器（status/load/commit/tier/stop）
 │   ├── usr/sbin/sbe-boot-trace                 启动取证采样器（写 /sbe-boot-trace/）
 │   └── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
+├── files-diag/               diag 变体 overlay（叠在 files/ 之上，仅 RAM 诊断镜像）
+│   ├── etc/nss.conf          tier=off / fallback=off（启动不装 NSS）
+│   ├── etc/sbe-variant       变体标记（校验用）
+│   ├── etc/dropbear/authorized_keys  取证用 SSH 公钥（私钥不入库）
+│   ├── etc/init.d/sbe-diag-beacon + etc/rc.d/S99sbe-diag-beacon  板面信标
+│   └── usr/sbin/sbe-diag-beacon      灯序/风扇/状态快照实现
+├── files-mainline/           mainline 变体 overlay（nss.conf tier=off、取证公钥、变体标记，反证用）
 ├── patches/                  对上游 25.12 的补丁（0001 设备；0002-0007 Stage 2.1；0008-0009 Stage 2.2；0010 Stage 2.3；0011-0012 Stage 2.4）
 │   ├── 0001-qualcommbe-add-spectrum-sbe1v1k.patch
 │   ├── 0002-qualcommbe-add-swconfig-ext-for-qca-ssdk.patch
@@ -72,6 +82,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0027-qualcommbe-sbe1v1k-boot-blockers.patch           CPU OPP / sleep_clk / NSS 保留区（v28 对照后恢复）
 │   ├── 0028-qualcommbe-sbe1v1k-emmc-core-reset.patch         eMMC 节点的 SDCC 核心复位（v29）
 │   ├── 0029-qualcommbe-sbe1v1k-disable-qpic-nand.patch       关掉 RDP433 基线的 QPIC NAND（v32 无 eMMC 的根因）
+│   ├── 0030-qualcommbe-disable-upstream-qca808x-phy.patch     QCA8084 PHY 驱动重名（v38）
+│   ├── 0031-qualcommbe-kernel-initramfs-xz-dict.patch        initramfs XZ 128 MiB 字典（诊断镜像尺寸）
 │   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
@@ -88,6 +100,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
         ├── check-packages.sh 按 required-packages.txt 反查 seed / 包索引 / .config / 镜像
         ├── check-kernel.sh   检测 6.12 内核漂移（只报告，不改 pin）
         ├── export-nss-src.sh 打包 NSS 源码（ISC，仅源码），CI 自产时由 prepare-tree.sh 调用
+        ├── verify-diag.sh    diag/mainline 变体的 initramfs 静态校验（尺寸 / 装载地址 / XZ / overlay / NSS 组件）
         └── verify-image.sh   从最终 sysupgrade 镜像解出 rootfs 做静态校验
 ```
 
@@ -889,6 +902,52 @@ kernel-6.12 文件缺失）。它对比三处：
 结论写进 `kernel-report.txt`，附到构建日志与 release notes。**检测不会
 修改 `OPENWRT_SHA`、feed SHA 或内核版本**——是否跟进由人工按报告决定；
 触及 generic 的本项目补丁越多，升内核的返工越大。
+
+### 对照实验变体（`SBE_VARIANT=diag|mainline`，仅 RAM 诊断）
+
+run 41 的启动循环（3–4 分钟复位，PHY 有载波但主机零帧、WiFi 仍在广播）
+说明 6.12 能到用户态，故障大概率在 NSS 有线数据通路或更晚的复位源。
+对照实验把「复位发生在哪一层」变成可观察的变量，方案与判读表见
+[`docs/CONTROL_EXPERIMENT_PLAN-2026-11-16.md`](docs/CONTROL_EXPERIMENT_PLAN-2026-11-16.md)。
+**正式固件（QSDK NSS/SSDK）的选择完全不受影响**：变体只在诊断构建里生效。
+
+| 变体 | 设备定义 | 数据通路 | overlay / 清单 |
+|---|---|---|---|
+| `production`（默认） | `spectrum_sbe1v1k` | QSDK NSS，`tier=wired` | `files/` + `required-packages.txt` |
+| `diag` | `spectrum_sbe1v1k` | **QSDK NSS/SSDK 全装，但 `tier=off`**：启动不装载，靠手工 `nss-load` 逐层排查 | 叠加 `files-diag/` + `required-packages-diag.txt` |
+| `mainline` | `spectrum_sbe1v1k_mainline`（补丁 0012） | 上游 rdp433 设备树 + `kmod-qcom-ppe`，不装任何 `kmod-qca-nss-*` | 叠加 `files-mainline/`（nss.conf 也定 tier=off，带取证公钥）+ `required-packages-mainline.txt` |
+
+变体只产 **initramfs FIT**（TFTP + `bootm` 的 RAM 镜像，不写 eMMC）；
+两个变体都保留 ath12k + 厂商固件，三频 SSID 是外部可见的「用户态还活着」
+判据。CI 入口是 `.github/workflows/build-25.12-diag.yml`（只能手动触发），
+产物只进 Actions artifact、**不建 Release**；本地构建用环境变量：
+
+```
+SBE_VARIANT=diag ./25.12-6.12/build/sbe1v1k-build.sh
+```
+
+变体机制落点：`render-overlay.sh` 在 `files/` 之上叠 `files-<variant>/`
+（`authorized_keys` 收紧到 600，私钥永不入镜像）；`prepare-tree.sh` 按变体
+门控插件装配（变体跳过，保持可复现）与 NSS 装配（只有 mainline 跳过），
+并断言对应 seed/清单/overlay 齐全；`check-packages.sh` 用
+`SBE_REQUIRED_LIST` 换清单；`verify-diag.sh` 对构建产物做静态校验
+（FIT < 31 MiB、装载地址 `0x42200000`、内核 XZ + 字典补丁、overlay 逐项、
+diag 必须有 / mainline 必须没有 QSDK NSS 组件）。
+
+**diag 信标**（`files-diag/usr/sbin/sbe-diag-beacon`，rcS 最后的 S99）：
+白闪 3 次 = 用户态已到达；之后每轮「红 1 次分界 → 绿 N 次（N=已装 NSS
+模块数，`tier=off` 时为 0）→ 蓝 1/2 次（hostapd 无/有）→ 风扇脉冲」，
+状态同时写 `/dev/kmsg` 与 `/tmp/sbe-diag-status`。上机后的手工排查阶梯：
+`nss-load load sdk` → `sleep 60` 确认存活 → `load dp` → `load ppe`。
+
+initramfs 压缩：内核 6.12 的 `usr/Makefile` 把 `CONFIG_INITRAMFS_COMPRESSION_XZ`
+映射到 `cmd_xzmisc`（`--lzma2=dict=1MiB`，78.8 MiB 的 rootfs 压不进 31 MiB
+预算）。补丁 0031 把字典改到 128 MiB（同 24.10 `build-fixes/0019`），由
+`defconfig` 后的 `CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y` 断言 +
+`verify-diag.sh` 的 `.config`/`Makefile.lib` 双重反查共同保证生效。
+
+状态：脚本与补丁静态检查 PASS（两层 `patch --fuzz=0` dry-run、种子反查
+PASS、渲染叠加实测 PASS）；真机 **NOT TESTED**。
 
 ### NSS 源码包（`nss-src-v1`）
 

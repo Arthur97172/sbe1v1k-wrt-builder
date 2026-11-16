@@ -1,0 +1,223 @@
+name: 🧪 Build 25.12-6.12 diag (RAM)
+
+# 25.12-6.12 对照实验镜像（见 25.12-6.12/docs/CONTROL_EXPERIMENT_PLAN-2026-11-16.md）。
+#
+# 这个工作流只产出 **initramfs FIT**（TFTP + bootm 的 RAM 启动镜像，不写
+# eMMC），按变体回答「3-4 分钟复位到底发生在哪一层」：
+#
+#   diag     — 设备定义 spectrum_sbe1v1k（QSDK NSS/SSDK 完整保留），但
+#              files-diag overlay 把 /etc/nss.conf 定成 tier=off / fallback=off，
+#              启动时完全不装载 NSS 数据通路。板面信标（白闪=用户态到达，
+#              绿 N 次=已装 NSS 模块数）把状态写在灯上，证据留在 /tmp。
+#   mainline — 设备定义 spectrum_sbe1v1k_mainline（补丁 0012）：上游 rdp433
+#              设备树 + kmod-qcom-ppe，完全不装 QSDK NSS，作为反证。
+#
+# 与正式固件的区别（硬约束：正式固件必须保留 QSDK NSS/SSDK，本工作流不碰它）：
+#   - 只能 workflow_dispatch 手动触发，不随 push 运行；
+#   - 产物只进 Actions artifact，**不建 Release**（权限 contents: read）；
+#   - verify-diag.sh 用 build/required-packages-<variant>.txt 反查；
+#   - 不装第三方插件（变体构建跳过 fetch-plugins.sh，保持可复现）。
+#
+# 上机前提：README 的恢复启动器 + TFTP；FIT 必须 < 32 MiB（APPSBL tftpboot
+# 512 B 块上限），loader 地址 0x42200000（不在 NSS 保留区）。verify-diag.sh
+# 把这两条当硬断言。
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: '变体：diag=NSS 保留但 tier=off；mainline=不装 QSDK NSS（上游 PPE）'
+        type: choice
+        options:
+          - diag
+          - mainline
+        default: diag
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-firmware-25.12-6.12-diag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      SBE_VARIANT: ${{ inputs.variant || 'diag' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      "${AGENT_TOOLSDIRECTORY:-}" || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3-setuptools rsync \
+            unzip zlib1g-dev file wget ca-certificates patch bc \
+            libelf-dev libxml-parser-perl libtool-bin autoconf automake \
+            cmake device-tree-compiler zstd swig python3 python3-dev \
+            cpio time
+
+      # 变体构建：prepare-tree.sh 按 SBE_VARIANT 门控——diag 装配 NSS（用户
+      # 硬约束）、mainline 跳过 NSS、两者都跳过第三方插件装配，并断言各自的
+      # overlay / seed / 清单存在。
+      - name: Prepare build tree
+        run: ./25.12-6.12/scripts/ci/prepare-tree.sh "$GITHUB_WORKSPACE"
+
+      - name: Configure (${{ inputs.variant || 'diag' }})
+        run: |
+          set -eu
+          V=$SBE_VARIANT
+          CFG=sources/buildroot-25.12-6.12/.config
+          SEED=25.12-6.12/build/config-seed/ipq95xx-spectrum-sbe1v1k-$V.seed
+          LIST=25.12-6.12/build/required-packages-$V.txt
+          FW=25.12-6.12/build/local-packages/sbe-wifi-firmware/files
+          case "$V" in
+            diag)     PROFILE=CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_spectrum_sbe1v1k=y ;;
+            mainline) PROFILE=CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_spectrum_sbe1v1k_mainline=y ;;
+            *) echo "未知变体 $V" >&2; exit 1 ;;
+          esac
+          test -s "$SEED" || { echo "缺少种子 $SEED" >&2; exit 1; }
+          test -s "$LIST" || { echo "缺少清单 $LIST" >&2; exit 1; }
+          cp "$SEED" "$CFG"
+          SBE_REQUIRED_LIST="$LIST" ./25.12-6.12/scripts/ci/check-packages.sh seed "$CFG"
+          grep -qx "$PROFILE" "$CFG" \
+            || { echo "种子里没有 $PROFILE" >&2; exit 1; }
+          # 诊断镜像必须有厂商 Wi-Fi 固件：无线管理面（SSID 广播）是「用户态
+          # 还活着」的外部判据，缺了它这轮取证就瞎了。
+          grep -qx 'CONFIG_PACKAGE_sbe-wifi-firmware=y' "$CFG" \
+            || { echo "种子里没有 CONFIG_PACKAGE_sbe-wifi-firmware=y" >&2; exit 1; }
+          ( cd "$FW" && sha256sum -c FILES-SHA256 ) \
+            || { echo "固件 blob 缺失或哈希不符" >&2; exit 1; }
+          ./25.12-6.12/build/sbe1v1k-build.sh prepare-tmpinfo
+          SBE_REQUIRED_LIST="$LIST" ./25.12-6.12/scripts/ci/check-packages.sh index sources/buildroot-25.12-6.12
+          ./25.12-6.12/build/sbe1v1k-build.sh defconfig
+          SBE_REQUIRED_LIST="$LIST" ./25.12-6.12/scripts/ci/check-packages.sh config "$CFG"
+          grep -qx "$PROFILE" "$CFG" \
+            || { echo "defconfig 之后设备 profile 被丢弃：$PROFILE" >&2; exit 1; }
+          grep -Eq '^CONFIG_TARGET_ROOTFS_INITRAMFS=y$' "$CFG" \
+            || { echo "配置不是 initramfs-only：CONFIG_TARGET_ROOTFS_INITRAMFS 未开" >&2; exit 1; }
+          grep -Eq '^CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y$' "$CFG" \
+            || { echo "initramfs 未选 XZ 压缩（32 MiB TFTP 上限内放不下）" >&2; exit 1; }
+          grep -Eq '^# CONFIG_TARGET_INITRAMFS_COMPRESSION_NONE is not set$' "$CFG" \
+            || { echo "CONFIG_TARGET_INITRAMFS_COMPRESSION_NONE 仍启用" >&2; exit 1; }
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)=' "$CFG"
+
+      - name: Build
+        run: |
+          set -o pipefail
+          if ./25.12-6.12/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee build.log; then
+            exit 0
+          fi
+          # 与正式固件工作流同款：world 用 -s，包内错误被吞掉；只重编失败的
+          # 目标并开 V=s，把真正的报错留进 build.log 附件。
+          pkg=$(sed -n 's/.*ERROR: package\/\([^ ]*\) failed to build.*/\1/p' build.log | head -n1)
+          tgt=$(sed -n 's/.*ERROR: \(target\/[^ ]*\) failed to build.*/\1/p' build.log | head -n1)
+          if [ -n "$pkg" ]; then rebuild="package/$pkg/compile"; what="$pkg"
+          elif [ -n "$tgt" ]; then rebuild="$tgt/compile"; what="$tgt"
+          else rebuild=""; what=""; fi
+          {
+            echo "===== 构建失败：${what:-未能从 build.log 识别失败的目标} ====="
+            df -h /
+            free -h
+          } 2>&1 | tee -a build.log
+          if [ -n "$rebuild" ]; then
+            rerun="$RUNNER_TEMP/rerun-${GITHUB_RUN_NUMBER}.log"
+            if ./25.12-6.12/build/sbe1v1k-build.sh "$rebuild" V=s -j1 >"$rerun" 2>&1; then
+              echo "===== $what 以 V=s -j1 重编通过，未复现 ====="
+              sudo dmesg --ctime 2>/dev/null | tail -n 30 || true
+            else
+              cat "$rerun" >> build.log
+              echo "===== error 摘要（前 8 处） ====="
+              grep -n -m 8 -E 'error:|Error [0-9]+$|No such file or directory|undefined reference' "$rerun" \
+                || echo "（未匹配到常见错误模式，见下方尾部）"
+              echo "===== $what 重建日志尾部 200 行 ====="
+              tail -n 200 "$rerun"
+            fi
+          fi
+          exit 1
+
+      - name: Verify diag image (static)
+        id: verify
+        if: success()
+        run: |
+          set -o pipefail
+          SBE_VARIANT="$SBE_VARIANT" \
+            ./25.12-6.12/scripts/ci/verify-diag.sh "$GITHUB_WORKSPACE" 2>&1 | tee verify-diag.log
+
+      - name: Diagnose image verification
+        if: failure() && steps.verify.outcome == 'failure'
+        run: |
+          enc() {
+            awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+                if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 300) }'
+          }
+          if [ -s verify-diag.log ]; then
+            hits=$(grep -aE '^FAIL|^SUMMARY' verify-diag.log | head -n 80 | enc || true)
+            if [ -n "$hits" ]; then
+              echo "::error::verify-diag.log 断言失败：${hits}"
+            else
+              msg=$(tail -n 60 verify-diag.log | enc)
+              echo "::error::verify-diag.log 无 FAIL 行，末尾 60 行：${msg}"
+            fi
+          else
+            echo "::error::verify-diag.log 缺失或为空（脚本可能在输出前就退出了）"
+          fi
+          exit 0
+
+      - name: Collect diag assets
+        if: success()
+        run: |
+          set -eu
+          OUT=sources/buildroot-25.12-6.12/bin/targets/qualcommbe/ipq95xx
+          REL="$RUNNER_TEMP/diag"
+          case "$SBE_VARIANT" in
+            diag)     PFX=sbe1v1k ;;
+            mainline) PFX=sbe1v1k-mainline ;;
+          esac
+          PUB=openwrt-ipq95xx-generic-spectrum_${PFX}-${SBE_VARIANT}-initramfs-fit-uImage.itb
+          mkdir -p "$REL"
+          src="$OUT/$PFX-initramfs-fit-uImage.itb"
+          [ -s "$src" ] || src="$OUT/openwrt-ipq95xx-generic-spectrum_$PFX-initramfs-fit-uImage.itb"
+          test -s "$src" || { echo "缺少或为空：$OUT/$PFX-initramfs-fit-uImage.itb" >&2; exit 1; }
+          cp "$src" "$REL/$PUB"
+          ( cd "$REL" && sha256sum "$PUB" )
+          ls -lh "$REL"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-log-25.12-6.12-${{ inputs.variant || 'diag' }}-${{ github.run_number }}
+          path: |
+            build.log
+            verify-diag.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      # 只进 artifact，不建 Release：对照镜像（尤其 tier=off）不是可发布固件。
+      - name: Upload initramfs artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbe1v1k-25.12-6.12-${{ inputs.variant || 'diag' }}-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/diag/
+          if-no-files-found: error
+          retention-days: 30
