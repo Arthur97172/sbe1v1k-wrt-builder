@@ -307,6 +307,26 @@ grep -q 'WAIT_TIMEOUT' "$BR/package/feeds/nss/qca-nss-dp/files/qca-nss-dp.init" 
 	|| { echo "qca-nss-dp.init 丢掉了等待超时（模块装载失败会卡死 rcS）" >&2; exit 1; }
 grep -q 'WAIT_TIMEOUT' "$BR/package/feeds/nss/qca-ssdk/files/qca-ssdk" \
 	|| { echo "qca-ssdk 丢掉了等待超时（模块装载失败会卡死 rcS）" >&2; exit 1; }
+# 25.12 起 NSS 数据通路改为 nss-load 按档位装载（docs/NSS_AUTOLOAD_OFF.md）：
+# 9 个数据通路包不得再带生效的 AUTOLOAD，五个启停脚本不得再带 START。
+# qca-nss-phy 的 AUTOLOAD 必须保留——PHY 驱动仍由 kmodloader 在 S10 加载。
+for p in qca-ssdk qca-nss-ppe qca-nss-dp qca-nss-sfe qca-nss-debug \
+         qca-nss-ppe-ds qca-nss-ppe-rule qca-nss-ppe-vp qca-nss-ae-clients; do
+	grep -qE '^[^#]*AUTOLOAD:=' "$BR/package/feeds/nss/$p/Makefile" \
+		&& { echo "$p 仍有生效的 AUTOLOAD（25.12 应改由 nss-load 分层装载）" >&2; exit 1; }
+done
+grep -qE '^[^#]*AUTOLOAD:=' "$BR/package/feeds/nss/qca-nss-phy/Makefile" \
+	|| { echo "qca-nss-phy 的 AUTOLOAD 被误删（PHY 驱动必须随 kmodloader 加载）" >&2; exit 1; }
+for s in qca-ssdk/files/qca-ssdk qca-nss-dp/files/qca-nss-dp.init \
+         qca-nss-ae-clients/files/qca-nss-ppe-bridge-mgr.init \
+         qca-nss-ecm/files/qca-nss-ecm.init qca-nss-sfe/files/etc/init.d/shortcut-fe; do
+	grep -qE '^START=' "$BR/package/feeds/nss/$s" \
+		&& { echo "$s 仍有 START（25.12 应改由 nss-load 启动）" >&2; exit 1; }
+done
+for f in "$PROJ/files/etc/nss.conf" "$PROJ/files/usr/sbin/nss-load" \
+         "$PROJ/files/etc/init.d/nss"; do
+	[ -e "$f" ] || { echo "缺少 NSS 档位控制器文件 $f" >&2; exit 1; }
+done
 
 echo "[prepare] 写入 version / version.date"
 printf '%s\n' "$REVISION" > "$BR/version"

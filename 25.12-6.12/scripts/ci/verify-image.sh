@@ -382,8 +382,9 @@ done
 # ---- 启动取证（v35 起）：S01 采样器 + 两个 QSDK 等待循环的超时 --------------
 # v34 在 S10boot 之后卡死时拿不到任何日志；采样器从 S01 起把启动现场写进
 # overlay（/sbe-boot-trace/），断电重启后仍可读，所以它必须真的进镜像并在
-# S01 执行。qca-ssdk（S16）与 qca-nss-dp（S18）的等待循环若丢了超时，模块
-# 装载失败时 rcS 会永久卡死、netifd/dnsmasq 不启动。
+# S01 执行。qca-ssdk / qca-nss-dp 的等待循环若丢了超时（它们原先在 S16/S18
+# 自动启动，现在由 nss-load 在 S15 调用），模块装载失败时 rcS 会永久卡死、
+# netifd/dnsmasq 不启动。
 for f in etc/init.d/sbe-boot-trace usr/sbin/sbe-boot-trace; do
 	check_overlay "$f"
 	[ -x "$ROOTFS/$f" ] && ok "可执行 /$f" || bad "缺少或不可执行 /$f（启动取证不生效）"
@@ -401,6 +402,46 @@ for s in etc/init.d/qca-ssdk etc/init.d/qca-nss-dp; do
 		bad "/$s 等待循环没有超时（模块装载失败会卡死 rcS）"
 	fi
 done
+
+# ---- NSS 档位控制（25.12 起禁自动装载，docs/NSS_AUTOLOAD_OFF.md）-----------
+# 数据通路层只允许由 nss-load 装载：镜像里不得再有这些模块的 modules.d 自动
+# 装载条目，也不得有对应 init 脚本的 rc.d 启动链接；PHY 驱动的自动装载必须
+# 还在（qca-nss-phy/qca8084 等由 kmodloader 在 S10 加载）。
+for f in usr/sbin/nss-load etc/init.d/nss etc/nss.conf; do
+	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f"
+done
+[ -x "$ROOTFS/usr/sbin/nss-load" ] && ok "可执行 /usr/sbin/nss-load" \
+	|| bad "缺少或不可执行 /usr/sbin/nss-load（NSS 无法分层装载）"
+if [ -f "$ROOTFS/etc/nss.conf" ] && grep -q '^tier=' "$ROOTFS/etc/nss.conf"; then
+	ok "/etc/nss.conf 带 tier 档位: $(grep '^tier=' "$ROOTFS/etc/nss.conf")"
+else
+	bad "/etc/nss.conf 缺少 tier= 档位（nss-load boot 会退回 wired）"
+fi
+RCN="$ROOTFS/etc/rc.d/S15nss"
+if [ -L "$RCN" ] && [ "$(readlink "$RCN")" = "../init.d/nss" ]; then
+	ok "/etc/rc.d/S15nss -> ../init.d/nss"
+else
+	bad "缺少 /etc/rc.d/S15nss（NSS 档位控制器不会随启动运行）"
+fi
+BAD_RC=$(ls "$ROOTFS/etc/rc.d" 2>/dev/null \
+	| grep -E '^S[0-9]+(qca-ssdk|qca-nss-dp|qca-nss-ppe-bridge-mgr|qca-nss-ecm|shortcut-fe)$' || true)
+if [ -z "$BAD_RC" ]; then
+	ok "NSS 数据通路 init 脚本没有 rc.d 启动链接（不自动启动）"
+else
+	bad "NSS 数据通路仍有自动启动链接: $(echo $BAD_RC)"
+fi
+BAD_MD=$(ls "$ROOTFS/etc/modules.d" 2>/dev/null \
+	| grep -E '(^|[-_])(qca-ssdk|qca-nss-dp|qca-nss-ppe|qca-nss-sfe|qca-nss-debug)([._-]|$)' || true)
+if [ -z "$BAD_MD" ]; then
+	ok "NSS 数据通路模块没有 modules.d 自动装载条目"
+else
+	bad "NSS 数据通路仍有自动装载条目: $(echo $BAD_MD)"
+fi
+if ls "$ROOTFS/etc/modules.d" 2>/dev/null | grep -qE 'qca-nss-phy|qca8084'; then
+	ok "PHY 驱动仍随 kmodloader 自动装载（qca-nss-phy/qca8084）"
+else
+	bad "PHY 驱动的自动装载条目不见了（以太网 PHY 不会初始化）"
+fi
 
 # ---- LuCI 基础栈 ------------------------------------------------------------
 for f in etc/config/uhttpd etc/init.d/uhttpd www/cgi-bin/luci; do

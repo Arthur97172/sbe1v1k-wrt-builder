@@ -38,7 +38,8 @@ define KernelPackage/qca-nss-ppe
 		+kmod-qca-ssdk-nohnat +kmod-qca-nss-debug\
 		+!(TARGET_ipq53xx_ipq53xx_32_QSDK_256||TARGET_ipq54xx_ipq54xx_32_QSDK_256):kmod-nat46
   FILES:=$(PKG_BUILD_DIR)/drv/ppe_drv/qca-nss-ppe.ko
-  AUTOLOAD:=$(call AutoLoad,31,qca-nss-ppe)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,31,qca-nss-ppe)
 endef
 
 define KernelPackage/qca-nss-ppe/Description

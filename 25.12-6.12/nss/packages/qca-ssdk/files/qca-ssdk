@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: ISC
 #
 
-START=16
-STOP=99
+# START=16 / STOP=99 removed for 25.12 NSS bring-up: no boot autostart.
+# Start manually: /usr/sbin/nss-load load sdk (see docs/NSS_AUTOLOAD_OFF.md).
 
 #!/bin/sh
 ruletype="ip4 ip6"

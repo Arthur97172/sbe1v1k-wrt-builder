@@ -15,7 +15,8 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #
 
-START=18
+# START=18 removed for 25.12 NSS bring-up: no boot autostart.
+# Start manually: /usr/sbin/nss-load load dp (see docs/NSS_AUTOLOAD_OFF.md).
 
 # 启动取证（v35 起）：事件同时写 syslog 与 /sbe-boot-trace/events.log，
 # 后者落在 overlay 里，断电重启后仍可读。
@@ -150,8 +151,11 @@ enable_rps() {
 
 start() {
 	qca_nss_dp_dependency
-	local rps_enabled="$(uci_get qca_nss_dp @general[0] enable_rps)"
-	if [ "$rps_enabled" -eq 1 ]; then
+	# uci_get 只在 source 过 /lib/functions.sh 的进程里存在；init 脚本没有
+	# source 它，原来每次启动都会打 "uci_get: not found" 与 "out of range"。
+	# 默认值与 /etc/config/qca_nss_dp 一致（1）。
+	local rps_enabled="$(uci -q get qca_nss_dp.@general[0].enable_rps)"
+	if [ "${rps_enabled:-1}" -eq 1 ]; then
 		enable_rps
 	fi
 }

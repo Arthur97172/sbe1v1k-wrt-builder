@@ -2,7 +2,8 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: ISC
 
-START=26
+# START=26 removed for 25.12 NSS bring-up: no boot autostart.
+# Started on demand by /usr/sbin/nss-load load ecm (see docs/NSS_AUTOLOAD_OFF.md).
 
 get_front_end_mode() {
 	config_load "ecm"

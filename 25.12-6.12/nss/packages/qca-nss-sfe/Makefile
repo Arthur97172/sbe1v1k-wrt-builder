@@ -36,7 +36,8 @@ define KernelPackage/qca-nss-sfe
   TITLE:=Kernel data path for SFE
   FILES:=$(PKG_BUILD_DIR)/qca-nss-sfe.ko
   KCONFIG:=CONFIG_NF_CONNTRACK_EVENTS=y
-  AUTOLOAD:=$(call AutoLoad,09,qca-nss-sfe)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,09,qca-nss-sfe)
 endef
 
 define KernelPackage/qca-nss-sfe/Description

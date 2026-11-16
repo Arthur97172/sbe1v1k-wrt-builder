@@ -37,7 +37,8 @@ define KernelPackage/qca-nss-ppe-bridge-mgr
 		+PACKAGE_kmod-bonding:kmod-bonding \
 		+PACKAGE_kmod-qca-ovsmgr:kmod-qca-ovsmgr
   FILES:=$(PKG_BUILD_DIR)/clients/bridge/qca-nss-ppe-bridge-mgr.ko
-  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-bridge-mgr)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-bridge-mgr)
 endef
 
 define KernelPackage/qca-nss-ppe-bridge-mgr/Description
@@ -54,7 +55,8 @@ define KernelPackage/qca-nss-ppe-vlan-mgr
 		+kmod-qca-nss-ppe-vp \
 		+PACKAGE_kmod-bonding:kmod-bonding
   FILES:=$(PKG_BUILD_DIR)/clients/vlan/qca-nss-ppe-vlan.ko
-  AUTOLOAD:=$(call AutoLoad,51,qca-nss-ppe-vlan)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,51,qca-nss-ppe-vlan)
 endef
 
 define KernelPackage/qca-nss-ppe-vlan-mgr/Description
@@ -71,7 +73,8 @@ define KernelPackage/qca-nss-ppe-pppoe-mgr
 		+kmod-pppoe @!LINUX_3_18 \
 		+PACKAGE_kmod-bonding:kmod-bonding
   FILES:=$(PKG_BUILD_DIR)/clients/pppoe/qca-nss-ppe-pppoe-mgr.ko
-  AUTOLOAD:=$(call AutoLoad,51,qca-nss-ppe-pppoe-mgr)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,51,qca-nss-ppe-pppoe-mgr)
 endef
 
 define KernelPackage/qca-nss-ppe-pppoe-mgr/Description
@@ -88,7 +91,8 @@ define KernelPackage/qca-nss-ppe-lag-mgr
 		+kmod-qca-nss-ppe-vlan-mgr \
 		+kmod-bonding
   FILES:=$(PKG_BUILD_DIR)/clients/lag/qca-nss-ppe-lag.ko
-  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-lag)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-lag)
 endef
 
 define KernelPackage/qca-nss-ppe-lag-mgr/Description
@@ -104,7 +108,8 @@ define KernelPackage/qca-nss-ppe-dsa-mgr
 		+kmod-qca-nss-ppe \
 		+kmod-qca-nss-ppe-vlan-mgr
   FILES:=$(PKG_BUILD_DIR)/clients/dsa/qca-nss-ppe-dsa-mgr.ko
-  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-dsa-mgr)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-dsa-mgr)
 endef
 
 define KernelPackage/qca-nss-ppe-dsa-mgr/Description
@@ -119,7 +124,8 @@ define KernelPackage/qca-nss-ppe-ath-clients
   DEPENDS:=@TARGET_qualcommbe_ipq95xx||TARGET_ipq53xx||TARGET_ipq54xx||TARGET_ipq96xx||TARGET_ipq52xx \
 		+kmod-qca-nss-ppe-vp
   FILES:=$(PKG_BUILD_DIR)/clients/ath_client/qca-nss-ppe-ath-clients.ko
-  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-ath-clients)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-ath-clients)
 endef
 
 define KernelPackage/qca-nss-ppe-ath-clients/Description

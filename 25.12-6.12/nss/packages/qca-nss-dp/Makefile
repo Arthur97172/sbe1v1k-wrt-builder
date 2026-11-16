@@ -33,7 +33,8 @@ define KernelPackage/qca-nss-dp
 		+kmod-qca-ssdk-nohnat +kmod-qca-nss-ppe
   TITLE:=Kernel driver for NSS data plane
   FILES:=$(PKG_BUILD_DIR)/qca-nss-dp.ko
-  AUTOLOAD:=$(call AutoLoad,31,qca-nss-dp)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,31,qca-nss-dp)
 endef
 
 define KernelPackage/qca-nss-dp/Description

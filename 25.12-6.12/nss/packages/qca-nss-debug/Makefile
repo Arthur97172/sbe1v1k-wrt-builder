@@ -30,7 +30,8 @@ define KernelPackage/qca-nss-debug
   # 同 qca-nss-ppe：用 25.12 的板型符号，否则包不可选。
   DEPENDS:=@TARGET_qualcommbe_ipq95xx
   FILES:=$(PKG_BUILD_DIR)/qca-nss-debug.ko
-  AUTOLOAD:=$(call AutoLoad,30,qca-nss-debug)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,30,qca-nss-debug)
 endef
 
 define KernelPackage/qca-nss-debug/Description

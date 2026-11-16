@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: ISC
 #
 
-START=19
+# START=19 removed for 25.12 NSS bring-up: no boot autostart.
+# Started on demand by /usr/sbin/nss-load load ppe (see docs/NSS_AUTOLOAD_OFF.md).
 
 qca_nss_ppe_bridge_mgr_dependency() {
 	count=0

@@ -48,7 +48,8 @@ define KernelPackage/qca-nss-ppe-ds
 	+kmod-qca-nss-ppe-vp \
 	+kmod-qca-nss-dp
   FILES:=$(PKG_BUILD_DIR)/drv/ppe_ds/qca-nss-ppe-ds.ko
-  AUTOLOAD:=$(call AutoLoad,51,qca-nss-ppe-ds)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,51,qca-nss-ppe-ds)
 endef
 
 ifneq (, $(findstring $(hal_arch),"ipq95xx" "ipq53xx" "ipq54xx" "ipq96xx" "ipq52xx"))

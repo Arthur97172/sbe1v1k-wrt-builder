@@ -32,17 +32,22 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
 ├── docs/
 │   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
+│   ├── NSS_AUTOLOAD_OFF.md   NSS 禁自动加载 / 分层装载的机制与定位流程
 │   └── V21_BOOT_AND_FAN_FIX.md  v21/v24 起不来 + 风扇满速的静态定案（0024–0027）
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
+│   ├── etc/nss.conf              NSS 档位（tier/fallback/budget，默认 wired）
+│   ├── etc/init.d/nss            S15 NSS 档位控制器（调 nss-load boot）
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
 │   ├── etc/uci-defaults/99-spectrum-eth0-unmanaged-lan  把 eth0 从 netifd 的 br-lan 端口表摘出（与 24.10 同）
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
 │   ├── etc/init.d/eth0-lan-attach              procd 常驻 netlink 监听（START=23），兜底补挂 eth0
 │   ├── etc/init.d/sbe-boot-trace               S01 起后台采样启动现场（v35 起）
 │   ├── etc/rc.d/S01sbe-boot-trace              → ../init.d/sbe-boot-trace（符号链接，随 overlay 进镜像）
+│   ├── etc/rc.d/S15nss                         → ../init.d/nss（NSS 档位控制器）
 │   ├── etc/hotplug.d/{iface/30,net/20}-eth0-lan-attach   挂桥主触发点与内核事件兜底
 │   ├── usr/sbin/eth0-lan-attach                attach/monitor 两种模式的实现
+│   ├── usr/sbin/nss-load                       NSS 分层装载器（status/load/commit/tier/stop）
 │   ├── usr/sbin/sbe-boot-trace                 启动取证采样器（写 /sbe-boot-trace/）
 │   └── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
 ├── patches/                  对上游 25.12 的补丁（0001 设备；0002-0007 Stage 2.1；0008-0009 Stage 2.2；0010 Stage 2.3；0011-0012 Stage 2.4）
@@ -158,6 +163,51 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 
 `saved_command_line`（`patches/0007`，QSDK 内核导出、主线不导出）已在
 2026-10-24 的内核重编中进入 `Module.symvers`，`qca-nss-dp` 链接通过。
+
+### NSS 数据通路改为分层装载（禁自动加载，2026-11-16）
+
+25.12 上 QSDK NSS 栈一起启动会把内核带进 oops/复位（panic_on_oops=1 +
+panic=1，约 55–75 秒一次）。为拿到可启动基线与可定位平台，数据通路层不再
+自动装载：
+
+- 9 个数据通路包的 `AUTOLOAD:` 全部注释掉（`qca-ssdk`、`qca-nss-dp`、
+  `qca-nss-ppe`、`qca-nss-sfe`、`qca-nss-debug`、`qca-nss-ppe-ds/-rule/-vp`、
+  `qca-nss-ae-clients` 六个子包）；**`qca-nss-phy` 的 AUTOLOAD 保留**，PHY
+  驱动仍由 kmodloader 在 S10 加载；
+- 五个启停脚本的 `START=` 移除（`qca-ssdk`、`qca-nss-dp`、
+  `qca-nss-ppe-bridge-mgr`、`qca-nss-ecm`、`shortcut-fe`），模块装载失败时
+  不再有 rcS 停在 S16/S18 的形态；
+- 新增 `/etc/nss.conf`（档位）、`/usr/sbin/nss-load`（分层装载器）、
+  `/etc/init.d/nss`（S15 启动控制器，overlay 另带 `etc/rc.d/S15nss`）。
+
+档位（`/etc/nss.conf` 的 `tier=`）：
+
+| 档位 | 装载内容 | 用途 |
+|------|----------|------|
+| `off` | 无 | 完全不碰 NSS 的基线（没有以太网口） |
+| `wired`（默认） | `qca-ssdk` + `qca-nss-dp`（dp 依赖 ppe，会连带 `qca-nss-ppe.ko`） | 有线管理与网络恢复 |
+| `full` | wired + `qca-nss-ppe` 全家 + `qca-nss-ecm` | 完整加速栈 |
+
+启动流程：S15 `/etc/init.d/nss` → `nss-load boot` 读档位 → 按 `sdk`/`dp`/
+`ppe`/`ecm` 顺序 `modprobe`（sdk 另等 `/sys/ssdk`，dp/ppe/ecm 再执行对应
+init 脚本），每步把 uptime 与 modprobe/dmesg 输出写进
+`/sbe-boot-trace/events.log`。启动计数器
+（`/sbe-boot-trace/nss-boots`）每启动 +1，启动 300 秒后未崩溃则由
+`nss-load commit` 清零；连续 `budget` 次（默认 3）没等到 commit 就改用
+`fallback` 档，避免一次改档把设备锁进复位循环。
+
+现场分层定位（有线已起时）：
+
+```sh
+nss-load status              # 档位、计数器、各层模块/接口
+nss-load load ppe            # 只加 PPE 层，看事件日志停在哪个 stage
+nss-load load full           # 全栈；崩了看 events.log 的最后一个 stage
+nss-load tier full           # 改档位（下次启动生效），fallback 保持不变
+```
+
+`nss-load` 不做 `rmmod qca-nss-ppe/-dp/-ssdk`（QSDK 的 `ppe_drv_remove()`
+卸载路径出过 oops），要回退直接 reboot。真机行为 `NOT TESTED`；本版只做到
+构建与镜像断言这一层。详见 `docs/NSS_AUTOLOAD_OFF.md`。
 
 ### 板级 DTS
 

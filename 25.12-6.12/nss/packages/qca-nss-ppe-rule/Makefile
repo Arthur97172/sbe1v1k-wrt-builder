@@ -31,7 +31,8 @@ define KernelPackage/qca-nss-ppe-rule
   DEPENDS:=@TARGET_qualcommbe_ipq95xx||TARGET_ipq53xx||TARGET_ipq54xx||TARGET_ipq96xx||TARGET_ipq52xx \
 		+kmod-qca-nss-ppe +kmod-qca-nss-ppe-vp
   FILES:=$(PKG_BUILD_DIR)/drv/ppe_rule/qca-nss-ppe-rule.ko
-  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-rule)
+  # AUTOLOAD disabled for 25.12 NSS bring-up; loaded on demand by /usr/sbin/nss-load (see docs/NSS_AUTOLOAD_OFF.md).
+  #  AUTOLOAD:=$(call AutoLoad,52,qca-nss-ppe-rule)
 endef
 
 define KernelPackage/qca-nss-ppe-rule/Description
