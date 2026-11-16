@@ -1,0 +1,138 @@
+#!/bin/sh
+# 启动阶段取证采样器（2026-11-16，v35 起）。
+#
+# 为什么需要：25.12 v34 在 S10boot 之后卡死、网络栈从未起来，设备没有串口，
+# 日志也默认不落盘。本采样器从 S01 起把「谁在跑、模块载入情况、网口状态、
+# dmesg/logread 尾部」定期写进 overlay（/sbe-boot-trace/），断电重启后仍可
+# 从 eMMC 读出启动现场，用来定位卡死点。
+#
+# 用法：
+#   sbe-boot-trace                # 采样模式（/etc/init.d/sbe-boot-trace 于 S01 启动）
+#   sbe-boot-trace event "MSG"    # 其它 init 脚本追加一行事件
+#
+# 环境变量覆盖：SBE_TRACE_DIR / SBE_TRACE_INTERVAL / SBE_TRACE_SECONDS /
+# SBE_TRACE_MAXBYTES。
+
+D=${SBE_TRACE_DIR:-/sbe-boot-trace}
+INTERVAL=${SBE_TRACE_INTERVAL:-10}
+LIFETIME=${SBE_TRACE_SECONDS:-1200}
+MAXBYTES=${SBE_TRACE_MAXBYTES:-524288}
+
+now() { date '+%F %T'; }
+
+event() {
+	mkdir -p "$D" 2>/dev/null || return 0
+	printf '%s %s\n' "$(now)" "$*" >> "$D/events.log" 2>/dev/null
+	return 0
+}
+
+uptime_s() {
+	local u
+	u=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+	printf '%s' "${u%%.*}"
+}
+
+list_net() {
+	for n in /sys/class/net/*; do
+		[ -e "$n" ] || continue
+		printf '  %-10s oper=%-6s carrier=%s\n' "${n##*/}" \
+			"$(cat "$n/operstate" 2>/dev/null)" \
+			"$(cat "$n/carrier" 2>/dev/null)"
+	done
+}
+
+list_addrs() {
+	ip -o addr 2>/dev/null | sed 's/  */ /g' | sed 's/^/  /'
+}
+
+list_mods() {
+	echo "  loaded=$(grep -c . /proc/modules 2>/dev/null)"
+	grep -E '^(qca|ath|ecm|mac80211|cfg80211|batman)' /proc/modules 2>/dev/null |
+		sed 's/ .*//; s/^/  /'
+}
+
+list_procs() {
+	for p in /proc/[0-9]*; do
+		[ -r "$p/cmdline" ] || continue
+		c=$(tr '\000' ' ' < "$p/cmdline" 2>/dev/null)
+		[ -n "$c" ] || continue
+		printf '  %s %s\n' "${p#/proc/}" "$c"
+	done
+}
+
+dump_early() {
+	[ -s "$D/boot-early.log" ] && return 0
+	{
+		echo "== sbe 启动取证：早期快照 $(now) uptime=$(uptime_s)s"
+		echo '--- version:'; cat /proc/version
+		echo '--- cmdline:'; cat /proc/cmdline
+		echo '--- rc.d:'; ls -l /etc/rc.d 2>/dev/null
+		echo '--- modules.d:'
+		for m in /etc/modules.d/*; do
+			[ -f "$m" ] && echo "  ${m##*/}: $(cat "$m" 2>/dev/null)"
+		done
+		echo '--- /lib/modules:'; ls "/lib/modules/$(uname -r)" 2>/dev/null
+		echo '--- modules now:'; list_mods
+		echo '--- dmesg (full):'; dmesg 2>/dev/null
+	} > "$D/boot-early.log" 2>&1
+}
+
+sample() {
+	{
+		echo "== $(now) uptime=$(uptime_s)s"
+		echo '--- net:';  list_net
+		echo '--- addr:'; list_addrs
+		echo '--- modules:'; list_mods
+		echo '--- ps:';  ps 2>/dev/null | sed 's/^/  /'
+		echo '--- cmdlines:'; list_procs
+		echo '--- dmesg tail:';  dmesg 2>/dev/null | tail -n 25
+		echo '--- logread tail:'; logread 2>/dev/null | tail -n 15
+		echo
+	} >> "$D/trace.log" 2>&1
+}
+
+rotate() {
+	[ -f "$D/trace.log" ] || return 0
+	local sz
+	sz=$(wc -c < "$D/trace.log" 2>/dev/null) || return 0
+	[ "${sz:-0}" -ge "$MAXBYTES" ] || return 0
+	mv -f "$D/trace.log" "$D/trace.old" 2>/dev/null
+	return 0
+}
+
+run() {
+	mkdir -p "$D" || exit 1
+	dump_early
+	event "sampler started (interval=${INTERVAL}s, lifetime=${LIFETIME}s)"
+	local deadline
+	deadline=$(( $(uptime_s) + LIFETIME ))
+	while :; do
+		sample
+		rotate
+		[ "$(uptime_s)" -ge "$deadline" ] && break
+		sleep "$INTERVAL"
+	done
+	{
+		echo "== sbe 启动取证：结束快照 $(now) uptime=$(uptime_s)s"
+		echo '--- net:';  list_net
+		echo '--- addr:'; list_addrs
+		echo '--- modules:'; list_mods
+		echo '--- dmesg (full):'; dmesg 2>/dev/null
+		echo '--- logread (full):'; logread 2>/dev/null
+	} >> "$D/final.log" 2>&1
+	event "sampler done"
+}
+
+case "${1:-}" in
+event)
+	shift
+	event "$*"
+	;;
+''|run)
+	run
+	;;
+*)
+	echo "usage: $0 [event MSG]" >&2
+	exit 2
+	;;
+esac

@@ -379,6 +379,29 @@ for f in etc/uci-defaults/99-spectrum-eth0-unmanaged-lan \
 	[ -x "$ROOTFS/$f" ] && ok "可执行 /$f" || bad "缺少或不可执行 /$f（eth0 将交回 netifd）"
 done
 
+# ---- 启动取证（v35 起）：S01 采样器 + 两个 QSDK 等待循环的超时 --------------
+# v34 在 S10boot 之后卡死时拿不到任何日志；采样器从 S01 起把启动现场写进
+# overlay（/sbe-boot-trace/），断电重启后仍可读，所以它必须真的进镜像并在
+# S01 执行。qca-ssdk（S16）与 qca-nss-dp（S18）的等待循环若丢了超时，模块
+# 装载失败时 rcS 会永久卡死、netifd/dnsmasq 不启动。
+for f in etc/init.d/sbe-boot-trace usr/sbin/sbe-boot-trace; do
+	check_overlay "$f"
+	[ -x "$ROOTFS/$f" ] && ok "可执行 /$f" || bad "缺少或不可执行 /$f（启动取证不生效）"
+done
+RCT="$ROOTFS/etc/rc.d/S01sbe-boot-trace"
+if [ -L "$RCT" ] && [ "$(readlink "$RCT")" = "../init.d/sbe-boot-trace" ]; then
+	ok "/etc/rc.d/S01sbe-boot-trace -> ../init.d/sbe-boot-trace"
+else
+	bad "缺少 /etc/rc.d/S01sbe-boot-trace（采样器不会随启动运行）"
+fi
+for s in etc/init.d/qca-ssdk etc/init.d/qca-nss-dp; do
+	if grep -q 'WAIT_TIMEOUT' "$ROOTFS/$s" 2>/dev/null; then
+		ok "/$s 等待循环带超时"
+	else
+		bad "/$s 等待循环没有超时（模块装载失败会卡死 rcS）"
+	fi
+done
+
 # ---- LuCI 基础栈 ------------------------------------------------------------
 for f in etc/config/uhttpd etc/init.d/uhttpd www/cgi-bin/luci; do
 	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f"

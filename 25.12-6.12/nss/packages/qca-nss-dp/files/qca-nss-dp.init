@@ -17,11 +17,50 @@
 
 START=18
 
+# 启动取证（v35 起）：事件同时写 syslog 与 /sbe-boot-trace/events.log，
+# 后者落在 overlay 里，断电重启后仍可读。
+sbe_trace_event() {
+	logger -t qca-nss-dp "$*" 2>/dev/null
+	[ -x /usr/sbin/sbe-boot-trace ] && /usr/sbin/sbe-boot-trace event "qca-nss-dp: $*"
+	return 0
+}
+
 qca_nss_dp_dependency() {
-	while [ -e /lib/modules/$(uname -r)/qca-nss-dp.ko ] && [ ! -d /sys/module/qca_nss_dp ]
-	do
+	# 等 qca-nss-dp 模块装载。原脚本这里无超时：模块只要装载失败（例如它
+	# 依赖的 qca-ssdk/qca-nss-ppe 装载失败），rcS 就永远停在 S18，netifd、
+	# dnsmasq 全都不启动——v34（2026-11-16）卡死即此形态的候选。现在限时
+	# 等待；超时则补一次 modprobe 并取证，然后继续，不再卡死启动。
+	local timeout="${QCA_NSS_DP_WAIT_TIMEOUT:-30}"
+	local waited=0
+	local ko="/lib/modules/$(uname -r)/qca-nss-dp.ko"
+
+	[ -e "$ko" ] || return 0
+	[ -d /sys/module/qca_nss_dp ] && return 0
+
+	sbe_trace_event "waiting for module (ko present, /sys/module/qca_nss_dp missing), timeout ${timeout}s"
+	while [ ! -d /sys/module/qca_nss_dp ] && [ "$waited" -lt "$timeout" ]; do
 		sleep 1
+		waited=$((waited + 1))
 	done
+
+	if [ -d /sys/module/qca_nss_dp ]; then
+		[ "$waited" -gt 0 ] && sbe_trace_event "module present after ${waited}s"
+		return 0
+	fi
+
+	sbe_trace_event "TIMEOUT: module not loaded after ${timeout}s, trying modprobe"
+	modprobe qca-nss-dp 2>&1 | while read -r line; do
+		sbe_trace_event "modprobe: $line"
+	done
+	if [ -d /sys/module/qca_nss_dp ]; then
+		sbe_trace_event "modprobe loaded the module"
+		return 0
+	fi
+	dmesg | tail -n 40 | while read -r line; do
+		sbe_trace_event "dmesg: $line"
+	done
+	sbe_trace_event "module still missing; continuing boot without it"
+	return 0
 }
 
 enable_rps() {

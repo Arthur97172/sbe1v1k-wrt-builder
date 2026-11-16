@@ -294,6 +294,12 @@ for f in "$BR/package/feeds/nss/qca-ssdk/Makefile" \
          "$BR/qca/src/nss/base/qca-nss-dp/nss_dp_attach.c"; do
 	[ -e "$f" ] || { echo "NSS 装配不完整，缺少 $f" >&2; exit 1; }
 done
+# 两个 QSDK 等待循环的超时必须随包进树：丢了它，模块装载失败时 rcS 会停在
+# S16/S18 永久卡死（v34 的形态）。verify-image.sh 在镜像里还会再断言一次。
+grep -q 'WAIT_TIMEOUT' "$BR/package/feeds/nss/qca-nss-dp/files/qca-nss-dp.init" \
+	|| { echo "qca-nss-dp.init 丢掉了等待超时（模块装载失败会卡死 rcS）" >&2; exit 1; }
+grep -q 'WAIT_TIMEOUT' "$BR/package/feeds/nss/qca-ssdk/files/qca-ssdk" \
+	|| { echo "qca-ssdk 丢掉了等待超时（模块装载失败会卡死 rcS）" >&2; exit 1; }
 
 echo "[prepare] 写入 version / version.date"
 printf '%s\n' "$REVISION" > "$BR/version"

@@ -243,12 +243,43 @@ function ipq50xx_uniphy_amplitude_set () {
 	ssdk_sh debug uniphy set 0 0x19c 0xbea0 4
 }
 
+# 启动取证（v35 起）：事件同时写 syslog 与 /sbe-boot-trace/events.log，
+# 后者落在 overlay 里，断电重启后仍可读。
+sbe_trace_event() {
+	logger -t qca-ssdk "$*" 2>/dev/null
+	[ -x /usr/sbin/sbe-boot-trace ] && /usr/sbin/sbe-boot-trace event "qca-ssdk: $*"
+	return 0
+}
+
 ssdk_dependency() {
 	#wait ssdk module to be loaded
-	while [ -e /lib/modules/$(uname -r)/qca-ssdk.ko ] && [ ! -d /sys/module/qca_ssdk ]
-	do
-		sleep 1
-	done
+	# 原脚本这里无超时：模块装载失败时 rcS 永远停在 S16（qca-nss-dp 还依赖
+	# qca-ssdk，它起不来后面的 NSS 数据通路都不会起来）。与 qca-nss-dp.init
+	# 同一处理：限时等待，超时补一次 modprobe 并取证，然后继续。
+	local timeout="${QCA_SSDK_WAIT_TIMEOUT:-30}"
+	local waited=0
+	local ko="/lib/modules/$(uname -r)/qca-ssdk.ko"
+
+	if [ -e "$ko" ] && [ ! -d /sys/module/qca_ssdk ]; then
+		sbe_trace_event "waiting for module (ko present, /sys/module/qca_ssdk missing), timeout ${timeout}s"
+		while [ ! -d /sys/module/qca_ssdk ] && [ "$waited" -lt "$timeout" ]
+		do
+			sleep 1
+			waited=$((waited + 1))
+		done
+		if [ -d /sys/module/qca_ssdk ]; then
+			[ "$waited" -gt 0 ] && sbe_trace_event "module present after ${waited}s"
+		else
+			sbe_trace_event "TIMEOUT: module not loaded after ${timeout}s, trying modprobe"
+			modprobe qca-ssdk 2>&1 | while read -r line; do
+				sbe_trace_event "modprobe: $line"
+			done
+			dmesg | tail -n 40 | while read -r line; do
+				sbe_trace_event "dmesg: $line"
+			done
+			sbe_trace_event "module still missing; continuing boot without it"
+		fi
+	fi
 
 	#wait ssdk initialization complete
 	counter=0

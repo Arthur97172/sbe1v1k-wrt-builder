@@ -39,8 +39,11 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── etc/uci-defaults/99-spectrum-eth0-unmanaged-lan  把 eth0 从 netifd 的 br-lan 端口表摘出（与 24.10 同）
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
 │   ├── etc/init.d/eth0-lan-attach              procd 常驻 netlink 监听（START=23），兜底补挂 eth0
+│   ├── etc/init.d/sbe-boot-trace               S01 起后台采样启动现场（v35 起）
+│   ├── etc/rc.d/S01sbe-boot-trace              → ../init.d/sbe-boot-trace（符号链接，随 overlay 进镜像）
 │   ├── etc/hotplug.d/{iface/30,net/20}-eth0-lan-attach   挂桥主触发点与内核事件兜底
 │   ├── usr/sbin/eth0-lan-attach                attach/monitor 两种模式的实现
+│   ├── usr/sbin/sbe-boot-trace                 启动取证采样器（写 /sbe-boot-trace/）
 │   └── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
 ├── patches/                  对上游 25.12 的补丁（0001 设备；0002-0007 Stage 2.1；0008-0009 Stage 2.2；0010 Stage 2.3；0011-0012 Stage 2.4）
 │   ├── 0001-qualcommbe-add-spectrum-sbe1v1k.patch
@@ -500,6 +503,26 @@ board.json 的 `ports` 数组），LuCI「状态→概览→端口状态」（`2
 `usr/sbin/eth0-lan-attach` 只做 `ip link set dev eth0 master br-lan`，不碰端口
 状态；`touch /var/run/eth0-lan-attach.disabled` 可临时交回手工管理（tmpfs，重启
 失效）。`verify-image.sh` 断言这五个文件都在且可执行。
+
+**启动取证（v35 起，`files/` overlay）。** v34 在 S10boot 之后卡死时设备无串口、
+日志也不落盘，离线只剩 overlay 的磁盘痕迹，到不了 rcS 之后。为此：
+
+- `etc/init.d/sbe-boot-trace`（START=01，普通后台进程，不归 procd）在 S01 拉起
+  `usr/sbin/sbe-boot-trace`；rc.d 符号链接直接随 overlay 进镜像（首启即生效，
+  不依赖 uci-defaults）。`touch /var/run/sbe-boot-trace.disabled` 可跳过本次开机；
+- 采样器先把早期快照（version/cmdline/rc.d/modules.d/模块表/完整 dmesg）写进
+  `/sbe-boot-trace/boot-early.log`，然后每 10 s 追加一段（uptime、网口
+  oper/carrier、ip addr、已载模块、ps 与 /proc/*/cmdline、dmesg/logread 尾部），
+  20 分钟后写 `final.log`（完整 dmesg/logread）并退出；`trace.log` 超过 512 KiB
+  轮转为 `trace.old`。目录在 overlay 里，断电后可从 eMMC 读出；
+- `events.log` 收其它组件的显式事件：`qca-ssdk`（S16）与 `qca-nss-dp`（S18）的
+  等待循环已改为**限时等待**（默认 30 s，`QCA_SSDK_WAIT_TIMEOUT` /
+  `QCA_NSS_DP_WAIT_TIMEOUT` 可调）。原脚本无超时，模块装载失败（qca-nss-dp
+  依赖 qca-ssdk、qca-nss-ppe）就会把 rcS 永久卡在 S16/S18——v34 的症状形态。
+  超时后补一次 `modprobe`，把输出与 dmesg 尾部记入 events.log，然后继续启动。
+
+`prepare-tree.sh` 与 `verify-image.sh` 都断言两个等待循环带超时、采样器三件
+（init.d、usr/sbin、rc.d 链接）在镜像里且可执行。状态：真机 `NOT TESTED`。
 
 跨版本升级的注意点：端口角色现在与 24.10 一致（eth1 = WAN，其余 = LAN），从
 24.10 保留过来的 `/etc/config/network` 不需要改设备名；但 `99-spectrum-eth0-

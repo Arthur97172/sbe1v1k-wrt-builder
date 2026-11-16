@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+# 从 S01 起在后台跑启动取证采样，见 /usr/sbin/sbe-boot-trace 头注释。
+#
+# 用普通后台进程而不是 procd 托管：采样器带固定寿命（默认 20 分钟），到期
+# 自行退出，不应被 respawn 拉起；rcS 卡死时它也不受影响。
+
+START=01
+STOP=99
+USE_PROCD=0
+
+PROG=/usr/sbin/sbe-boot-trace
+DISABLE=/var/run/sbe-boot-trace.disabled
+
+start() {
+	[ -x "$PROG" ] || return 0
+	[ -e "$DISABLE" ] && return 0
+	"$PROG" >/dev/null 2>&1 &
+	return 0
+}
+
+stop() {
+	killall sbe-boot-trace 2>/dev/null
+	return 0
+}
