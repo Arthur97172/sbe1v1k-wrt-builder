@@ -1,0 +1,40 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: disable the in-kernel QCA808x PHY driver
+
+6.12 的 qualcommbe 目标配置打开了 CONFIG_QCA808X_PHY=y，内核里因此编进
+drivers/net/phy/qcom/qca808x.c，它注册的 libphy 驱动名是
+"Qualcomm QCA8084"（qca808x.c:1225）。QSDK 的 kmod-qca8084 包
+（qca8084-phy.ko）注册同名驱动，模块加载时 libphy 直接返回 EEXIST：
+
+  Error: Driver 'Qualcomm QCA8084' is already registered, aborting...
+  libphy: Qualcomm QCA8084: Error -16 in registering driver
+
+kmodloader 的依赖链从这里断掉：qca8084-phy 加载失败（自身依赖完整，
+kmodloader 报 "- qca8084-phy - 0"）→ qca-ssdk（depends qca8084-phy）
+失败 → qca-nss-ppe（depends qca-ssdk）失败 → qca-nss-dp、qca-nss-sfe、
+ecm 全部连锁失败。开机后交换芯片和所有以太网口都不存在，这就是
+"25.12 起不来网络"的真机故障。
+
+证据：2026-11-16 从尾部 overlay 的 sbe-boot-trace/events.log 取到四次
+真实启动轨迹，每次都在 17 s 的 kmodloader 汇总里给出同一个失败集合
+（qca8084-phy/qca-ssdk/qca-nss-ppe/…），并在 61 s、126 s 的 modprobe
+重试里打出上面两行 -16。diag 探针（v9）另行证明 eMMC 分区写入、p42
+挂载、尾部 overlay 全部正常，排除了存储通道。
+
+24.10-6.6 的 QSDK 内核树同样带 qca808x.c，但它的配置没有打开，QCA8084
+一直由 QSDK 驱动负责，并和各 NSS 模块的导出符号配套。这里沿用同一分工：
+关闭内置驱动、保留 kmod-qca8084。SBE1V1K 的板级 dts 不引用
+qca8084_serdes，关掉不影响 serdes 节点。
+
+diff --git a/target/linux/qualcommbe/config-6.12 b/target/linux/qualcommbe/config-6.12
+--- a/target/linux/qualcommbe/config-6.12
++++ b/target/linux/qualcommbe/config-6.12
+@@ -403,7 +403,7 @@
+ CONFIG_PWM_IPQ=y
+ # CONFIG_LEDS_QCOM_LPG is not set
+ CONFIG_QCA807X_PHY=y
+-CONFIG_QCA808X_PHY=y
++# CONFIG_QCA808X_PHY is not set
+ # CONFIG_QCM_DISPCC_2290 is not set
+ # CONFIG_QCM_GCC_2290 is not set
+ # CONFIG_QCOM_A53PLL is not set

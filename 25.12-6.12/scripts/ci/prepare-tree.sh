@@ -129,6 +129,13 @@ grep -q 'resets = <&gcc GCC_SDCC_BCR>;' \
 grep -q '^&qpic_nand { status = "disabled"; };$' \
 	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
 	|| { echo "补丁应用不完整：设备树没有禁用 QPIC NAND（0029）" >&2; exit 1; }
+# 0030：目标内核配置必须关掉内置的上游 QCA808x PHY 驱动。6.12 的 qca808x.c
+# 注册的 libphy 名字与 QSDK 的 qca8084-phy.ko 相同，两者同在时后者加载报
+# EEXIST（-16），kmodloader 依赖链 qca8084-phy → qca-ssdk → qca-nss-ppe →
+# qca-nss-dp/sfe/ecm 全线断掉，开机后没有任何以太网口。补丁丢了就在这里失败。
+grep -q '^# CONFIG_QCA808X_PHY is not set$' \
+	"$BR/target/linux/qualcommbe/config-6.12" \
+	|| { echo "补丁应用不完整：目标配置没有关闭内置 QCA808x PHY（0030）" >&2; exit 1; }
 
 # 写入目标同样要在编译前断言。25.12 的 sysupgrade 镜像必须改成 tar 容器
 # （emmc_upgrade_tar 只认它），升级脚本必须按当前槽位写 eMMC，设备树必须把

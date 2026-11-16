@@ -258,6 +258,42 @@ NAND 的 v32 DTB）2026-11-15 实测 PASS**——绿灯快节奏（2 s/0.5 s）�
 `mmcblk*`）。v33 镜像未刷入。
 
 
+### QCA8084 PHY 驱动重名（`patches/0030`，v38 起）
+
+v37-1 刷入路由器 B 后网络起不来，症状是只有 PHY 载波、无 DHCP。2026-11-16
+的 diag v9（ramdisk 诊断系统）先排除了存储：`sbe-blk` 对 p29 分区和整盘路径
+的写入+丢缓存回读全部通过，p42 读写挂载、尾部 overlay 挂载与 upper 可见都
+正常（灯语 L=8 B=3 W=10 M=10 C=0，日志落在 p42 的 `/sbe-diag/diag-v9.log`）。
+故障在模块栈。
+
+真机轨迹（尾部 overlay `sbe-boot-trace/events.log`，四次启动一致）显示：
+kmodloader 在 17 s 完整跑完并报告同一组失败——`- qca8084-phy - 0`、
+`- qca-ssdk - 1`、`- qca-nss-ppe - 1`、`- qca-nss-dp - 2`、`- qca-nss-sfe - 1`；
+随后 S16/S18 的 30 s 等待与 modprobe 重试只是症状，dmesg 里反复出现：
+
+```
+Error: Driver 'Qualcomm QCA8084' is already registered, aborting...
+libphy: Qualcomm QCA8084: Error -16 in registering driver
+```
+
+根因：25.12 的 `target/linux/qualcommbe/config-6.12` 打开
+`CONFIG_QCA808X_PHY=y`，内核内置的 `drivers/net/phy/qcom/qca808x.c` 注册的
+libphy 驱动名正是 “Qualcomm QCA8084”；QSDK 的 `kmod-qca8084`
+（`qca8084-phy.ko`）注册同名驱动，加载得到 EEXIST。依赖链因此从源头断裂：
+qca8084-phy 失败 → qca-ssdk（depends qca8084-phy）→ qca-nss-ppe（depends
+qca-ssdk）→ qca-nss-dp / qca-nss-sfe / ecm 全部装不进来，开机后交换芯片和
+所有以太网口都不存在。
+
+24.10-6.6 的 QSDK 内核树也带 `qca808x.c`，但配置没开，QCA8084 一直由 QSDK
+驱动负责。`patches/0030` 沿用同一分工关闭内置驱动、保留 `kmod-qca8084`；
+SBE1V1K 的板级 dts 不引用 `qca8084_serdes`，关掉不影响 serdes 节点。
+`prepare-tree.sh` 在编译前断言这一行，补丁丢失时直接失败。
+
+**真机状态：源码修复已合入，v38 镜像待 CI 重建后刷机验证（`NOT TESTED`）。**
+日志与轨迹取证文件在开发机的 `~/sbe1v1k-ramtest/forensics/`（`diag-v9.log`、
+`events.log`），不入库。
+
+
 ### 启动阻塞：CPU OPP、sleep_clk、NSS 保留区（`patches/0027`）
 
 > 2026-11-15：v28 对照构建（0027 移到 `patches/disabled/`）已经判定该补丁
