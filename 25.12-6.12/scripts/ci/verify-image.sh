@@ -354,17 +354,30 @@ done
 
 # ---- 端口角色：board.json 必须声明四个网口 -------------------------------
 # LuCI 的状态→概览→端口状态读 board.json 的 network 段。没有本板分支时
-# 99-default_network 写 lan=eth0 / wan=eth1：少两个口且 LAN/WAN 角色反了。
-# 补丁 0023 在 02_network 里声明 eth0=WAN、eth1/eth2/eth3=LAN。
+# 99-default_network 写 lan=eth0 / wan=eth1：少两个口，2.5G 口（eth1）被划进
+# LAN 后上游直接断网。补丁 0023 按 24.10 的真机结论声明 eth1=WAN、
+# eth0/eth2/eth3=LAN；eth0（10G）由 overlay 的 99-spectrum-eth0-unmanaged-lan
+# 从 netifd 的端口列表里摘出，交给 eth0-lan-attach 在 netifd 之外挂桥。
 BOARDD_NET="$ROOTFS/etc/board.d/02_network"
 if [ ! -f "$BOARDD_NET" ]; then
 	bad "镜像缺少 /etc/board.d/02_network（board.json 会落到默认端口表）"
 elif grep -q '^[[:space:]]*spectrum,sbe1v1k)' "$BOARDD_NET" &&
-     grep -qF 'ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"' "$BOARDD_NET"; then
-	ok "/etc/board.d/02_network 声明 eth0=WAN、eth1-eth3=LAN（端口面板四个口）"
+     grep -qF 'ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"' "$BOARDD_NET"; then
+	ok "/etc/board.d/02_network 声明 eth1=WAN、eth0/eth2/eth3=LAN（端口面板四个口）"
 else
-	bad "/etc/board.d/02_network 没有 spectrum,sbe1v1k 端口映射（端口面板只会显示 eth0/eth1 且角色相反）"
+	bad "/etc/board.d/02_network 没有 spectrum,sbe1v1k 端口映射（WAN 应为 2.5G 的 eth1）"
 fi
+
+# eth0（10G）的桥成员在 netifd 之外维护（与 24.10 相同）：uci-defaults 摘除、
+# 常驻 monitor、两个 hotplug 触发点，四件缺一件 RTL8261N 就可能回到假 10G 环回。
+for f in etc/uci-defaults/99-spectrum-eth0-unmanaged-lan \
+         etc/init.d/eth0-lan-attach \
+         etc/hotplug.d/iface/30-eth0-lan-attach \
+         etc/hotplug.d/net/20-eth0-lan-attach \
+         usr/sbin/eth0-lan-attach; do
+	check_overlay "$f"
+	[ -x "$ROOTFS/$f" ] && ok "可执行 /$f" || bad "缺少或不可执行 /$f（eth0 将交回 netifd）"
+done
 
 # ---- LuCI 基础栈 ------------------------------------------------------------
 for f in etc/config/uhttpd etc/init.d/uhttpd www/cgi-bin/luci; do

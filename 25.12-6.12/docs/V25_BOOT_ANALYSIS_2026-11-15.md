@@ -259,6 +259,13 @@ v25 的 DT 与 v73 逐节点一致（§2.3），因此 25.12 上编号不应改�
   但 `brctl` 里能看到 eth0）；25.12 的 0023 没有对应的 attach 脚本，这是角色
   翻转的一部分，不是缺陷。
 
+> **2026-11-16 结案**：用户决定 25.12 与 24.10 保持一致——2.5G 口（eth1）= WAN，
+> 其余三口 = LAN。0023 已改为 `ucidef_set_interfaces_lan_wan "eth2 eth3 eth0"
+> "eth1"`，24.10 的 eth0 挂桥机制（`99-spectrum-eth0-unmanaged-lan` +
+> `eth0-lan-attach` 的 init/hotplug 钩子 + `usr/sbin/eth0-lan-attach`）已整体
+> 移植到 `25.12-6.12/files/`，`prepare-tree.sh` / `verify-image.sh` 的断言同步
+> 更新。上表"25.12 角色"一列自此失效，真机行为仍为 **NOT TESTED**。
+
 ### 9.3 状态词
 
 - 上表全部为 **24.10 v78 实测**（只读命令：`ip`、`brctl`、`uci show`、

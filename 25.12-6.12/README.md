@@ -36,7 +36,11 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
+│   ├── etc/uci-defaults/99-spectrum-eth0-unmanaged-lan  把 eth0 从 netifd 的 br-lan 端口表摘出（与 24.10 同）
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
+│   ├── etc/init.d/eth0-lan-attach              procd 常驻 netlink 监听（START=23），兜底补挂 eth0
+│   ├── etc/hotplug.d/{iface/30,net/20}-eth0-lan-attach   挂桥主触发点与内核事件兜底
+│   ├── usr/sbin/eth0-lan-attach                attach/monitor 两种模式的实现
 │   └── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
 ├── patches/                  对上游 25.12 的补丁（0001 设备；0002-0007 Stage 2.1；0008-0009 Stage 2.2；0010 Stage 2.3；0011-0012 Stage 2.4）
 │   ├── 0001-qualcommbe-add-spectrum-sbe1v1k.patch
@@ -52,7 +56,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0011-qualcommbe-sbe1v1k-board-ethernet-from-qsdk14.patch
 │   ├── 0012-qualcommbe-sbe1v1k-mainline-fallback-device.patch
 │   ├── 0013-0022-…patch      其余 Stage 2.x 补丁（NAT/桥接钩子、eMMC 等，见对应小节）
-│   ├── 0023-qualcommbe-ipq95xx-sbe1v1k-board-network.patch   LAN/WAN 端口映射（board.json）
+│   ├── 0023-qualcommbe-ipq95xx-sbe1v1k-board-network.patch   LAN/WAN 端口映射（board.json；eth1=WAN）
 │   ├── 0024-qualcommbe-sbe1v1k-fix-kernel-loadaddr.patch     KERNEL_LOADADDR 0x42200000（v21 起不来的根因）
 │   ├── 0025-qualcommbe-sbe1v1k-pwm-driver.patch              内核 PWM 驱动 0400–0403 + CONFIG_PWM（风扇满速的根因）
 │   ├── 0026-qualcommbe-sbe1v1k-pwm-fan.patch                 风扇 / 引脚 / 温控区 DTS
@@ -430,15 +434,15 @@ DEVICE_PACKAGES := kmod-leds-pwm kmod-hwmon-pwmfan \
 |------|------|------|------|
 | S2（主） | `extracted/qsdk14/sbe1v1k-askey.dtb` | QSDK 14 / 6.6.116 | 与本树驱动同代，PHY、端口、MAC 模式全取自此 |
 | S1（参照） | `extracted/kernel/sbe1v1k.dtb` | QSDK 13 / 6.6.47 | PHY 地址与 MAC 模式一致，`switch_*_bmp` 不同 |
-| NET（裁决） | 厂商 rootfs `etc/board.d/01_network` | — | `eth1 eth2 eth3` = LAN、`eth0` = WAN，与 S2 一致 |
+| NET（裁决） | 24.10-6.6 真机（B 机数周运行） | — | `eth1` = WAN（2.5G），`eth0`/`eth2`/`eth3` = LAN；与厂商 rootfs `etc/board.d/01_network` 的 eth0 特殊处理一致 |
 
 板级拓扑（`0011`）：QCA8075 四口封装（QSGMII）在 switch port 1–4，QCA8081 2.5G
 在 port 5（SGMII），RTL8261N 10G 在 port 6（USXGMII/C45）。`switch_lan_bmp` 因而是
 `0x38`（BIT(3..5)）、`switch_wan_bmp` 是 `0x40`（BIT(6)），S1 的 `0x58`/`0x20` 被否决。
 
 `nss-dp` 按 DT 顺序 probe 并用 `alloc_etherdev_mqs()` 依次取 `eth%d`，所以 DTS 里
-`dp1`–`dp4` 的顺序就是 `eth0`–`eth3`：`eth0` = port 6（WAN），`eth1`/`eth2`/`eth3`
-= port 5/3/4（LAN），与 NET 完全对齐。`mactype` 1 是 Synopsys XGMAC（port 6 的
+`dp1`–`dp4` 的顺序就是 `eth0`–`eth3`：`eth0` = port 6（RTL8261N 10G）、
+`eth1` = port 5（QCA8081 2.5G，**WAN**）、`eth2`/`eth3` = port 3/4（LAN）。`mactype` 1 是 Synopsys XGMAC（port 6 的
 `0x3a514000`），0 是 1G GMAC。每个 dp 节点**不写** `phy-mode`：这样
 `of_get_phy_mode()` 失败会打开 phylink 路径，由 `qcom,port_phyinfo` 提供
 interface 与 `phy-handle`（S2/RDP 的做法；S1 的逐节点 `phy-mode` 属于旧驱动）。
@@ -473,15 +477,35 @@ S2 里的 `port_ledinfo`、`port_mac_sel` 没有抄：本树 qca-ssdk 虽能解�
 **端口表进 board.json（`0023`）。** `target/linux/qualcommbe/ipq95xx/base-files/
 etc/board.d/02_network` 原来没有 `spectrum,sbe1v1k` 分支，设备会落到 "Unsupported
 hardware"，随后 `99-default_network` 写 `lan=eth0` / `wan=eth1`——比实际少两个口，
-而且 LAN/WAN 角色相反。补丁声明
-`ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"`（空格分隔的 LAN 列表会变成
+而且 2.5G 口（eth1）被划进 LAN 后上游直接断网。补丁按 24.10-6.6 的真机结论声明
+`ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"`（空格分隔的 LAN 列表会变成
 board.json 的 `ports` 数组），LuCI「状态→概览→端口状态」（`29_ports.js`）据此显示
 四个网口。`prepare-tree.sh` 在编译前断言补丁已生效，`verify-image.sh` 在镜像的
 `/etc/board.d/02_network` 上复查。状态：静态检查 PASS，真机 `NOT TESTED`。
 
-跨版本升级的注意点：25.12 的 `board.json` 在缺失时重新生成、且不在 sysupgrade
-keep 列表里，所以端口面板会拿到新映射；但保留的 `/etc/config/network` 若来自
-24.10，里面的 lan/wan 设备名仍是旧角色，需要人工核对一次。
+**eth0（10G）不归 netifd 管（与 24.10 同，`files/` overlay）。** eth0 在 board.d
+里列进 LAN 只是为了让 board.json / LuCI 端口面板显示四个口；netifd 在应用 LAN 地址
+变更时会把端口 tear down，RTL8261N/dp1 会进入假 10G 环回（24.10 真机定案）。
+四个部件缺一不可：
+
+- `etc/uci-defaults/99-spectrum-eth0-unmanaged-lan`：`config_generate` 之后把 eth0
+  从 br-lan 的 `ports` 里摘掉（`del_list`），并启用 `eth0-lan-attach`；顺带清理
+  厂商固件遗留的 `lan-apply-watch`；
+- `etc/hotplug.d/iface/30-eth0-lan-attach`：netifd 的 lan `ifup/ifupdate` 事件
+  （主触发点，此刻成员列表已应用完）；
+- `etc/hotplug.d/net/20-eth0-lan-attach`：br-lan / eth0 的内核 netdev 事件兜底；
+- `etc/init.d/eth0-lan-attach`（START=23，晚于 network）：procd 常驻
+  `eth0-lan-attach monitor`，用 `ip monitor link` 兜住"桥重建但没有 iface 事件"。
+
+`usr/sbin/eth0-lan-attach` 只做 `ip link set dev eth0 master br-lan`，不碰端口
+状态；`touch /var/run/eth0-lan-attach.disabled` 可临时交回手工管理（tmpfs，重启
+失效）。`verify-image.sh` 断言这五个文件都在且可执行。
+
+跨版本升级的注意点：端口角色现在与 24.10 一致（eth1 = WAN，其余 = LAN），从
+24.10 保留过来的 `/etc/config/network` 不需要改设备名；但 `99-spectrum-eth0-
+unmanaged-lan` 依赖 `br-lan` 以 device 节声明 ports（`config_generate` 的产物），
+若保留的配置里 br-lan 仍是老式 `ifname` 写法，需要人工把它改成 device 节的
+`ports`，否则 eth0 不会被摘出，hotplug 补挂也无桥可挂。
 
 **真机回退 profile**（`0012`）：`Device/spectrum_sbe1v1k_mainline` 用主线 RDP433
 设备树 + `kmod-qcom-ppe`，产物前缀 `sbe1v1k-mainline`（不与三个交付名冲突），

@@ -149,9 +149,12 @@ grep -q 'fstools_ignore_partname=1' \
 	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
 	|| { echo "补丁应用不完整：设备树没有 fstools_ignore_partname=1" >&2; exit 1; }
 # 端口角色只在 board.json 里声明：02_network 没有本板分支时 99-default_network
-# 会写 lan=eth0 / wan=eth1（少两个口且角色反了），LuCI 概览的端口面板只显示两个
-# 网口。检查必须在编译前失败，而不是等 3 小时后在镜像里发现。
-grep -q 'ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"' \
+# 会写 lan=eth0 / wan=eth1（少两个口，eth1 WAN 被划进 LAN 后上游断网）。
+# 与 24.10 一致：eth1（dp2，QCA8081 2.5G）= WAN，eth0/eth2/eth3 = LAN，
+# eth0 由 overlay 里的 99-spectrum-eth0-unmanaged-lan 从 netifd 的 br-lan
+# 端口列表里摘出、再由 eth0-lan-attach 从外部补挂。LuCI 概览的端口面板只按
+# board.json 的 ports 显示，检查必须在编译前失败。
+grep -q 'ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"' \
 	"$BR/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network" \
 	|| { echo "补丁应用不完整：02_network 没有 spectrum,sbe1v1k 的 LAN/WAN 端口映射" >&2; exit 1; }
 # v21 的 FIT 把内核装到 0x41000000（Device/Default），落在厂商给 NSS 固件保留的

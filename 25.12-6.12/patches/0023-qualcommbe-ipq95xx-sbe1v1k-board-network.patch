@@ -4,8 +4,19 @@ Subject: [PATCH] qualcommbe: ipq95xx: declare Spectrum SBE1V1K LAN/WAN ports
 Without a spectrum,sbe1v1k case, board.d/02_network falls through to
 "Unsupported hardware" and package/base-files' 99-default_network
 writes lan=eth0 / wan=eth1.  That is both incomplete (two of the four
-ports) and wrong: on this board eth0 is the RTL8261N 10G WAN and
-eth1/eth2/eth3 are the QCA8081/QCA8075 LAN ports (see patches/0011).
+ports) and wrong: on this board eth1 (dp2, QCA8081 2.5G, PPE port 5)
+is the WAN port and eth0 (dp1, RTL8261N 10G, PPE port 6), eth2 and
+eth3 are the LAN ports (see patches/0011).  This is the port layout the
+24.10-6.6 tree established on hardware and the vendor board.d
+matches.
+
+eth0 is listed in the LAN set so board.json advertises it and LuCI's
+port panel shows all four ports, but netifd must not own it: applying
+a LAN address change makes netifd tear the port down and the RTL8261N
+falls into a fake 10G loopback.  The uci-defaults script
+99-spectrum-eth0-unmanaged-lan (files overlay) strips it back out of
+the generated br-lan, and /usr/sbin/eth0-lan-attach re-adds it as a
+bridge member from outside netifd.  Same arrangement as 24.10.
 
 LuCI builds the status -> overview port panel from the board.json
 network section (luci-mod-status 29_ports.js): it reads lan.ports[]
@@ -23,7 +34,7 @@ Status: static only, NOT TESTED on hardware.
  		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 lan5" "wan"
  		;;
 +	spectrum,sbe1v1k)
-+		ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"
++		ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"
 +		;;
  	*)
  		echo "Unsupported hardware. Network interfaces not initialized"

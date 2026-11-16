@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+# netifd 的 lan 接口事件：此刻 br-lan 的成员列表已经应用完，再挂 eth0 不会被
+# 后续的配置应用顶掉（这是主触发点）。helper 有界重试，后台执行，不阻塞
+# hotplug-call 的其它脚本。
+
+[ "$ACTION" = "ifup" ] || [ "$ACTION" = "ifupdate" ] || exit 0
+[ "$INTERFACE" = "lan" ] || exit 0
+[ -x /usr/sbin/eth0-lan-attach ] && ( /usr/sbin/eth0-lan-attach attach >/dev/null 2>&1 & )
+exit 0

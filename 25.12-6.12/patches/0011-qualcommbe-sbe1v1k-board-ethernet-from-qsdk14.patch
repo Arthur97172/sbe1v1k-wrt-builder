@@ -22,9 +22,9 @@ as this tree):
   2.5G PHY (QCA8081)     address 0x1c, sgmii, not C45 (was 0x08, c45, aqr fw)
   10G PHY (RTL8261N)     address 0x00, C45 (unchanged), AQR fw cells dropped
   port bitmap            lan = 0x38 (ports 3,4,5), wan = 0x40 (port 6);
-                         S1's 0x58/0x20 disagrees, but NET
-                         (board.d/01_network: "eth1 eth2 eth3" LAN, "eth0"
-                         WAN) matches S2 together with the dp probe order.
+                         S1's 0x58/0x20 disagrees; S2 wins.  Linux ethN
+                         roles come from board.d/02_network (24.10 hardware
+                         evidence): eth1 = WAN, eth0/eth2/eth3 = LAN.
   mac modes              0x0b QSGMII / 0x0f SGMII_CH0 / 0x0d USXGMII
   nss-dp ports           dp1..dp4 only, in S2 order: port 6 (XGMAC,
                          0x3a514000, mactype 1), port 5 (0x3a001800),
@@ -62,13 +62,13 @@ diff --git a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1
 + * because it was built for the same driver generation this tree uses (QSDK
 + * 14.x qca-ssdk/qca-nss-dp).  S1 (extracted/kernel/sbe1v1k.dtb, QSDK 13)
 + * agrees on every PHY address and MAC mode but differs on the LAN/WAN port
-+ * bitmap; the vendor rootfs network defaults (NET, board.d/01_network:
-+ * "eth1 eth2 eth3" LAN, "eth0" WAN) match S2, so S2 wins.
++ * bitmap; the vendor rootfs defaults keep eth0 (port 6) outside netifd as
++ * an unmanaged bridge port, reproduced and verified by 24.10, so S2 wins.
 + *
 + * Topology: QCA8075 package (4 ports, QSGMII) on switch ports 1-4,
 + * QCA8081 2.5G on port 5 (SGMII), RTL8261N 10G on port 6 (USXGMII, C45).
-+ * The nss-dp probe order makes port 6 eth0 (WAN) and ports 5/3/4 eth1..eth3
-+ * (LAN), which is exactly NET's mapping.
++ * The nss-dp probe order makes port 6 eth0, port 5 eth1, ports 3/4 eth2/3;
++ * board.d/02_network then makes eth1 WAN and eth0/eth2/eth3 LAN, as NET does.
 + *
 + * Still UNVERIFIED: nothing here has been observed on hardware.  The board
 + * description outside the Ethernet block (PCIe slots, NOR/NAND layout, LEDs
@@ -87,7 +87,7 @@ diff --git a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1
 -		ethernet4 = "/soc@0/dp5@3a510000";
 -		ethernet5 = "/soc@0/dp6@3a514000";
 +		/* S2 probe order: port 6 (RTL8261N 10G) first, then the
-+		 * QCA8081 and the two qca8075 ports.  NET maps eth0 to WAN. */
++		 * QCA8081 and two qca8075 ports.  eth0 = 10G LAN, eth1 = WAN. */
 +		ethernet0 = "/soc@0/dp1";
 +		ethernet1 = "/soc@0/dp2";
 +		ethernet2 = "/soc@0/dp3";
@@ -267,8 +267,8 @@ diff --git a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1
 +	 * qca-nss-dp ports.  Probe order is DT order and alloc_etherdev_mqs()
 +	 * hands out eth%d sequentially, so this order reproduces the vendor
 +	 * ethN mapping recorded in NET:
-+	 *   eth0 = dp1 = port 6 = RTL8261N 10G   (WAN)
-+	 *   eth1 = dp2 = port 5 = QCA8081 2.5G   (LAN)
++	 *   eth0 = dp1 = port 6 = RTL8261N 10G   (LAN, off-netifd bridge port)
++	 *   eth1 = dp2 = port 5 = QCA8081 2.5G   (WAN)
 +	 *   eth2 = dp3 = port 3 = qca8075        (LAN)
 +	 *   eth3 = dp4 = port 4 = qca8075        (LAN)
 +	 *
