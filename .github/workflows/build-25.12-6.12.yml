@@ -52,6 +52,12 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
+    # 顶格已声明 contents: write，这里再显式写一遍 job 级：run 39（v39，
+    # e36bead）建 Release 时 token 只有只读权限（HTTP 403 Resource not
+    # accessible by integration），而同日 24.10/sources 工作流的 job 级声明
+    # 一直正常。两处都写，确保"建 Release"这一步的 token 拿到写权限。
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -320,9 +326,9 @@ jobs:
             fi
           } >> "$REL/notes.md"
 
-          # 显示名只用 v<run>-<attempt>，与 24.10 一致、便于人读；tag 仍保留
-          # sha 与系列后缀，保证唯一（tag 不可变，重跑靠 ATTEMPT 区分）。
-          NAME="SBE1V1K 25.12-6.12 v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          # 显示名带完整 tag（v<run>-<attempt>-<sha>-25.12-6.12），与 24.10 一致；
+          # 重跑靠 ATTEMPT 区分，sha 后缀便于在 Releases 列表里对号。
+          NAME="SBE1V1K 25.12-6.12 ${TAG}"
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
