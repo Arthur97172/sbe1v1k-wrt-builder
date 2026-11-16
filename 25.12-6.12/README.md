@@ -93,8 +93,11 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 2. `target/linux/qualcommbe/image/ipq95xx.mk` 增加 `Device/spectrum_sbe1v1k`：
 
    - `DEVICE_IMG_PREFIX := sbe1v1k` 与 `KERNEL_SUFFIX := -fit-uImage.itb`
-     → 三个交付物分别是 `sbe1v1k-squashfs-sysupgrade.bin`、
+     → 构建树里产出 `sbe1v1k-squashfs-sysupgrade.bin`、
      `sbe1v1k-fit-uImage.itb`、`sbe1v1k-initramfs-fit-uImage.itb`；
+     CI 发布 Release 时改为 OpenWrt 标准命名
+     `openwrt-ipq95xx-generic-spectrum_sbe1v1k-{squashfs-sysupgrade.bin,
+     fit-uImage.itb,initramfs-fit-uImage.itb}`（与 24.10 一致）；
    - `DEVICE_DTS := ipq9574-rdp433`（Stage 1 复用上游 RDP433 设备树）；
    - 自带 `kmod-leds-pwm`、`kmod-hwmon-pwmfan`。
 

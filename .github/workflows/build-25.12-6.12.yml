@@ -205,13 +205,17 @@ jobs:
           set -eu
           OUT=sources/buildroot-25.12-6.12/bin/targets/qualcommbe/ipq95xx
           REL="$RUNNER_TEMP/release"
+          # 发布资产用 OpenWrt 标准命名（与 24.10 一致）；构建树里的文件名仍是
+          # DEVICE_IMG_PREFIX=sbe1v1k 的短名（patches/0001），这里统一改名。
+          PUB=openwrt-ipq95xx-generic-spectrum_sbe1v1k
           mkdir -p "$REL"
           for n in squashfs-sysupgrade.bin fit-uImage.itb initramfs-fit-uImage.itb; do
             src="$OUT/sbe1v1k-$n"
-            test -s "$src" || { echo "缺少或为空：$src" >&2; exit 1; }
-            cp "$src" "$REL/sbe1v1k-$n"
+            [ -s "$src" ] || src="$OUT/$PUB-$n"
+            test -s "$src" || { echo "缺少或为空：$OUT/sbe1v1k-$n（或 $PUB-$n）" >&2; exit 1; }
+            cp "$src" "$REL/$PUB-$n"
           done
-          ( cd "$REL" && sha256sum sbe1v1k-* )
+          ( cd "$REL" && sha256sum "$PUB"-* )
           ls -lh "$REL"
 
       - name: Upload build log
@@ -233,9 +237,9 @@ jobs:
         with:
           name: sbe1v1k-25.12-6.12-firmware-${{ github.run_number }}
           path: |
-            ${{ runner.temp }}/release/sbe1v1k-squashfs-sysupgrade.bin
-            ${{ runner.temp }}/release/sbe1v1k-fit-uImage.itb
-            ${{ runner.temp }}/release/sbe1v1k-initramfs-fit-uImage.itb
+            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin
+            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb
+            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb
           if-no-files-found: error
           retention-days: 30
 
@@ -271,13 +275,13 @@ jobs:
           - 未接入：NSS Wi-Fi offload、厂商 ath12k 私有参数
 
           资产（恰好 3 个）：
-          - \`sbe1v1k-squashfs-sysupgrade.bin\`
-          - \`sbe1v1k-fit-uImage.itb\`
-          - \`sbe1v1k-initramfs-fit-uImage.itb\`
+          - \`openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin\`
+          - \`openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb\`
+          - \`openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb\`
 
           SHA-256：
           \`\`\`
-          $(cd "$REL" && sha256sum sbe1v1k-*)
+          $(cd "$REL" && sha256sum openwrt-ipq95xx-generic-spectrum_sbe1v1k-*)
           \`\`\`
 
           本镜像**包含**厂商 Wi-Fi 固件（firmware-2.bin / board-2.bin /
@@ -316,14 +320,17 @@ jobs:
             fi
           } >> "$REL/notes.md"
 
+          # 显示名只用 v<run>-<attempt>，与 24.10 一致、便于人读；tag 仍保留
+          # sha 与系列后缀，保证唯一（tag 不可变，重跑靠 ATTEMPT 区分）。
+          NAME="SBE1V1K 25.12-6.12 v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "SBE1V1K 25.12-6.12 ${TAG}" \
+            --title "$NAME" \
             --notes-file "$REL/notes.md" \
-            "$REL/sbe1v1k-squashfs-sysupgrade.bin" \
-            "$REL/sbe1v1k-fit-uImage.itb" \
-            "$REL/sbe1v1k-initramfs-fit-uImage.itb"
+            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin" \
+            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb" \
+            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb"
 
           n=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
           echo "release $TAG assets=$n"
