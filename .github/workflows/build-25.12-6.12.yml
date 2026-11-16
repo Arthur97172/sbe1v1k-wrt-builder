@@ -329,14 +329,50 @@ jobs:
           # 显示名带完整 tag（v<run>-<attempt>-<sha>-25.12-6.12），与 24.10 一致；
           # 重跑靠 ATTEMPT 区分，sha 后缀便于在 Releases 列表里对号。
           NAME="SBE1V1K 25.12-6.12 ${TAG}"
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "$NAME" \
-            --notes-file "$REL/notes.md" \
-            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin" \
-            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb" \
-            "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb"
+          # 步骤日志对匿名不可读，失败原因折成 ::error:: 注解才看得到。
+          enc() {
+            awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+              if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 300) }'
+          }
+          # 2026-11-16 11:00 UTC 起出现 403 Resource not accessible by integration：
+          # 顶层/作业级都声明了 contents: write、runner 也显示 token 带写权限，但
+          # API 判成只读（同日 03:09 同一份声明还能建 Release）。构建要 1.5-3 小时，
+          # 不能因一次瞬时拒绝丢掉整轮产物：最多 5 次、间隔 60 秒重试；422
+          # （tag/release 已存在、校验失败）不重试。若某次失败后 release 其实已
+          # 存在（请求成功但响应丢失），直接进入下面的资产数校验。
+          create_attempt=1
+          while :; do
+            if out=$(gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$NAME" \
+              --notes-file "$REL/notes.md" \
+              "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin" \
+              "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb" \
+              "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb" 2>&1); then
+              break
+            fi
+            printf '%s\n' "$out"
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "release $TAG 已存在（上一次请求可能已成功），转入资产校验"
+              break
+            fi
+            case "$out" in
+              *422*|*already_exists*|*"Validation Failed"*)
+                echo "::error::gh release create ${TAG} 失败（不可重试）：$(printf '%s' "$out" | enc)"
+                gh api rate_limit --jq '.resources.core' || true
+                exit 1
+                ;;
+            esac
+            if [ "$create_attempt" -ge 5 ]; then
+              echo "::error::gh release create ${TAG} 连续 5 次失败：$(printf '%s' "$out" | enc)"
+              gh api rate_limit --jq '.resources.core' || true
+              exit 1
+            fi
+            echo "gh release create ${TAG} 第 ${create_attempt} 次失败，60 秒后重试"
+            create_attempt=$((create_attempt + 1))
+            sleep 60
+          done
 
           n=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
           echo "release $TAG assets=$n"
