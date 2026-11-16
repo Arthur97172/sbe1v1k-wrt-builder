@@ -1,0 +1,278 @@
+Subject: [PATCH] wifi-scripts: stop the iw-extension noise and the empty-variable compares
+
+A bind-mount A/B run on the router (v87-2 image, one "wifi down/up" cycle
+each) counted what is still in the log with 0026 applied:
+
+  out of range 39, missing ] 3, iw usage 3, Invalid argument 3,
+  json_select warnings 6 ("data" 3 + the "config" cascade, 3)
+
+The sources were traced with `set -x` down to the exact command, and are
+fixed here.  Every test that compared an unset variable numerically keeps
+its current "not configured, so false" result; only the diagnostics go.
+
+mac80211.sh:
+
+1. mac80211_get_band_name() parses `iw <phy> info` for
+   "Idx <n>:" / "Frequency Range:" lines.  That is QSDK iw output; the
+   feeds/base iw 6.9 shipped here never prints those lines, so freq1 and
+   freq2 stay empty and the 13 range tests below become
+   `[ "" -gt 2300 ]` -> "sh: out of range".  Default both ends to 0;
+   the function still ends in band_name=invalid, as before, minus the
+   noise.  (get_sta_freq_list() has the same parse but feeds awk, which
+   does not complain about empty values; leave it alone.)
+
+2. mac80211_setup_monitor() has `[ -n "$channel"]` (no space before the
+   closing bracket): "missing ]", and the elif never fired.
+
+3. mac80211_set_vif_txpower() drives two QSDK iw extensions.  ath12k
+   rejects every per-VAP txpower form with EINVAL here (`auto`, `fixed`
+   and `limit`, with the interface up), and `-l <link_id>` is not known
+   to stock iw at all.  iw prints its usage text on stdout, so the
+   `2>/dev/null` that 0026 put on set_intf_offload did not silence it.
+   Redirect both streams on the txpower calls and on set_intf_offload;
+   the calls stay in place for a driver/iw combination that can use
+   them.
+
+4. mac80211_set_fq_limit() starts with an unconditional
+   `json_select data`.  With no data section this prints
+   "Variable 'data' does not exist", and the following `json_select ..`
+   pops past the root, so the next `json_select config` warns as well.
+   Probe with the warning redirected instead.
+
+5. The same warning comes from the `json_select data && { ... }` in
+   drv_mac80211_setup(): json_select prints it before the && can stop
+   the block.  Redirect the probe.
+
+6. `[ "$ml_max_rec_links" -ge 0 ]`, `[ "$min_tx_power" -gt 0 ]`,
+   `[ "$wds" -gt 0 ] || [ "$wds_ie" -gt 0 ]`, `[ "$wds_ie" -gt 0 ]` and
+   the two 6 GHz FILS tests all run on options that are unset on a stock
+   config.  Default them to 0 inside the test.  For ml_max_rec_links the
+   variable is simply required to be set, because defaulting it to 0
+   would append "ml_max_rec_links=0" to hostapd.conf.
+
+7. The 5 GHz radar block reads
+   `json_get_vars background_radar:0 bgcac_en:0 dfs_bw_reduce_en:0
+   rcac_freq:0 interCACChan` -- interCACChan is the only one without a
+   ":0" default, so `[ "$interCACChan" -gt 0 ]` compared an empty value
+   on every 5 GHz BSS.
+
+hostapd.sh (same package):
+
+8. `[ "$multi_ap_vlanid" -gt 0 -a "$multi_ap_vlanid" -le 4094 ]`: unset
+   unless a VLAN is configured.  Require it to be set first.
+
+9. `[ "$mbo" -eq 1 ]` on three lines: empty when mbo is not configured.
+   Require it to be set first.
+
+10. dpp and eppk are only set for DPP/EPPKE configs, but three sites
+    compare them numerically: two in hostapd_append_wpa_key_mgmt() (DPP,
+    EPPKE), one right after the config_id append, and one in the
+    wpa_supplicant network_data builder.  Default both to 0 in the test.
+
+11. `[ -n "$vlan_possible"]`: same missing-bracket bug as the monitor
+    line; "missing ]" per BSS.
+
+Before/after on the traced cycle: out of range 39 -> 0, missing ] 3 -> 0,
+iw usage 3 -> 0, Invalid argument 3 -> 0, json_select warnings 6 -> 0.
+
+---
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh	2026-11-16 00:08:29.375913381 +0000
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh	2026-11-16 00:08:29.377037764 +0000
+@@ -808,7 +808,7 @@
+ 	[ "$auto_channel" = 0 ] && [ -z "$channel_list" ] && \
+ 		channel_list="$channel"
+ 
+-	[ "$min_tx_power" -gt 0 ] && append base_cfg "min_tx_power=$min_tx_power" "$N"
++	[ "${min_tx_power:-0}" -gt 0 ] && append base_cfg "min_tx_power=$min_tx_power" "$N"
+ 
+ 	if [ "$band" = "2g" ]; then
+ 		sedString="iw phy ${phy} info | awk  '/Band 1/{ f = 1; next } /Band /{ f = 0 } f'"
+@@ -991,7 +991,7 @@
+ 		[ "$bgcac_en" -eq 1 ] && append base_cfg "bgcac_en=1" "$N"
+ 		[ "$dfs_bw_reduce_en" -eq 1 ] && append base_cfg "dfs_bw_reduce_en=1" "$N"
+ 		[ "$rcac_freq" -gt 0 ] && append base_cfg "rcac_freq=$rcac_freq" "$N"
+-		[ "$interCACChan" -gt 0 ] && append base_cfg "interCACChan=$interCACChan" "$N"
++		[ "${interCACChan:-0}" -gt 0 ] && append base_cfg "interCACChan=$interCACChan" "$N"
+ 	}
+ 
+ 	case "$htmode" in
+@@ -1661,14 +1661,14 @@
+ 	fi
+ 	set_default start_disabled 0
+ 
+-	if [ "$wds" -gt 0 ] || [ "$wds_ie" -gt 0 ]; then
++	if [ "${wds:-0}" -gt 0 ] || [ "${wds_ie:-0}" -gt 0 ]; then
+ 		wds_support=$(mac80211_wds_support_check "$phy")
+ 		if [ "$wds_support" -ne 1 ]; then
+ 			echo WDS is supported only in native wifi mode for ath11k driver. Kindly update the config > /dev/ttyMSM0
+ 			return
+ 		fi
+ 
+-		if [ "$wds_ie" -gt 0 ]; then
++		if [ "${wds_ie:-0}" -gt 0 ]; then
+ 			append hostapd_cfg "wds_ie=1" "$N"
+ 		else
+ 			append hostapd_cfg "wds_sta=1" "$N"
+@@ -1690,9 +1690,9 @@
+ 
+ 	if [ "$band" = "6g" ]; then
+ 		fils_cfg=
+-		if [ "$unsol_bcast_presp" -gt 0 ] && [ "$unsol_bcast_presp" -le 20 ]; then
++		if [ "${unsol_bcast_presp:-0}" -gt 0 ] && [ "$unsol_bcast_presp" -le 20 ]; then
+ 			append fils_cfg "unsol_bcast_probe_resp_interval=$unsol_bcast_presp" "$N"
+-		elif [ "$fils_discovery" -gt 0 ] && [ "$fils_discovery" -le 20 ]; then
++		elif [ "${fils_discovery:-0}" -gt 0 ] && [ "$fils_discovery" -le 20 ]; then
+ 			append fils_cfg "fils_discovery_max_interval=$fils_discovery" "$N"
+ 		else
+ 			append fils_cfg "fils_discovery_max_interval=20" "$N"
+@@ -1831,7 +1831,7 @@
+ 		fi
+ 
+ 		[ -n "$enable_aal" ] && append hostapd_cfg "enable_aal=$enable_aal" "$N"
+-		if [ "$ml_max_rec_links" -ge 0 ] && [ "$ml_max_rec_links" -le 3 ]; then
++		if [ -n "$ml_max_rec_links" ] && [ "$ml_max_rec_links" -ge 0 ] && [ "$ml_max_rec_links" -le 3 ]; then
+ 			append hostapd_cfg "ml_max_rec_links=$ml_max_rec_links" "$N"
+ 		fi
+ 	esac
+@@ -2021,8 +2021,10 @@
+ 
+ 	freq_range=$(iw ${phy} info | grep -A 2 "Idx $radio_id:" | grep "Frequency Range:" | awk '{print $3, $6}')
+ 	set -- $freq_range
+-	freq1=$1
+-	freq2=$2
++	# stock iw has no "Idx N:" / "Frequency Range:" output, so both ends
++	# are usually empty; default them to 0 to keep the tests numeric.
++	freq1=${1:-0}
++	freq2=${2:-0}
+ 
+ 	if [ "$freq1" -gt 2300 ] && [ "$freq2" -lt 2800 ]; then
+ 		band_name=2g
+@@ -2445,7 +2447,7 @@
+ 		freq_list=$(get_sta_freq_list "$phy" "$radio" "$band_name")
+ 		freq="${freq_list%% *}"
+ 		channel="$(mac80211_freq_to_channel $freq)"
+-	elif [ -z "$freq" ] && [ -n "$channel"];then
++	elif [ -z "$freq" ] && [ -n "$channel" ];then
+ 		freq="$(get_freq "$phy" "$channel" "$band")"
+ 	fi
+ 
+@@ -2715,32 +2717,37 @@
+ 		;;
+ 	esac
+ 
++	# ath12k rejects per-VAP txpower with EINVAL here and the -l (link) form
++	# is a QSDK iw extension, so neither call can succeed on this image; keep
++	# them for a build that can, but keep their errors out of the log.
+ 	if [ -n "$vif_txpower" ]; then
+ 		if [ -n "$link_id" ]; then
+-			iw dev "$ifname" set txpower -l "$link_id" fixed "${vif_txpower%%.*}00"
++			iw dev "$ifname" set txpower -l "$link_id" fixed "${vif_txpower%%.*}00" >/dev/null 2>&1
+ 		else
+-			iw dev "$ifname" set txpower fixed "${vif_txpower%%.*}00"
++			iw dev "$ifname" set txpower fixed "${vif_txpower%%.*}00" >/dev/null 2>&1
+ 		fi
+ 	else
+ 		if [ -n "$link_id" ]; then
+-			iw dev "$ifname" set txpower -l "$link_id" auto
++			iw dev "$ifname" set txpower -l "$link_id" auto >/dev/null 2>&1
+ 		else
+-			iw dev "$ifname" set txpower auto
++			iw dev "$ifname" set txpower auto >/dev/null 2>&1
+ 		fi
+ 	fi
+ 
+ 	# set_intf_offload is a QSDK extension to iw; the feeds/base iw
+-	# shipped here has no such subcommand and answers EINVAL plus the
+-	# usage text.  Only issue it when a PPE VP type was configured.
++	# shipped here has no such subcommand and prints its usage text on
++	# stdout, so stderr alone is not enough.  Only issue it when a PPE VP
++	# type was configured, and swallow both streams.
+ 	if [ -n "$ppe_vp" ]; then
+-		iw dev "$ifname" set_intf_offload type "$ppe_vp" 2>/dev/null
++		iw dev "$ifname" set_intf_offload type "$ppe_vp" >/dev/null 2>&1
+ 	fi
+ }
+ 
+ mac80211_set_fq_limit() {
+-        json_select data
+-        json_get_vars ifname
+-        json_select ..
++        if json_select data >/dev/null 2>&1; then
++                json_get_vars ifname
++                json_select ..
++        fi
+ 
+         json_select config
+         json_get_vars fq_limit
+@@ -3271,7 +3278,7 @@
+ 	[ -f /tmp/mlo_support.txt ] && mlo_add_flag=$(cat /tmp/mlo_support.txt)
+ 	[ "$mlo_add_flag" = 1 ] || mlo_add_flag=0
+ 	if [ "$mlo_add_flag" -eq 0 ]; then
+-		json_select data && {
++		json_select data >/dev/null 2>&1 && {
+ 			json_get_var prev_rxantenna rxantenna
+ 			json_get_var prev_txantenna txantenna
+ 			json_select ..
+--- a/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh	2026-11-16 00:08:29.378151067 +0000
++++ b/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh	2026-11-16 00:08:29.379223050 +0000
+@@ -885,7 +885,7 @@
+ 	append bss_conf "uapsd_advertisement_enabled=$uapsd" "$N"
+ 	append bss_conf "utf8_ssid=$utf8_ssid" "$N"
+ 	append bss_conf "multi_ap=$multi_ap" "$N"
+-	[ "$multi_ap_vlanid" -gt 0 -a "$multi_ap_vlanid" -le 4094 ] && append bss_conf "multi_ap_vlanid=$multi_ap_vlanid" "$N"
++	[ -n "$multi_ap_vlanid" ] && [ "$multi_ap_vlanid" -gt 0 -a "$multi_ap_vlanid" -le 4094 ] && append bss_conf "multi_ap_vlanid=$multi_ap_vlanid" "$N"
+ 	[ -n "$vendor_elements" ] && append bss_conf "vendor_elements=$vendor_elements" "$N"
+ 	[ "$band" = "6g" ] && [ "$he_6ghz_min_rate" -gt 0 ] && append bss_conf "he_6ghz_min_rate=$he_6ghz_min_rate" "$N"
+         [ "$multi_ap" -gt 0 ] && [ -n "$multi_ap_profile" ] && [ "$multi_ap_profile" -ge 1 ] && [ "$multi_ap_profile" -le 3 ] && append bss_conf "multi_ap_profile=$multi_ap_profile" "$N"
+@@ -1274,9 +1274,9 @@
+ 	fi
+ 	[ "$mbo" -eq "1" ] && bss_transition=1
+ 	[ "$bss_transition" -eq "1" ] && append bss_conf "bss_transition=1" "$N"
+-	[ "$mbo" -eq 1 ] && append bss_conf "mbo=1" "$N"
+-	[ "$mbo" -eq 1 ] && [ -n "$mbo_cell_data_conn_pref" ] && append bss_conf "mbo_cell_data_conn_pref=$mbo_cell_data_conn_pref" "$N"
+-	[ "$mbo" -eq 1 ] && set_default ieee80211w 1
++	[ -n "$mbo" ] && [ "$mbo" -eq 1 ] && append bss_conf "mbo=1" "$N"
++	[ -n "$mbo" ] && [ "$mbo" -eq 1 ] && [ -n "$mbo_cell_data_conn_pref" ] && append bss_conf "mbo_cell_data_conn_pref=$mbo_cell_data_conn_pref" "$N"
++	[ -n "$mbo" ] && [ "$mbo" -eq 1 ] && set_default ieee80211w 1
+ 
+ 	json_get_vars ieee80211k rrm_neighbor_report rrm_beacon_report rrm_channel_load rrm_noise_histogram rnr rnr_ie_allowed smd_neighbor_update smd_neighbor_expiry_time smd_neighbor_pull_interval
+ 	set_default ieee80211k 0
+@@ -1337,9 +1337,9 @@
+ 		[ "$pasn" -eq "1" ] && append bss_conf "pasn_noauth=$pasn_noauth" "$N"
+ 
+ 		hostapd_append_wpa_key_mgmt
+-		[ "$dpp" -eq "1" ] && append wpa_key_mgmt "DPP"
++		[ "${dpp:-0}" -eq 1 ] && append wpa_key_mgmt "DPP"
+ 		[ "$pasn" -eq "1" ] && append wpa_key_mgmt "PASN"
+-		[ "$eppk" -eq "1" ] && append wpa_key_mgmt "EPPKE"
++		[ "${eppk:-0}" -eq 1 ] && append wpa_key_mgmt "EPPKE"
+ 		[ -n "$wpa_key_mgmt" ] && append bss_conf "wpa_key_mgmt=$wpa_key_mgmt" "$N"
+ 		if [ "$group_cipher" != "GCMP-256" ]; then
+ 			group_cipher="CCMP"
+@@ -1475,7 +1475,7 @@
+ 		) > "$_macfile"
+ 	}
+ 
+-	([ -n "$vlan_possible"] && [ -n "$dynamic_vlan" ]) && {
++	([ -n "$vlan_possible" ] && [ -n "$dynamic_vlan" ]) && {
+ 		json_get_vars vlan_naming vlan_tagged_interface vlan_bridge vlan_file vlan_no_bridge
+ 		set_default vlan_naming 1
+ 		[ -z "$vlan_file" ] && set_default vlan_file /var/run/hostapd-"$ifname".vlan
+@@ -1737,7 +1737,7 @@
+ 	bss_md5sum="$(echo "$bss_conf" | md5sum | cut -d" " -f1)"
+ 	append bss_conf "config_id=$bss_md5sum" "$N"
+ 
+-	if [ "$dpp" -eq "1" ]; then
++	if [ "${dpp:-0}" -eq 1 ]; then
+ 		json_get_vars \
+ 			dpp_csign dpp_connector dpp_netaccesskey dpp_ppkey\
+ 			dpp_connector_sign dpp_configurator_connectivity \
+@@ -2373,7 +2373,7 @@
+ 		append network_data "mcast_rate=$mc_rate" "$N$T"
+ 	}
+ 
+-	if [ "${dpp}" -eq 1 ]; then
++	if [ "${dpp:-0}" -eq 1 ]; then
+ 		json_get_vars \
+ 			dpp_csign dpp_connector dpp_netaccesskey dpp_ppkey\
+ 			dpp_connector_sign

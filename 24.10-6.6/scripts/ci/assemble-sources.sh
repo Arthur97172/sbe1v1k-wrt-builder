@@ -551,6 +551,43 @@ grep -qxF '	echo 1 > /tmp/mlo_support.txt' "$_pp26" \
 	|| die 4 "0026 未生效：pre_post_wifi_operations.sh 缺同步写 mlo_support 的一行"
 logmsg "  QSDK_ONLY_WIFI_HELPERS_GUARDED wifi-scripts（wlanconfig/mlo/fq_limit/offload/rfs）"
 
+# 0027 清掉 wifi-scripts 每一轮 wifi down/up 都会打出的会话噪声（v87-2 真机
+# 一轮 39 条 out of range、3 条 missing ]、3 次 iw usage、3 次 EINVAL、6 条
+# json_select 告警，逐条 trace 定位）。行为不变，只改诊断输出；补丁应用成功
+# 不等于内容正确，按标记逐条断言。
+_ws27="$SRC/buildroot/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/wireless/mac80211.sh"
+_hs27="$SRC/buildroot/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd/hostapd.sh"
+grep -qF 'freq1=${1:-0}' "$_ws27" && grep -qF 'freq2=${2:-0}' "$_ws27" \
+	|| die 4 "0027 未生效：mac80211_get_band_name 两端没有默认 0"
+grep -qF 'elif [ -z "$freq" ] && [ -n "$channel" ];then' "$_ws27" \
+	|| die 4 "0027 未生效：mac80211_setup_monitor 的 [ -n \"\$channel\"] 缺空格未修"
+[ "$(grep -cF '>/dev/null 2>&1' "$_ws27")" -ge 5 ] \
+	|| die 4 "0027 未生效：txpower/set_intf_offload 没有全部双向重定向（iw usage 打在 stdout）"
+grep -qF 'if json_select data >/dev/null 2>&1; then' "$_ws27" \
+	|| die 4 "0027 未生效：mac80211_set_fq_limit 的 json_select data 探测未重定向"
+grep -qF 'json_select data >/dev/null 2>&1 && {' "$_ws27" \
+	|| die 4 "0027 未生效：drv_mac80211_setup 的 json_select data 探测未重定向"
+for _v27 in min_tx_power wds wds_ie unsol_bcast_presp fils_discovery interCACChan; do
+	grep -qF "\${${_v27}:-0}" "$_ws27" \
+		|| die 4 "0027 未生效：$_v27 的数值比较没有补 :0 默认值"
+done
+grep -qF '[ -n "$ml_max_rec_links" ] && [ "$ml_max_rec_links" -ge 0 ]' "$_ws27" \
+	|| die 4 "0027 未生效：ml_max_rec_links 比较前没有先判非空"
+grep -qF '[ -n "$multi_ap_vlanid" ] && [ "$multi_ap_vlanid" -gt 0' "$_hs27" \
+	|| die 4 "0027 未生效：multi_ap_vlanid 比较前没有先判非空"
+[ "$(grep -cF '[ -n "$mbo" ] && [ "$mbo" -eq 1 ]' "$_hs27")" = 3 ] \
+	|| die 4 "0027 未生效：mbo 的三处数值比较没有全部先判非空"
+[ "$(grep -cF '[ "${dpp:-0}" -eq 1 ]' "$_hs27")" = 3 ] \
+	|| die 4 "0027 未生效：dpp 的三处数值比较没有全部补默认值"
+grep -qF '[ "${eppk:-0}" -eq 1 ]' "$_hs27" \
+	|| die 4 "0027 未生效：eppk 的数值比较没有补默认值"
+grep -qF '([ -n "$vlan_possible" ] && [ -n "$dynamic_vlan" ])' "$_hs27" \
+	|| die 4 "0027 未生效：hostapd.sh 的 [ -n \"\$vlan_possible\"] 缺空格未修"
+if grep -qF '[ "$dpp" -eq "1" ]' "$_hs27"; then
+	die 4 "0027 未生效：hostapd.sh 仍有裸的 [ \"\$dpp\" -eq \"1\" ]"
+fi
+logmsg "  WIFI_SCRIPTS_LOG_QUIET_OK wifi-scripts（band_name/txpower/offload/json_select/空变量比较）"
+
 # =============================================================== 11b. luci
 step "LuCI 补丁（build/luci-patches/SERIES）"
 apply_series "$BUILD/luci-patches/SERIES"

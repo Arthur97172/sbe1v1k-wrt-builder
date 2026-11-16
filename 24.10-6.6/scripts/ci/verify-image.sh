@@ -448,6 +448,16 @@ if grep -q 'command -v wlanconfig' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
 else
 	bad "wifi-scripts 缺 0026 守卫：日志会刷 wlanconfig/out of range/usage，HMMC 拒绝表不生效"
 fi
+# build-fixes/0027 清掉每轮 wifi down/up 的会话噪声（out of range/missing ]/
+# iw usage/EINVAL/json_select 告警）。镜像里复查两处最具区分度的标记。
+if grep -qF 'freq1=${1:-0}' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
+   grep -qF 'json_select data >/dev/null 2>&1 && {' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
+   grep -qF '[ "${dpp:-0}" -eq 1 ]' "$ROOTFS/lib/netifd/hostapd.sh" &&
+   grep -qF '([ -n "$vlan_possible" ] && [ -n "$dynamic_vlan" ])' "$ROOTFS/lib/netifd/hostapd.sh"; then
+	ok "wifi-scripts 已带日志降噪修复（0027）"
+else
+	bad "wifi-scripts 缺 0027 降噪修复：每轮 wifi down/up 会刷 out of range/missing ]/iw usage/json_select 告警"
+fi
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
 	[ -e "$ROOTFS/$f" ] && bad "不应存在 /$f" || ok "缺席 /$f"
