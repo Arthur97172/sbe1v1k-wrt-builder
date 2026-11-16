@@ -10,6 +10,9 @@
 > 修好后的 Build（run `40185702727`，`source_tag=auto` 自动选中 `sources-v3`）已 PASS：
 > 21 个构建步骤 + release job 全绿，`verify-image.sh` 静态校验通过，Release `v16-1-5dda9f3b`
 > 恰好 3 个资产。**镜像产物在真机上的启动、升级与以太网行为仍为 `NOT TESTED`。**
+  （2026-11-16 更新：v94 已有完整的真机刷写与验证记录，见
+  [V94_FIELD_VERIFICATION-2026-11-16.md](V94_FIELD_VERIFICATION-2026-11-16.md)；
+  上文描述的是 2026-10-25 当时 v16 的状态。）
 
 ## 1. 为什么是三个 workflow
 
@@ -122,6 +125,12 @@ SOURCE_ASSEMBLY.md；任一步失败即非零退出，不会产出半成品包�
 
 - `build` 任务 `contents: read`：跑 `make world` 的进程不该有写权限；
 - `release` 任务单独 `contents: write`，只做 `gh release create` 与资产数断言（恰好 3 个）；
+- `gh release create` 外包 5 次 × 60 秒退避重试（2026-11-16，`7db996d`）：当日 11:00 UTC
+  起 API 把已声明 `contents: write` 的 token 偶发判成只读
+  （`HTTP 403: Resource not accessible by integration`），一次拒绝不该丢掉
+  1.5–3 小时的构建产物。422（tag/release 已存在）不重试；某次失败后先
+  `gh release view`，release 已存在即视为“请求成功、响应丢失”，转资产数断言。
+  两个 build workflow 都套了同一段循环；
 - 并发组 `build-firmware-${{ github.ref }}`，`cancel-in-progress: false`：不打断已跑了几小时的编译。
 
 产物命名：

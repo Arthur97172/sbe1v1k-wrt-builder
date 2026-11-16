@@ -31,7 +31,8 @@
 
 ## 说明
 
-- 升级到 v78 所用的具体流程用户未说明；README「升级（sysupgrade）与 A/B 槽位」
-  一节里的 `真机升级状态：NOT TESTED` 不因本记录改变，若要关闭该状态需要
-  明确一次 sysupgrade 的观察记录。
+- 升级到 v78 所用的具体流程用户未说明。README「升级（sysupgrade）与 A/B 槽位」
+  一节的 `真机升级状态` 当时因此保持 `NOT TESTED`；关闭该状态所需的一次完整
+  sysupgrade 观察已于 2026-11-16 由 v94 补齐，见
+  [V94_FIELD_VERIFICATION-2026-11-16.md](V94_FIELD_VERIFICATION-2026-11-16.md)。
 - 本记录只覆盖 v78 这版镜像在 B 机上的行为，A 机（生产机）状态另计。
