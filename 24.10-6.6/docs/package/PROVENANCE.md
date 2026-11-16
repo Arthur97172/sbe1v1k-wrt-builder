@@ -567,7 +567,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
 | `repo passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `efc4093be1477b66b95a33ca00e7a9d819ebc8fb` | thirdparty/openwrt-passwall-packages |
+| `repo passwall-packages` | `8147e8bf8abc62b5357f76defa37f380e35f6e0a` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
