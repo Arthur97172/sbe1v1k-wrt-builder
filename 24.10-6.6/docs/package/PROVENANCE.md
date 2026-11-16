@@ -459,7 +459,7 @@ mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本�
 | 目录 | 远端 | **固定 commit** | 提交时间 | 提交标题 | 许可证 |
 |---|---|---|---|---|---|
 | `openwrt-passwall` | `Openwrt-Passwall/openwrt-passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | 2026-11-10T16:44:36Z | `luci: bump 26.11.11`（tag `26.11.11-1`） | GPL-3.0（`LICENSE`；Makefile 头声明 GPLv3） |
-| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `b094b79c32ac4e4de3113a5c44971c6182eee535` | 2026-11-12T09:39:24+08:00 | `smartdns: fixup`（仓库无版本 tag，取 `main` 分支头） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
+| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `efc4093be1477b66b95a33ca00e7a9d819ebc8fb` | 2026-11-15T15:17:26+08:00 | `hysteria: update to 2.14.0 (#777)`（仓库无版本 tag，取 `main` 分支头） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
 | `OpenWrt-nikki` | `nikkinikki-org/OpenWrt-nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | 2026-10-14T17:11:28+08:00 | `fix: do not restart cron service after crontab changed` | GPL-3.0（`LICENSE`） |
 | `OpenClash` | `vernesong/OpenClash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | 2026-10-11T13:10:57+08:00 | `0.48.002` | **MIT**（`LICENSE`，Copyright 2019-2026 vernesong） |
 | `luci-app-poweroff` | `Arthur97172/luci-app-poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | 2026-10-25T13:34:55Z | `docs: reorder README sections and add screenshot` | GPL-3.0-only（`LICENSE` 与 `PKG_LICENSE` 一致） |
@@ -470,6 +470,9 @@ mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本�
 `openwrt-passwall-packages` 上述 commit **复制**出的 7 个包目录。复制结果
 用 `git ls-tree -r <sha> -- <dirs>` 与 `find` 逐文件比对，**808/808 文件一致**
 （2026-11-13 在 pin `b094b79c` 上重新核过；此前记录的 809 是计数多算了一条）。
+2026-11-16（v92）pin 升到 `efc4093` 后复核：7 个目录仍是 808 个文件，两个
+pin 之间上游只改了 `hysteria/`，不在剪裁集合内，因此 `passwall-selected`
+内容没有任何变化。
 之所以不整棵 feed 引入：上游同一仓库还包含 `xray-core`、`sing-box` 等与
 qca feed 同名的包，以及本项目明确不打包的 `shadowsocks-rust`、`haproxy`、
 `smartdns`；只复制所需目录可避免包名冲突与误装。各包锚点：
@@ -564,7 +567,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
 | `repo passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `b094b79c32ac4e4de3113a5c44971c6182eee535` | thirdparty/openwrt-passwall-packages |
+| `repo passwall-packages` | `efc4093be1477b66b95a33ca00e7a9d819ebc8fb` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
