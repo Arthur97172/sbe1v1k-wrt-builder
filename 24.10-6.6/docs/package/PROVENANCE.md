@@ -348,7 +348,7 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 | `luci-app-tasks` | `luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 2026-11-13T02:53:33Z | `Bump version to 1.1.2-r1`（tag `1.1.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 344 KB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 2026-10-27T12:09:18Z | `feat: show the current LAN settings in the PPPoE and DH…` | GPL-3.0-only（`LICENSE`） | 1.6 MB |
 | `luci-app-corestatus` | `luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | 2026-11-14T03:04:06Z | `Merge branch 'release-1.0.4'`（tag `v1.0.4`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 388 KB |
-| `luci-app-oxidns` | `luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | 2026-11-07T14:22:31Z | `fix(config): stop wiring steps into mapping sequence args`（tag `v1.4.9`，`PKG_VERSION 1.4.9`；`v1.4.9` 与 `v1.4.8` 指向同一提交） | GPL-3.0-or-later（`LICENSE`） | 1.9 MB |
+| `luci-app-oxidns` | `luci-app-oxidns` | `3d9179f6626ff70d518c27feb3b9d648d04e75da` | 2026-11-16T02:17:52Z | `fix(init): stay quiet when the core is not installed yet`（tag `v1.4.10`，`PKG_VERSION 1.4.10`；核心未安装时 init 脚本静默退出） | GPL-3.0-or-later（`LICENSE`） | 1.9 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `4b3941ae51d9264163bf0929ec69922515cf9556` | 2026-11-14T05:23:13Z | `Adapt the encryption modes to the installed wpad build`（tag `2.8.1-r1`） | GPL-3.0-only（`LICENSE`） | 820 KB |
 | `luci-app-turboacc` | `luci-app-turboacc` | `a5a4dd76c84df8c5f2bd4b3fc01852e6cc23d976` | 2026-11-14T09:19:18Z | `Drop unused dependencies and status plumbing`（tag `1.3.0-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 139 KB |
 
@@ -553,7 +553,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-meshassistant` | `4b3941ae51d9264163bf0929ec69922515cf9556` | 2.8.1-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 1.0.1-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
-| `apps/luci-app-oxidns` | `5ac311d884eeef3043dd4236df9f4e799ef3f2d2` | v1.4.9（tag；PKG_VERSION 1.4.9；与 v1.4.8 同一提交） |
+| `apps/luci-app-oxidns` | `3d9179f6626ff70d518c27feb3b9d648d04e75da` | v1.4.10（tag；PKG_VERSION 1.4.10；init 在核心未安装时静默退出） |
 | `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 1.1.2-r1（tag） |
