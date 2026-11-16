@@ -33,7 +33,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 ├── docs/
 │   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
 │   ├── NSS_AUTOLOAD_OFF.md   NSS 禁自动加载 / 分层装载的机制与定位流程
-│   └── V21_BOOT_AND_FAN_FIX.md  v21/v24 起不来 + 风扇满速的静态定案（0024–0027）
+│   ├── V21_BOOT_AND_FAN_FIX.md  v21/v24 起不来 + 风扇满速的静态定案（0024–0027）
+│   └── V41_BOOT_LOOP_2026-11-16.md  run 41（b0a7389）真机启动循环：观察记录、判读与回滚
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/nss.conf              NSS 档位（tier/fallback/budget，默认 wired）
@@ -206,8 +207,10 @@ nss-load tier full           # 改档位（下次启动生效），fallback 保�
 ```
 
 `nss-load` 不做 `rmmod qca-nss-ppe/-dp/-ssdk`（QSDK 的 `ppe_drv_remove()`
-卸载路径出过 oops），要回退直接 reboot。真机行为 `NOT TESTED`；本版只做到
-构建与镜像断言这一层。详见 `docs/NSS_AUTOLOAD_OFF.md`。
+卸载路径出过 oops），要回退直接 reboot。真机行为：run 41 镜像（本机制的首次
+真机验证，2026-11-16）启动循环 FAIL，崩溃发生在分层装载所在的用户态之前，
+见 `docs/V41_BOOT_LOOP_2026-11-16.md`；构建与镜像断言这一层不受影响。详见
+`docs/NSS_AUTOLOAD_OFF.md`。
 
 ### 板级 DTS
 
@@ -342,7 +345,9 @@ qca-ssdk）→ qca-nss-dp / qca-nss-sfe / ecm 全部装不进来，开机后交�
 SBE1V1K 的板级 dts 不引用 `qca8084_serdes`，关掉不影响 serdes 节点。
 `prepare-tree.sh` 在编译前断言这一行，补丁丢失时直接失败。
 
-**真机状态：源码修复已合入，v38 镜像待 CI 重建后刷机验证（`NOT TESTED`）。**
+**真机状态：v38 之后的 run 41 镜像（`b0a7389`）已于 2026-11-16 刷机验证，
+设备仍以约 3–4 分钟周期重启、局域网只有 PHY 载波且零帧，因此 0030 修复不改变
+这类启动失败（`FAIL`），记录见 `docs/V41_BOOT_LOOP_2026-11-16.md`。**
 日志与轨迹取证文件在开发机的 `~/sbe1v1k-ramtest/forensics/`（`diag-v9.log`、
 `events.log`），不入库。
 
