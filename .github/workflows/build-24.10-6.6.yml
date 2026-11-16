@@ -386,7 +386,7 @@ jobs:
           if ! out=$(gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "SBE1V1K ${TAG}" \
+            --title "SBE1V1K 24.10-6.6 ${TAG}" \
             --notes-file "$REL/notes.md" \
             "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin" \
             "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb" \

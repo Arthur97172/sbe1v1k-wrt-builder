@@ -926,7 +926,39 @@
  * and runs without it (v55 hardware test, 2026-11-13).  A rate here was in
  * every failing DTB.  Re-validate the watchdog in its own cycle rather than
  * coupling it to the boot-blocker workaround below.
+ *
+ * Since v92 the watchdog node itself is also disabled below, so qcom_wdt no
+ * longer probes at all and the boot log stops carrying its 28 deferred-probe
+ * "failed to get input clock" lines (v91 hardware log, 2026-11-16).
  */
+
+/*
+ * The APSS watchdog cannot probe on this board: its only clock (sleep_clk
+ * above) has no rate, so the provider never registers and qcom_wdt's
+ * devm_clk_get_enabled() returns -EPROBE_DEFER.  Every deferred-probe retry
+ * during initcall logs "qcom_wdt b017000.watchdog: failed to get input
+ * clock" (28 lines on v91, 2026-11-16).  Nothing in this image ever opens
+ * /dev/watchdog or calls procd's `ubus call system watchdog`, so the
+ * watchdog was never armed anyway.  Disable the node so the driver does not
+ * bind.  Re-enabling it (clock rate + a userspace arming path) is a separate
+ * project with its own validation.
+ */
+&watchdog {
+	status = "disabled";
+};
+
+/*
+ * npu-cpr (a4000.npu-cpr) is the CPR regulator for the NPU block.  The
+ * shared ipq9574-cpr-regulator.dtsi enables it, but only the reference
+ * boards give it a vdd supply (PMIC SMPS2) and consume npu_vreg from &nss0.
+ * This board never enables the NPU path, so cpr3-npu-regulator probes,
+ * finds no vdd supply and bails with -ENODEV, logging three kern.err lines
+ * on every boot (v91 hardware log, 2026-11-16).  No DTS consumer and no
+ * driver requests npu_corner here, so disabling the node is safe.
+ */
+&npu_cpr {
+	status = "disabled";
+};
 
 /*
  * Disable cpufreq for this board.  Once xo has a rate the CPU clock
