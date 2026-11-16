@@ -588,6 +588,28 @@ if grep -qF '[ "$dpp" -eq "1" ]' "$_hs27"; then
 fi
 logmsg "  WIFI_SCRIPTS_LOG_QUIET_OK wifi-scripts（band_name/txpower/offload/json_select/空变量比较）"
 
+# 0028–0030 清掉 sbe1v1k 上注定失败的启动调用（v89-2 真机日志）：qca-nss-ecm
+# 的 rmmod/insmod（"unloading the module failed"、"module is already loaded" ×2）
+# 与 emesh 分类器两次写失败；firewall.d 钩子在无 iptables 的 fw4 镜像上报 3 条
+# not found；QCA 参考板的 trymodedone 在没有 /proc/boot_info 的板子上打 8 条
+# cat 失败与 4 条 out of range。三处都只去掉不可能成功的调用，不改行为。
+_ecm28="$SRC/buildroot/qca/feeds/nss/clients/qca-nss-ecm/files/qca-nss-ecm.init"
+_fw29="$SRC/buildroot/qca/feeds/nss/clients/qca-nss-ecm/files/qca-nss-ecm.firewall"
+_try30="$SRC/buildroot/openwrt-patches/package/base-files/files/etc/init.d/trymodedone"
+grep -qF 'rmmod qca-nss-sfe 2>/dev/null' "$_ecm28" \
+	|| die 4 "0028 未生效：load_sfe 的 rmmod 没有静默"
+grep -qF 'if [ ! -d /sys/module/qca_nss_sfe ]; then' "$_ecm28" \
+	|| die 4 "0028 未生效：qca-nss-sfe 未按卸载结果决定是否 insmod"
+grep -qF '[ ! -d /sys/module/qca_wifi_nss_plugins ] &&' "$_ecm28" \
+	|| die 4 "0028 未生效：qca-wifi-nss-plugins 的 &&/|| 链未拆成显式 conjunction"
+grep -qF 'if [ -d /proc/sys/net/ecm/ecm_classifier_emesh ]; then' "$_ecm28" \
+	|| die 4 "0028 未生效：emesh 分类器写入前没有存在性判断"
+grep -qF 'if command -v iptables >/dev/null 2>&1; then' "$_fw29" \
+	|| die 4 "0029 未生效：firewall.d 的 physdev 规则未按 iptables 是否存在门控"
+grep -qF '[ ! -d /proc/boot_info ] && [ ! -f /sys/class/registers/bootcount ]' "$_try30" \
+	|| die 4 "0030 未生效：trymodedone 未在缺少 boot_info/bootcount 时提前返回"
+logmsg "  NSS_ECM_AND_TRYMODE_BOOT_NOISE_OK qca-nss-ecm/trymodedone"
+
 # =============================================================== 11b. luci
 step "LuCI 补丁（build/luci-patches/SERIES）"
 apply_series "$BUILD/luci-patches/SERIES"

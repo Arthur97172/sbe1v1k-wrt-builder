@@ -1,0 +1,111 @@
+Subject: [PATCH] qca-nss-ecm: stop the module-reload and emesh-classifier boot noise
+
+The v89-2 boot log of the SBE1V1K carries five error lines that all come
+from /etc/init.d/qca-nss-ecm (qca/feeds/nss/clients/qca-nss-ecm):
+
+  daemon.err rmmod: unloading the module failed
+  daemon.err insmod: module is already loaded - qca-nss-sfe
+  daemon.err insmod: module is already loaded - qca-wifi-nss-plugins
+  procd: /etc/rc.d/S26qca-nss-ecm: ... can't create
+      /proc/sys/net/ecm/ecm_classifier_emesh/enabled: nonexistent directory
+  procd: /etc/rc.d/S26qca-nss-ecm: ... can't create
+      /proc/sys/net/ecm/ecm_classifier_emesh/sawf_enabled: nonexistent directory
+
+None of them changes what the script accomplishes; each is a call that
+cannot succeed on this image.
+
+1. load_sfe() reloads qca-nss-sfe to apply sixth_tuple_enable, but
+   /etc/modules.d/09-qca-nss-sfe already has kmodloader load the module
+   before S26 runs.  Something still holds a reference (on the v89-2
+   boot: pppoe/ppp_generic and ecm's dependency list), so rmmod fails and
+   the unconditional insmod behind it can only answer "module is already
+   loaded".  Try the unload quietly and issue the insmod only when the
+   module actually came out.  When the unload fails the module keeps the
+   parameters it was loaded with -- exactly the outcome the current code
+   gets, minus the two error lines.
+
+2. load_ecm()'s plugin guard is one &&/|| list:
+
+     [ -d /sys/module/qca_wifi_nss_plugins ] || [ -f /tmp/.wifi-config-done ] ||
+     [ -f /lib/modules/$kernel_version/ath.ko ] && insmod qca-wifi-nss-plugins
+
+   && and || have equal precedence and associate left, so this reads
+   ((A || B) || C) && insmod.  ath.ko exists in this image, which makes
+   the whole chain true on every boot, so the plugins are insmodded even
+   when /sys/module/qca_wifi_nss_plugins is present.  Write the guard out
+   as the intended conjunction: load only when the plugins are not loaded
+   yet and wifi has not taken over the stack (/tmp/.wifi-config-done).
+
+3. start() writes the SAWF and EMESH classifier knobs unconditionally.
+   This build does not include the mesh classifier, so the
+   ecm_classifier_emesh directory never exists and both writes fail.
+   Test the directory first; nothing changes on a build that has it.
+
+---
+
+--- a/qca/feeds/nss/clients/qca-nss-ecm/files/qca-nss-ecm.init	2026-11-16 02:22:25.081494366 +0000
++++ b/qca/feeds/nss/clients/qca-nss-ecm/files/qca-nss-ecm.init	2026-11-16 02:22:49.185623493 +0000
+@@ -95,11 +95,18 @@
+ 	local kernel_version=$(uname -r)
+ 
+ 	[ -e "/lib/modules/$kernel_version/qca-nss-sfe.ko" ] && {
+-		[ -d /sys/module/qca_nss_sfe ] && rmmod qca-nss-sfe
+-		if [ $(get_sixth_tuple_mode) == 0 ]; then
+-			insmod qca-nss-sfe
+-		else
+-			insmod qca-nss-sfe sixth_tuple_enable=1
++		# kmodloader already loads qca-nss-sfe from /etc/modules.d before this
++		# script runs.  The module is held by its users and refuses to unload;
++		# the insmod that used to follow unconditionally then only printed
++		# "module is already loaded" on every boot.  Reload it only when the
++		# unload actually succeeded.
++		[ -d /sys/module/qca_nss_sfe ] && rmmod qca-nss-sfe 2>/dev/null
++		if [ ! -d /sys/module/qca_nss_sfe ]; then
++			if [ $(get_sixth_tuple_mode) == 0 ]; then
++				insmod qca-nss-sfe
++			else
++				insmod qca-nss-sfe sixth_tuple_enable=1
++			fi
+ 		fi
+ 	}
+ 
+@@ -150,10 +157,18 @@
+ 
+ 	local kernel_version=$(uname -r)
+ 
+-	[ -e "/lib/modules/$kernel_version/qca-wifi-nss-plugins.ko" ] && {
+-		[ -d /sys/module/qca_wifi_nss_plugins ] || [ -f /tmp/.wifi-config-done ] ||
+-		[ -f /lib/modules/$kernel_version/ath.ko ] && insmod qca-wifi-nss-plugins
+-	}
++	# The old condition chained && and || into one list, so the trailing
++	# "&& insmod" ran whenever the last test (ath.ko exists) was true --
++	# including the case where the plugin module was already loaded, which
++	# only produced "module is already loaded" at boot.  Spell the guard out:
++	# load the plugins only when they are not loaded yet and wifi is still
++	# under this script's control.
++	if [ -e "/lib/modules/$kernel_version/qca-wifi-nss-plugins.ko" ] &&
++		[ ! -d /sys/module/qca_wifi_nss_plugins ] &&
++		[ ! -f /tmp/.wifi-config-done ] &&
++		[ -f /lib/modules/$kernel_version/ath.ko ]; then
++		insmod qca-wifi-nss-plugins
++	fi
+ 
+ 	echo 0 > /sys/kernel/debug/ecm/front_end_ipv4_stop
+ 	echo 0 > /sys/kernel/debug/ecm/front_end_ipv6_stop
+@@ -224,9 +239,13 @@
+ 		insmod ecm_ovs
+ 	fi
+ 
+-	# Enable SAWF and EMESH classifier by default for Out-of box prioritization
+-	echo 3 > /proc/sys/net/ecm/ecm_classifier_emesh/enabled
+-	echo 3 > /proc/sys/net/ecm/ecm_classifier_emesh/sawf_enabled
++	# Enable SAWF and EMESH classifier by default for Out-of box prioritization.
++	# ecm_classifier_emesh only exists when the build includes the mesh
++	# classifier; without it both writes fail with "nonexistent directory".
++	if [ -d /proc/sys/net/ecm/ecm_classifier_emesh ]; then
++		echo 3 > /proc/sys/net/ecm/ecm_classifier_emesh/enabled
++		echo 3 > /proc/sys/net/ecm/ecm_classifier_emesh/sawf_enabled
++	fi
+ 
+ 	# If UDP classifier is present, start it.
+ 	[ -f /etc/init.d/udp-clf ] && /etc/init.d/udp-clf start

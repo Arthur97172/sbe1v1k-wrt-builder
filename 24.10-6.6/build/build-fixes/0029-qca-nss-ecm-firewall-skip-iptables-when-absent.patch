@@ -1,0 +1,38 @@
+Subject: [PATCH] qca-nss-ecm: skip the iptables physdev hook on an fw4-only image
+
+The firewall.d hook (qca/feeds/nss/clients/qca-nss-ecm/files/
+qca-nss-ecm.firewall) issues two iptables calls before it chooses between
+the fw3 and fw4 branches.  This image uses fw4 and ships no iptables
+binary, so every firewall (re)start logs three lines:
+
+  procd: /etc/rc.d/S19firewall: sh: /etc/firewall.d/qca-nss-ecm: line 19: iptables: not found
+  procd: /etc/rc.d/S19firewall: sh: /etc/firewall.d/qca-nss-ecm: line 20: iptables: not found
+  procd: /etc/rc.d/S19firewall: sh: /etc/firewall.d/qca-nss-ecm: line 20: iptables: not found
+
+(line 19 once, line 20 twice because it tests with iptables and then
+inserts with it).  The physdev FORWARD rules are iptables-only; fw4
+handles bridged traffic in its own table.  Guard the block with
+`command -v iptables` so it still runs on an image that has iptables,
+and leave the fw3/fw4 branch below untouched -- the nft RATE-LIMIT chain
+is what this image actually uses.
+
+---
+
+--- a/qca/feeds/nss/clients/qca-nss-ecm/files/qca-nss-ecm.firewall	2026-11-16 02:22:25.090299197 +0000
++++ b/qca/feeds/nss/clients/qca-nss-ecm/files/qca-nss-ecm.firewall	2026-11-16 02:22:59.103676624 +0000
+@@ -16,8 +16,13 @@
+ # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ #
+ 
+-iptables -nvL FORWARD | grep -q "physdev" && iptables -Z FORWARD 1
+-iptables -nvL FORWARD | grep -q "physdev" || iptables -I FORWARD -m physdev --physdev-is-bridged -j ACCEPT
++# The physdev rules are iptables-only.  An fw4-only image has no iptables
++# binary, and the two unconditional calls above the branch below fail with
++# "iptables: not found" on every firewall (re)start.
++if command -v iptables >/dev/null 2>&1; then
++	iptables -nvL FORWARD | grep -q "physdev" && iptables -Z FORWARD 1
++	iptables -nvL FORWARD | grep -q "physdev" || iptables -I FORWARD -m physdev --physdev-is-bridged -j ACCEPT
++fi
+ 
+ if grep -q "fw3" /etc/init.d/firewall; then
+ 	iptables -nvL | grep -q "Chain RATE-LIMIT" && iptables -F RATE-LIMIT

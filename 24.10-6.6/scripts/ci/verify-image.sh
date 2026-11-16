@@ -458,6 +458,17 @@ if grep -qF 'freq1=${1:-0}' "$ROOTFS/lib/netifd/wireless/mac80211.sh" &&
 else
 	bad "wifi-scripts 缺 0027 降噪修复：每轮 wifi down/up 会刷 out of range/missing ]/iw usage/json_select 告警"
 fi
+# build-fixes/0028–0030 清掉 sbe1v1k 上注定失败的启动调用（qca-nss-ecm 的
+# rmmod/insmod 与 emesh 分类器、firewall.d 的 iptables、参考板的 trymodedone）。
+# 镜像里复查同一组标记。
+if grep -qF 'rmmod qca-nss-sfe 2>/dev/null' "$ROOTFS/etc/init.d/qca-nss-ecm" &&
+   grep -qF 'if [ -d /proc/sys/net/ecm/ecm_classifier_emesh ]; then' "$ROOTFS/etc/init.d/qca-nss-ecm" &&
+   grep -qF 'if command -v iptables >/dev/null 2>&1; then' "$ROOTFS/etc/firewall.d/qca-nss-ecm" &&
+   grep -qF '[ ! -d /proc/boot_info ] && [ ! -f /sys/class/registers/bootcount ]' "$ROOTFS/etc/init.d/trymodedone"; then
+	ok "启动脚本已带降噪修复（0028-0030）"
+else
+	bad "缺 0028-0030 降噪修复：启动日志会刷 module is already loaded/emesh nonexistent directory/iptables not found/out of range"
+fi
 
 for f in usr/bin/geoview usr/bin/v2ray-plugin usr/bin/v2ray; do
 	[ -e "$ROOTFS/$f" ] && bad "不应存在 /$f" || ok "缺席 /$f"

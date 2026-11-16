@@ -1,0 +1,63 @@
+Subject: [PATCH] base-files: skip the trymode bookkeeping on boards without /proc/boot_info
+
+The trymodedone init script that the QSDK patch queue adds to base-files
+is written for the Qualcomm reference boards.  It reads the trymode and
+bootconfig health interfaces before it looks at the board name, and on
+the SBE1V1K (board spectrum,sbe1v1k) none of them exist.  The v89-2 boot
+log has eight failing reads and four empty-value compares from it:
+
+  procd: /etc/rc.d/S98trymodedone: cat: can't open
+      '/proc/upgrade_info/trymode_inprogress': No such file or directory
+  ... bootconfig0/age, bootconfig1/age, bootconfig0/health_status,
+      bootconfig1/health_status, bootconfig0/age, bootconfig1/age,
+      active_bootconfig: same
+  procd: /etc/rc.d/S98trymodedone: sh: out of range   (x4)
+
+The four "out of range" lines come from Bank_health_check(): age0/age1
+are empty, so `[ "$BC0_age" -gt "$BC1_age" ]` and the ipq5424 path's
+`[ ... -eq ... ]` compare with nothing.
+
+Every branch below needs one of two interfaces: /proc/boot_info (the
+reference-board and ipq54xx paths) or /sys/class/registers/bootcount
+(the ipq52xx/ipq96xx path).  Return right away when both are absent,
+after the milestone-bit write that start() performs for all boards.
+Reads that remain keep their diagnostics off, so a partial interface on
+a real reference board no longer floods the log either.
+
+On a reference board the branches run exactly as before.
+
+---
+
+--- a/openwrt-patches/package/base-files/files/etc/init.d/trymodedone	2026-11-16 02:22:25.098876372 +0000
++++ b/openwrt-patches/package/base-files/files/etc/init.d/trymodedone	2026-11-16 02:23:10.967740180 +0000
+@@ -138,15 +138,25 @@
+ }
+ 
+ start() {
+-	local trymode_inprogress="/proc/upgrade_info/trymode_inprogress"
+ 	local board=$(board_name)
+-	local is_in_trymode=$(cat /proc/upgrade_info/trymode_inprogress)
+-	local ipq54xx_trymode=$(cat /sys/devices/platform/firmware:scm/trymode_inprogress)
+-	local age0=$(cat /proc/boot_info/bootconfig0/age)
+-	local age1=$(cat /proc/boot_info/bootconfig1/age)
+ 
+ 	#clearing milestone bit
+ 	echo 0 > /sys/devices/platform/firmware:scm/hlos_done
++
++	# The trymode bookkeeping below only exists on the QCA reference boards.
++	# On any other board the reads fail with "No such file or directory", and
++	# the empty values then turn into four "out of range" compares on every
++	# boot.  The two interfaces tested here are exactly what the branches
++	# below need, so there is nothing to do when both are absent.
++	if [ ! -d /proc/boot_info ] && [ ! -f /sys/class/registers/bootcount ]; then
++		return 0
++	fi
++
++	local trymode_inprogress="/proc/upgrade_info/trymode_inprogress"
++	local is_in_trymode=$(cat /proc/upgrade_info/trymode_inprogress 2>/dev/null)
++	local ipq54xx_trymode=$(cat /sys/devices/platform/firmware:scm/trymode_inprogress 2>/dev/null)
++	local age0=$(cat /proc/boot_info/bootconfig0/age 2>/dev/null)
++	local age1=$(cat /proc/boot_info/bootconfig1/age 2>/dev/null)
+ 	case "$board" in
+ 		qcom,ipq9574-ap-al05 |\
+ 		qcom,ipq9574-ap-al06 |\
