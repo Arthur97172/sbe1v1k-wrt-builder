@@ -151,6 +151,41 @@ A 机升级刷入后删除 board.json 重跑 `board_detect`，已确认
 `while sleep 1` 轮询、两个 hotplug 钩子存在并调用 `attach`、init 服务以
 `monitor` 模式启动。事件驱动版本真机行为 `NOT TESTED`。
 
+### 网口指示灯
+
+**2.5G 口（eth1，QCA8081）指示灯常亮（2026-11-18 修，真机 NOT TESTED）**：
+现象是拔不拔网线都亮着，25.12-6.12 同一块板子正常。根因在 PHY 驱动而不是
+交换机：本版 `CONFIG_QCA808X_PHY=y`，内建 `qca808x` 驱动绑定 mdio 0x1c 的
+QCA8081，`qca808x_config_init()` 无条件把 MMD7 `0x901a` 的 BIT(6) 置上
+（LED 极性 active-high）；这块板子的 2.5G LED 是 active-low——厂商 S1 的
+`qcom,port_ledinfo` 给 port 5 两颗 LED 都写 `active = "low"`。极性反了之后
+“灭”（无链路）反而点亮、“亮”（链路 up / 活动闪烁）反而变暗。25.12 因为
+0030 关掉了这个内建驱动（避开与 QSDK qca8084-phy 的重名 -16），这个 PHY
+没有任何 phylib 驱动绑定、寄存器保持复位默认值，所以行为正确。
+`build-fixes/0031` 把无条件写改成只在显式要求 active-high
+（`led_polarity_mode == 0`，来自 netdev 触发器的极性请求）时才写，
+运行期 `led_polarity_set()` 覆盖不受影响。
+
+同时 p-b 设备树删掉了厂商的 `qcom,port_ledinfo` 节点：本版 ssdk 的
+`ssdk_dt_parse_led_source()` 把 `source = <0xf>`/`<0x10>` 写进
+`led_ctrl_pattern_t[SSDK_MAX_PORT_NUM=8][PORT_LED_SOURCE_MAX=3]` 之外
+（越界写 `ssdk_dt_cfg` 内存），而 `ssdk_led_init()` 只读 source 0..2，
+节点从来没有配到过灯。S2 与 25.12 都没有这个节点。
+
+**蓝灯开机常亮**：pwm-leds 的 `led-blue` 改成 `default-state = "on"`
+（red/green 仍为 off）。`default-state` 只在 probe 时把亮度写成最大、
+不装触发器，`ledfancontrol` 的 off 动作（trigger=none + brightness=0）
+运行期照样能关掉。
+
+三个 pwm-led 节点都必须写 `max-brightness = <255>`。6.6/6.12 的
+`leds-pwm.c` 在 `default-state = "on"` 时执行的是
+`cdev.brightness = led->max_brightness`，而 `led->max_brightness` 取自
+可选的 `max-brightness` 属性、缺省为 0；`led_classdev_register_ext()`
+事后会把 `max_brightness` 补成 255，但 `brightness` 已经停在 0，灯不亮。
+2026-11-18 的 25.12 首刷就是靠这个现象（DT 属性 `"on"`、
+`max_brightness=255`、`brightness=0`）定位到驱动行为的。
+真机 NOT TESTED：24.10 本轮未重编、未刷机，结论来自同一份驱动代码。
+
 ### 以太网端口 MAC 固定化
 
 引导器（APPSBL）只把板级 base MAC 写进 `dp1` 的 DT `local-mac-address`
@@ -193,7 +228,7 @@ base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两
   - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-mosdns`（含 `geo2txt`）、
     `luci-app-nikki`、`luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、
     `luci-theme-argon`；mosdns 后端是 `local-relayout/mosdns` 的预编译二进制包装包
-    （2026-11-15 取代 bandix 的 LuCI 前端；`bandix-plus` 后端服务仍在）
+    （2026-11-15 取代 bandix；bandix 前后端当天都已移除）
   - meshassistant 的运行依赖（上游 feed）：`batctl` / `kmod-batman-adv`（`routing`）、
     `luci-proto-batman-adv`（`luci`）、`dawn` / `socat`（`packages`）、`flock`（util-linux）
   - 代理后端（`sources/passwall-selected`）：`chinadns-ng`、`dns2socks`、`ipt2socks`、
@@ -513,11 +548,11 @@ buildroot/package/feeds/thirdparty/luci-app-foo	thirdparty/luci-app-foo
 `scripts/ci/assemble-sources.sh` 的 feeds 接线步：
 
 ```sh
-[ "$nl" = 178 ] || die 4 "package/feeds 软链应有 178 条，实际 $nl"
+[ "$nl" = 177 ] || die 4 "package/feeds 软链应有 177 条，实际 $nl"
 ```
 
-加一行就改成 179，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
-（`grep -rn '178' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
+加一行就改成 178，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
+（`grep -rn '177' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
 `feeds.conf.in` 和同一步的 `[ "$nf" = 11 ]`。
 
 #### 5. 文件 B：`build/custom-packages.conf`
@@ -643,7 +678,7 @@ push 后 `sources-24.10-6.6.yml` 自动以 `publish=false` 验证；通过后手
 |---|---|---|
 | `build/thirdparty-feeds.conf` | 新仓库加 `repo`+`link`；旧仓库只加 `link` | 删 `link`；仓库不再被引用时删 `repo` |
 | `build/feeds-links.conf` | 加 `package/feeds/thirdparty/<名字>` 行（含依赖包） | 删对应行 |
-| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 178 ]` 改成新总数 | 改回去 |
+| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 177 ]` 改成新总数 | 改回去 |
 | `build/custom-packages.conf` | 加 `CUSTOM_PACKAGES="$CUSTOM_PACKAGES <名字>"` | 注释掉整行 |
 | `build/config-frozen/.config` | `make defconfig` 后整体替换 | 同左 |
 | `build/known-delta.conf` | 加 `fresh-only` 条目（新路径） | 删掉对应条目 |
@@ -732,9 +767,12 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
   否则镜像里留的是旧脚本（`verify-image.sh` 第 9 项会以 FAIL 指出）。CI 每次
   都是新树，不受影响。
 
-真机升级状态：`NOT TESTED`（2026-11-15 用户把 B 机升级到 v78-1-627a88de 后做了
-全面测试并报告通过，但升级所用流程未记录，本条不据此关闭；旁证与范围见
-[docs/V78_FIELD_VERIFICATION-2026-11-15.md](docs/V78_FIELD_VERIFICATION-2026-11-15.md)）。
+真机升级状态：**PASS（2026-11-16，v94-1-da7e20bd）**。B 机从恢复模式 RAM
+系统执行 `sysupgrade -F -n`，约 54 秒回到 24.10，刷后启动、三频无线、客户端
+关联与 NAT 上网实测通过；完整过程见
+[docs/V94_FIELD_VERIFICATION-2026-11-16.md](docs/V94_FIELD_VERIFICATION-2026-11-16.md)。
+更早的 v78 升级没记录流程，只作旁证
+（[docs/V78_FIELD_VERIFICATION-2026-11-15.md](docs/V78_FIELD_VERIFICATION-2026-11-15.md)）。
 
 ## CI
 
@@ -763,15 +801,23 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 截至 2026-10-25，两个 workflow 都已跑通：装配 run `40183767687` 发布 `sources-v3`（恰好
 3 个资产），构建 run `40185702727` 用 `source_tag=auto` 选中它并全量 PASS，发布
 `v16-1-5dda9f3b`（恰好 3 个固件资产）。**这只证明编译、静态镜像校验与打包通过；镜像在
-真机上的启动、升级与以太网行为仍为 `NOT TESTED`。**
+真机上的启动、升级与以太网行为仍为 `NOT TESTED`。**（2026-11-16 更新：v94 已补齐真机
+刷写与验证记录，见上文「升级」一节与
+[docs/V94_FIELD_VERIFICATION-2026-11-16.md](docs/V94_FIELD_VERIFICATION-2026-11-16.md)。）
 
 ## 注意
 
 - `files/` 由 `include/image.mk` 原样复制进 rootfs，**不经过** `VERSION_SED_SCRIPT`，
   所以 banner 里的 `%V`/`%R` 必须由 `render-overlay.sh` 在构建前替换。
-- `/etc/rc.d/S95wireless-defaults`、`/etc/rc.d/S15ethernet-macs` 等开机链接由
+- `/etc/rc.d/S95wireless-defaults`、`/etc/rc.d/S15ethernet-macs`、
+  `/etc/rc.d/S23eth0-lan-attach` 等开机链接由
   `include/rootfs.mk` 的 `prepare_rootfs` 自动生成，条件是 `etc/init.d/<名>`
   首行**精确**为 `#!/bin/sh /etc/rc.common` 且权限 0755。
+- `build/p-b/files/` 下的任何增删改（包括只是几个脚本）都会同时改变
+  `recipe_sha256` 和目标 base-files 树的指纹：新文件要对 `known-delta.conf`
+  登记（并在装配脚本里断言），然后必须重发 `sources-vN`，否则构建会停在
+  `Verify recipe hash` 门禁。`build/p-b/files/base-files` 不在“改 overlay
+  不用重装源码”的豁免范围内——那个豁免只覆盖 `24.10-6.6/files/`。
 - `/etc/uci-defaults/*` 由 `/etc/init.d/boot` 以 `( . file )`（子 shell 内 source）
   加载，成功才删除、失败保留到下次开机重试。本仓库的约定仍是不用 `set -e`，退出
   一律显式写：overlay 里的入口用调用脚本的返回码，包内脚本（如
