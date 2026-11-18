@@ -274,6 +274,26 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 两个补丁都只做了静态验证（补丁 dry-run、驱动交叉编译、DTS 用 dtc 编译并反编译
 断言节点内容），设备行为仍是 `NOT TESTED`，详见 `docs/V21_BOOT_AND_FAN_FIX.md`。
 
+### 机箱 RGB LED（`patches/0040`）
+
+机箱灯是一颗 RGB 灯珠，三路 PWM 在通道 0/1/2（GPIO 44/45/56），通道 3 是风扇。
+`patches/0040` 在板级 DTS 里加 `leds-pwm` 节点，按 24.10 的名字把三路命名为
+`red:system` / `green:system` / `blue:system`；蓝灯 `default-state = "on"` 做开机
+常亮的电源指示，red/green 保持 off。`default-state` 只在 probe 时写一次亮度、
+不装触发器，`ledfancontrol` 的 off 动作（trigger=none + brightness=0）运行期照样
+能关掉。
+
+三个节点都必须带 `max-brightness = <255>`。6.12 的 `leds-pwm.c` 在
+`default-state = "on"` 时执行 `cdev.brightness = led->max_brightness`，而
+`led->max_brightness` 取自可选的 `max-brightness` 属性、缺省为 0；
+`led_classdev_register_ext()` 事后把 `max_brightness` 补成 255，但 `brightness`
+已经停在 0。2026-11-18 首刷（无该属性）实测正是如此：DT 属性 `"on"`、
+`max_brightness=255`、`brightness=0`，蓝灯不亮。补上 `max-brightness` 后重编
+（sysupgrade sha256 `2d4a33e9…`）刷机 PASS：`blue:system` 开机即
+`brightness=255`、`max_brightness=255`、`trigger=[none]`，`red:system` /
+`green:system` 为 0，三频 AP 与 WAN/LAN 正常。24.10 的 6.6 驱动是同一份逻辑，
+那边板级 DTS 同样补了这一行（真机 `NOT TESTED`）。
+
 ### 板级 DTS 的 eMMC 控制器
 
 `patches/0021` 给 `ipq9574-sbe1v1k.dts` 加 `&sdhc_1` 块（引用文件里已有但一直
@@ -580,9 +600,13 @@ interface 与 `phy-handle`（S2/RDP 的做法；S1 的逐节点 `phy-mode` 属�
 寄存器窗口，因此 `ess-uniphy` 保留、三个 `pcs` 节点置 `disabled`
 （`CONFIG_PCS_QCOM_IPQ9574` 未启用；将来若要启用会与 qca-ssdk 抢同一段寄存器）。
 
-S2 里的 `port_ledinfo`、`port_mac_sel` 没有抄：本树 qca-ssdk 虽能解析，但厂商
-这两个属性与 PHY 固件行为耦合，缺少硬件证据，留作 `UNVERIFIED`；板级 MAC 仍由
-`eth_hw_addr_random()` 生成（DTS 无全零之外的 `local-mac-address`）。
+S2 里的 `port_ledinfo`、`port_mac_sel` 没有抄：本树 qca-ssdk 的
+`ssdk_dt_parse_led_source()` 把 `source = <0xf>`/`<0x10>` 存进
+`led_ctrl_pattern_t[SSDK_MAX_PORT_NUM=8][PORT_LED_SOURCE_MAX=3]` 之外（越界写
+`ssdk_dt_cfg`），而 `ssdk_led_init()` 只读 source 0..2，节点根本配不到灯；
+qca-ssdk 在 HPPE（ipq9574）上也不调用 `ssdk_led_init()`。24.10 抄了 S1 的同一
+节点、行为同样是"什么都没发生"（2026-11-18 审计，24.10 那边已删除）。板级 MAC
+仍由 `eth_hw_addr_random()` 生成（DTS 无全零之外的 `local-mac-address`）。
 
 **端口表进 board.json（`0023`）。** `target/linux/qualcommbe/ipq95xx/base-files/
 etc/board.d/02_network` 原来没有 `spectrum,sbe1v1k` 分支，设备会落到 "Unsupported

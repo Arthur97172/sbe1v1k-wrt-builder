@@ -468,6 +468,16 @@ grep -A2 '^#ifdef CONFIG_IEEE80211BE$' "$_bf" | grep -q 'strcmp(feat, "11be")' \
 	|| die 4 "0021 未生效：build_features.h 缺 CONFIG_IEEE80211BE 下的 11be 分支"
 logmsg "  BUILD_FEATURES_11BE_OK hostapd（has_feature 报 11be）"
 
+# 0031 让内建 qca808x 驱动不再无条件把 LED 极性置成 active-high（SBE1V1K 的
+# 2.5G QCA8081 是 active-low，写反后无链路反亮，即"2.5G 灯常亮"）。应用成功
+# 不等于内容正确：断言新的条件行在、旧的无条件分支不在。
+_qph="$SRC/buildroot/qca/src/linux-6.6/drivers/net/phy/qcom/qca808x.c"
+grep -q '^	if (priv->led_polarity_mode == 0) {$' "$_qph" \
+	|| die 4 "0031 未生效：qca808x_config_init 仍不是\"仅显式 active-high 才写极性\""
+! grep -q '^	if (priv->led_polarity_mode == -1) {$' "$_qph" \
+	|| die 4 "0031 未生效：qca808x_config_init 里仍有无条件写极性的旧分支"
+logmsg "  QCA808X_LED_POLARITY_OK qca808x（极性保持复位默认）"
+
 # 0022 去掉 mac80211.sh 里两行无条件 append：disable_iface_during_cac 与
 # athnewind 只有 qcn-app-extns 解析，而镜像用 noextns 变体，hostapd 会把它们
 # 当 unknown configuration item，整份配置 2 errors 后 add_iface 失败，三个

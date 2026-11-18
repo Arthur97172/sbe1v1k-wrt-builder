@@ -1,0 +1,92 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: describe the case RGB LED as pwm-leds
+
+现象（2026-11-18，B 机 25.12 生产镜像）：LuCI 系统 → LED 配置 →
+添加 LED 动作，LED 名称下拉只有 green:wlan 和 mmc0::；同一块板子的
+24.10 固件里还有 red:system、green:system、blue:system。
+
+根因：25.12 的板级 DTS 没有 pwm-leds 节点。机箱灯是一颗 RGB 灯珠，
+三路 PWM 在通道 0/1/2（GPIO 44/45/56，pwm_pins 已按厂商 DTB mux），
+通道 3 是风扇；24.10 的板级 DTS 用 pwm-leds 把这三路直接命名成
+red/green/blue:system。25.12 只继承了 RDP433 参考板的 gpio-leds
+（green:wlan，GPIO 64），所以下拉里只剩一个与真机无关的参考灯。
+厂商 DTB 证实通道分配：S1（QSDK13）的 pwm-leds 与 S2（QSDK14）的
+同名节点都是 红=0、绿=1、蓝=2、周期 40 us，与 24.10 完全一致；S1 里
+另一组被禁用的 gpio-leds 也只有 blue/red/green 三个（GPIO 56/44/45），
+没有别的灯珠。
+
+与厂商 DTB 的唯一差别：蓝灯 default-state 设为 "on"（厂商为 off），
+作为开机常亮的电源指示；red/green 保持 off，交给 LED 动作控制。
+default-state 只是 probe 时把亮度写成 max、不装触发器，运行期
+ledfancontrol 的 off 动作（trigger=none + brightness=0）照样能关掉。
+
+三个节点都必须写 max-brightness = <255>：6.12 的 leds-pwm.c 在
+default-state = "on" 时执行的是 cdev.brightness = led->max_brightness，
+而 led->max_brightness 来自可选的 max-brightness 属性，缺省为 0；
+cdev 事后在 led_classdev_register_ext() 里把 max_brightness 补成 255，
+但 brightness 已经停在 0 —— 2026-11-18 首刷实测正是如此：
+blue:system 的 DT 属性为 "on"，max_brightness=255，brightness=0。
+补上该属性后 probe 才会把亮度写成 255。24.10 的 6.6 驱动
+（qca/src/linux-6.6/drivers/leds/leds-pwm.c）是同一份逻辑，板级
+DTS 同样补了这一行。
+
+镜像侧不需要改配置：CONFIG_PACKAGE_kmod-leds-pwm 早已选中、
+CONFIG_PWM_IPQ 内建，6.12 的 leds-pwm 仍读 label 属性（led-core.c 与
+leds-pwm.c 都有），所以名字能保持 24.10 原样，LED 动作/触发器不用改。
+
+white:system 不加：硬件上没有白色灯珠，厂商 factory-pwm 里的 "white"
+是把三路 PWM 一起点亮的合成色，不是第四颗灯。
+
+真机（2026-11-18，B 机）：首刷（无 max-brightness）blue:system 亮度落在 0，
+即上述驱动行为；补 max-brightness 后重编（sysupgrade sha256 2d4a33e9…）刷机
+PASS：blue:system brightness=255 / max_brightness=255 / trigger=[none]，
+red/green 为 0，三频 AP 与 WAN/LAN 正常。
+
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -427,6 +427,45 @@
+ };
+ 
+ /*
++ * Case LED: one RGB die on PWM channels 0/1/2 (GPIO 44/45/56, muxed in
++ * pwm_pins; channel 3 drives the fan).  The vendor DTB describes the same
++ * three channels as pwm-leds, and the 24.10 board file named them
++ * red/green/blue:system, which the LED actions on this board refer to.
++ * Blue stays lit from probe on as a power indicator; ledfancontrol can still
++ * switch it off at runtime.  max-brightness must stay on all three nodes:
++ * leds-pwm takes the default-state = "on" brightness from it and silently
++ * ends at 0 when the property is missing.
++ * The RDP433 leds node inherited from ipq9574-rdp-common.dtsi
++ * (green:wlan on GPIO 64) is left as is.
++ */
++/ {
++	leds-pwm {
++		compatible = "pwm-leds";
++
++		led-red {
++			label = "red:system";
++			max-brightness = <255>;
++			pwms = <&pwm 0 40000 0>;
++			default-state = "off";
++		};
++
++		led-green {
++			label = "green:system";
++			max-brightness = <255>;
++			pwms = <&pwm 1 40000 0>;
++			default-state = "off";
++		};
++
++		led-blue {
++			label = "blue:system";
++			max-brightness = <255>;
++			pwms = <&pwm 2 40000 0>;
++			default-state = "on";
++		};
++	};
++};
++
++/*
+  * eMMC: this board boots from it, so the controller must be enabled.  Without
+  * it there is no /dev/mmcblk0, U-Boot's root=PARTUUID= cannot resolve and the
+  * kernel panics.  Properties mirror rdp437.dts and the vendor DTB; the pin

@@ -1,0 +1,51 @@
+Subject: [PATCH] qca808x: stop forcing the PHY LED polarity to active-high
+
+现象（2026-11-18，24.10-6.6 生产镜像）：2.5G 网口（eth1 = dp2 = port 5，
+QCA8081 @ mdio 0x1c）的指示灯无论是否插网线都亮着；25.12-6.12 同一块板子的
+同一个口行为正确（插线亮、拔线灭）。
+
+根因：24.10 打开了 CONFIG_QCA808X_PHY=y，内建的 "Qualcomm QCA8081" 驱动在
+qca808x_config_init() 里无条件把 MMD7 0x901a 的 BIT(6) 置上（LED 极性按
+active-high 解释）。这块板子的 2.5G LED 是 active-low：厂商 S1 DTB 的
+qcom,port_ledinfo 给 port 5 的两个 led_source 都写 active = "low"。极性反过来
+之后，"灭"（无链路）反而点亮、"亮"（链路 up、活动闪烁）反而变暗，看起来就是
+常亮。
+
+为什么 25.12 是对的：25.12 的 0030 关掉了 CONFIG_QCA808X_PHY（避开与 QSDK
+qca8084-phy 的重名 -16），这个 PHY 没有任何 phylib 驱动绑定（B 机实测
+/sys/bus/mdio_bus/devices/90000.mdio-1:1c/driver 为空），0x901a 保持复位默认
+值，LED 就是对的。同样的复位默认值当然也适用于 24.10。
+
+修法：只在有人显式要求 active-high（led_polarity_mode == 0，即 netdev 触发器
+的极性请求）时才写这一位；-1（探测初值，也是"没人要求"的状态）不动寄存器。
+led_polarity_set() 的运行期覆盖不受影响。
+
+同时 p-b 设备树删掉了从不生效的 qcom,port_ledinfo 节点：ssdk 的
+ssdk_dt_parse_led_source() 把 source 15/16 写进 [8][3] 的 source_pattern
+数组之外，而 ssdk_led_init() 只读 source 0..2，这个节点既配不了灯、还会越界
+写 ssdk_dt_cfg。S2 与 25.12 都没有这个节点。
+
+真机 NOT TESTED：24.10 镜像本轮未重编、未刷机。
+
+--- a/qca/src/linux-6.6/drivers/net/phy/qcom/qca808x.c
++++ b/qca/src/linux-6.6/drivers/net/phy/qcom/qca808x.c
+@@ -199,8 +199,17 @@
+ 	struct qca808x_priv *priv = phydev->priv;
+ 	int ret;
+ 
+-	/* Default to LED Active High if active-low not in DT */
+-	if (priv->led_polarity_mode == -1) {
++	/* Keep the PHY's reset-default LED polarity unless active-high was
++	 * asked for explicitly.  The SBE1V1K 2.5G port (QCA8081 at mdio 0x1c)
++	 * is wired active-low -- the vendor DTB's qcom,port_ledinfo declares
++	 * active = "low" -- so setting BIT(6) unconditionally here inverts
++	 * both LEDs: they stay lit with no cable and go dark once the link
++	 * comes up.  The 25.12 image binds no phylib driver to this PHY, the
++	 * register keeps its reset value there, and the LEDs read correctly;
++	 * the same reset default applies here.  led_polarity_set() (netdev
++	 * trigger) can still override the polarity at runtime.
++	 */
++	if (priv->led_polarity_mode == 0) {
+ 		ret = phy_set_bits_mmd(phydev, MDIO_MMD_AN,
+ 				       QCA808X_MMD7_LED_POLARITY_CTRL,
+ 				       QCA808X_LED_ACTIVE_HIGH);

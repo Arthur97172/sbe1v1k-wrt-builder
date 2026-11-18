@@ -259,30 +259,25 @@
 		};
 	};
 
-	/* S1: QCA8081 LED sources for port 5; parsed by ssdk_dt_parse_port_ledinfo */
-	qcom,port_ledinfo {
-		port5 {
-			port = <5>;
-
-			led_source@f {
-				source = <0xf>;
-				mode = "normal";
-				speed = "all";
-				blink_en = "enable";
-				freq = "auto";
-				active = "low";
-			};
-
-			led_source@10 {
-				source = <0x10>;
-				mode = "normal";
-				speed = "all";
-				blink_en = "enable";
-				freq = "auto";
-				active = "low";
-			};
-		};
-	};
+	/*
+	 * The vendor's qcom,port_ledinfo node is deliberately not copied here.
+	 *
+	 * S1 carries it for port 5 (QCA8081): two led_source children with
+	 * source 0xf / 0x10, mode "normal", speed "all", active "low".  This
+	 * tree used to copy that node verbatim, but this QSDK's
+	 * ssdk_dt_parse_led_source() (qca-ssdk/src/init/ssdk_dts.c) keeps the
+	 * parsed pattern in source_pattern[port][source], and that array is
+	 * led_ctrl_pattern_t[SSDK_MAX_PORT_NUM=8][PORT_LED_SOURCE_MAX=3].
+	 * Port 5 with source 15/16 therefore writes past the end of the array
+	 * (an out-of-bounds write inside the ssdk_dt_cfg slab), and
+	 * ssdk_led_init() only ever reads sources 0..2, so the node could
+	 * never program the LEDs in the first place.  S2 and the 25.12 build
+	 * have no such node.
+	 *
+	 * The LEDs on this port are handled in the PHY driver instead: see
+	 * build-fixes/0031, which stops the in-tree qca808x.c from forcing
+	 * the LED polarity bit that S1 declares as active-low for port 5.
+	 */
 };
 
 /*
@@ -867,26 +862,34 @@
 	 * equivalent.  Channel assignment (0=red, 1=green, 2=blue) is UNVERIFIED;
 	 * only channel 3 -> fan is proven, by S1's pwm-fan node.  A wrong channel
 	 * mapping is cosmetic; it cannot damage the board.
+	 *
+	 * Blue starts lit as a power indicator; red/green stay off for the LED
+	 * actions to drive.  default-state only sets the brightness once at
+	 * probe and installs no trigger, so ledfancontrol's "off" action
+	 * (trigger=none + brightness=0) still turns it off at runtime.
 	 */
 	leds {
 		compatible = "pwm-leds";
 
 		led-red {
 			label = "red:system";
+			max-brightness = <255>;
 			pwms = <&pwm 0 40000 0>;
 			default-state = "off";
 		};
 
 		led-green {
 			label = "green:system";
+			max-brightness = <255>;
 			pwms = <&pwm 1 40000 0>;
 			default-state = "off";
 		};
 
 		led-blue {
 			label = "blue:system";
+			max-brightness = <255>;
 			pwms = <&pwm 2 40000 0>;
-			default-state = "off";
+			default-state = "on";
 		};
 	};
 
