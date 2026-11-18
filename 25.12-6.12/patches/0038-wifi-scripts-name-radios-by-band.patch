@@ -1,0 +1,66 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] wifi-scripts: name the default radioN sections by band
+
+真机取证（2026-11-18，B 机 25.12 首启）：同一块板子上 24.10 的
+radio0/1/2 分别固定在 2.4G/5G/6G，而 25.12 首启后 radio0=6G、
+radio1=5G、radio2=2.4G，编号与频段错位，跨版本对照文档/脚本时容易误读。
+
+根因：wifi-scripts 的 ucode 生成器每遇到一个 phy 热插拔就由
+/etc/hotplug.d/ieee80211/10-wifi-detect 触发一次 /sbin/wifi config，
+mac80211.uc 用 "while (config[radio$idx]) idx++"（取最小空闲编号）来命名
+新发现的射频。ath12k 的三块 PCIe 卡是异步探测的，本板三次启动里 0001/0003/
+0002 的注册先后并不固定（dmesg 13.7s/16.4s/17.2s），于是同一固件不同刷机
+得到的 radioN 与频段绑定关系不同。24.10 的 shell 版生成器顺序固定，因此
+不会出现这个问题。
+
+修复：在生成默认配置时把编号钉在频段上（2G→radio0、5G→radio1、
+6G→radio2）。若目标编号已被占用（例如板级 board.json 里一个 phy 带多个
+radio 的形态，或多个同频 phy），仍回退到最小空闲编号，行为与原来一致。
+
+设备侧验证（不改配置，只跑生成器读输出）：
+- 正常 board.json 顺序：radio0=2g、radio1=5g、radio2=6g；
+- 把 wlan 顺序整体反转后：仍是 radio0=2g、radio1=5g、radio2=6g。
+
+注意：本补丁只影响新生成的默认配置。升级时保留旧 /etc/config/wireless 的
+设备会继续沿用旧编号（频段与 SSID 正确，只是 radioN 不同）。
+--- a/package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc	2026-11-18 12:56:24.499777637 +0000
++++ b/package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc	2026-11-18 12:56:32.033065731 +0000
+@@ -4,6 +4,7 @@
+ 
+ const bands_order = [ "60G", "6G", "5G", "2G" ];
+ const htmode_order = [ "EHT", "HE", "VHT", "HT" ];
++const band_slots = { "2G": 0, "5G": 1, "6G": 2 };
+ 
+ let board = json(readfile("/etc/board.json"));
+ if (!board.wlan)
+@@ -38,6 +39,19 @@
+ 
+ 	let radios = length(info.radios) > 0 ? info.radios : [{ bands: info.bands }];
+ 	for (let radio in radios) {
++		let band_name = filter(bands_order, (b) => radio.bands[b])[0];
++		if (!band_name)
++			continue;
++
++		/* Pin the default section names to the band (2G -> radio0,
++		 * 5G -> radio1, 6G -> radio2) instead of always taking the lowest
++		 * free index.  Phys probe asynchronously and in an order that
++		 * differs between boots, so index-by-arrival makes the same board
++		 * end up with radio0 pointing at a different band each install. */
++		let slot = length(info.radios) > 0 ? null : band_slots[band_name];
++		if (slot != null && config[`radio${slot}`] == null)
++			idx = slot;
++
+ 		while (config[`radio${idx}`])
+ 			idx++;
+ 		let name = "radio" + idx;
+@@ -45,10 +59,6 @@
+ 		let s = "wireless." + name;
+ 		let si = "wireless.default_" + name;
+ 
+-		let band_name = filter(bands_order, (b) => radio.bands[b])[0];
+-		if (!band_name)
+-			continue;
+-
+ 		let band = info.bands[band_name];
+ 		let rband = radio.bands[band_name];
+ 		let channel = rband.default_channel ?? "auto";
