@@ -38,6 +38,17 @@ leds-pwm.c 都有），所以名字能保持 24.10 原样，LED 动作/触发器
 white:system 不加：硬件上没有白色灯珠，厂商 factory-pwm 里的 "white"
 是把三路 PWM 一起点亮的合成色，不是第四颗灯。
 
+同一补丁顺带关掉继承自 RDP433 的 leds 节点（2026-11-18 追加）：
+25.12 板级文件 include 了 ipq9574-rdp-common.dtsi，其中的 gpio-leds
+在 GPIO 64 上声明了一颗 green:wlan（phy0tx 触发）。真板上 GPIO 64
+不是灯：S1 把它 mux 成下拉的 iot_recovery，S2 把它放进 blsp1_spi，
+两台厂商 DTB 都没有任何 WLAN 灯珠节点。该节点留着只会给 LED 动作
+下拉提供一条幽灵条目，并在 probe 时按 RDP433 的 pin 状态把 GPIO 64
+设成上拉、8 mA。板级 / { leds { status = "disabled"; }; } 按节点名
+合并覆盖继承节点，真灯 red/green/blue:system 与风扇不受影响。
+24.10 的板级 DTS 是独立文件、没 include rdp-common，本来就没有这条，
+所以 24.10 侧无需改动。本次改动 真机 NOT TESTED（待下次 25.12 构建）。
+
 真机（2026-11-18，B 机）：首刷（无 max-brightness）blue:system 亮度落在 0，
 即上述驱动行为；补 max-brightness 后重编（sysupgrade sha256 2d4a33e9…）刷机
 PASS：blue:system brightness=255 / max_brightness=255 / trigger=[none]，
@@ -45,9 +56,9 @@ red/green 为 0，三频 AP 与 WAN/LAN 正常。
 
 --- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
 +++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
-@@ -427,6 +427,45 @@
+@@ -427,6 +427,54 @@
  };
- 
+
  /*
 + * Case LED: one RGB die on PWM channels 0/1/2 (GPIO 44/45/56, muxed in
 + * pwm_pins; channel 3 drives the fan).  The vendor DTB describes the same
@@ -57,10 +68,19 @@ red/green 为 0，三频 AP 与 WAN/LAN 正常。
 + * switch it off at runtime.  max-brightness must stay on all three nodes:
 + * leds-pwm takes the default-state = "on" brightness from it and silently
 + * ends at 0 when the property is missing.
-+ * The RDP433 leds node inherited from ipq9574-rdp-common.dtsi
-+ * (green:wlan on GPIO 64) is left as is.
++ *
++ * The RDP433 leds node inherited from ipq9574-rdp-common.dtsi (a gpio-leds
++ * entry named green:wlan on GPIO 64) is disabled below.  GPIO 64 is not an
++ * LED on this board: S1 muxes it as the pulled-down iot_recovery line and
++ * S2 puts it on blsp1_spi, and neither vendor DTB declares any WLAN LED.
++ * Left enabled, the node only adds a phantom green:wlan to LuCI's LED
++ * actions list and applies the RDP433 pin state (pull-up, 8 mA) to GPIO 64.
 + */
 +/ {
++	leds {
++		status = "disabled";
++	};
++
 +	leds-pwm {
 +		compatible = "pwm-leds";
 +

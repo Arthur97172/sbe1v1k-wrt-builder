@@ -323,6 +323,16 @@ luci-app-ledfancontrol 提交 `1f032f3`，真机验证：`min_pwm` 30→50 时 p
 `green:system` 为 0，三频 AP 与 WAN/LAN 正常。24.10 的 6.6 驱动是同一份逻辑，
 那边板级 DTS 同样补了这一行（真机 `NOT TESTED`）。
 
+同一补丁还会关掉从 RDP433 参考板继承来的 `leds` 节点（2026-11-18 追加）。
+25.12 板级文件 include 了 `ipq9574-rdp-common.dtsi`，其中 `leds`（gpio-leds）在
+GPIO 64 上声明了一颗 `green:wlan`。真板上 GPIO 64 不是灯：S1 把它 mux 成下拉的
+`iot_recovery`，S2 把它放进 `blsp1_spi`，两台厂商 DTB 都没有 WLAN 灯珠节点。
+节点留着只会在 LED 动作下拉里多一条幽灵条目，并按 RDP433 的 pin 状态把 GPIO 64
+设成上拉、8 mA。板级 `/ { leds { status = "disabled"; }; }` 按节点名合并覆盖继承
+节点；真灯与风扇不受影响。24.10 的板级 DTS 是独立文件、不 include rdp-common，
+本来就没有这条，无需改动。DTB 已用 6.12 构建树编译确认 `/leds` 为 `disabled`、
+`leds-pwm` 三个节点保持原样；真机 `NOT TESTED`。
+
 ### 板级 DTS 的 eMMC 控制器
 
 `patches/0021` 给 `ipq9574-sbe1v1k.dts` 加 `&sdhc_1` 块（引用文件里已有但一直
