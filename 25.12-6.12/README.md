@@ -299,7 +299,7 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 `red:system` / `green:system` / `blue:system`；蓝灯 `default-state = "on"` 做开机
 常亮的电源指示，red/green 保持 off。`default-state` 只在 probe 时写一次亮度、
 不装触发器，`ledfancontrol` 的 off 动作（trigger=none + brightness=0）运行期照样
-能关掉。
+能关掉（2026-11-18 真机验证：用 ledfancontrol 把蓝灯关掉后确实熄灭）。
 
 三个节点都必须带 `max-brightness = <255>`。6.12 的 `leds-pwm.c` 在
 `default-state = "on"` 时执行 `cdev.brightness = led->max_brightness`，而

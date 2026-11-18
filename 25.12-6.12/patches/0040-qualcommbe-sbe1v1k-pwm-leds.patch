@@ -18,7 +18,8 @@ red/green/blue:system。25.12 只继承了 RDP433 参考板的 gpio-leds
 与厂商 DTB 的唯一差别：蓝灯 default-state 设为 "on"（厂商为 off），
 作为开机常亮的电源指示；red/green 保持 off，交给 LED 动作控制。
 default-state 只是 probe 时把亮度写成 max、不装触发器，运行期
-ledfancontrol 的 off 动作（trigger=none + brightness=0）照样能关掉。
+ledfancontrol 的 off 动作（trigger=none + brightness=0）照样能关掉
+（2026-11-18 真机验证）。
 
 三个节点都必须写 max-brightness = <255>：6.12 的 leds-pwm.c 在
 default-state = "on" 时执行的是 cdev.brightness = led->max_brightness，

@@ -175,7 +175,8 @@ QCA8081，`qca808x_config_init()` 无条件把 MMD7 `0x901a` 的 BIT(6) 置上
 **蓝灯开机常亮**：pwm-leds 的 `led-blue` 改成 `default-state = "on"`
 （red/green 仍为 off）。`default-state` 只在 probe 时把亮度写成最大、
 不装触发器，`ledfancontrol` 的 off 动作（trigger=none + brightness=0）
-运行期照样能关掉。
+运行期照样能关掉（2026-11-18 在 25.12 真机验证：用 ledfancontrol 关掉后蓝灯
+熄灭；24.10 同一机制，尚未单独复验）。
 
 三个 pwm-led 节点都必须写 `max-brightness = <255>`。6.6/6.12 的
 `leds-pwm.c` 在 `default-state = "on"` 时执行的是
