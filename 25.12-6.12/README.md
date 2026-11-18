@@ -290,7 +290,18 @@ Stage 2.2 结束时 `DEVICE_DTS` **仍指向** `ipq9574-rdp433`：新 DTS 删掉
 `pwm-fan` 的 probe 直接 `set_pwm(ctx, MAX_PWM)`，没有 cooling device 就不会降速。
 
 两个补丁都只做了静态验证（补丁 dry-run、驱动交叉编译、DTS 用 dtc 编译并反编译
-断言节点内容），设备行为仍是 `NOT TESTED`，详见 `docs/V21_BOOT_AND_FAN_FIX.md`。
+断言节点内容），详见 `docs/V21_BOOT_AND_FAN_FIX.md`。
+
+2026-11-18 真机取证补充（风扇控制权）：`pwm-fan` 的 hwmon `pwm1_enable` 取值
+（0–3）只决定 PWM 与稳压器的电源开合组合（`pwm_fan_enable_mode_2_state`），
+不是「用户态 / 内核」的控制权开关，内核 thermal governor 在 `set_cur_state`
+里也从不检查它。因此温控区与 ledfancontrol 并不冲突：插件 1.1.3 起在自动档
+始终由用户态曲线写 `pwm1`，每轮读回并在 governor 于 trip 点改写后重写自己的
+值；只有显式 `option kernel_governor '1'` 时才让内核接管。旧版插件一见温区
+绑定风扇就写 `pwm1_enable=2` 并停手，页面上的「自动模式最低转速」被静默忽略，
+这就是本节所述 DTS 配置下风扇停在 72/255 且调最低转速无反应的原因（修复见
+luci-app-ledfancontrol 提交 `1f032f3`，真机验证：`min_pwm` 30→50 时 pwm1
+96→140）。
 
 ### 机箱 RGB LED（`patches/0040`）
 
