@@ -30,9 +30,19 @@ PCS 驱动 probe 只 ioremap 自己那三个 64 KiB 窗口、打开 sys/ahb 时�
 没有消费者时 recalc_rate 固定返回 125 MHz（SGMII 1G），正是 port5
 需要的父时钟速率。
 
+v3（2026-11-18，真机取证后回退）：v2 曾在 pcs0/1/2 覆盖里
+/delete-property/ resets;，想让 ssdk 成为 uniphy0/1/2_xpcs_rst 的
+唯一持有者、消掉 3 条 __reset_control_get_internal WARN。刷机后取证：
+镜像确实启动到了用户态（p27 尾部 overlay 里有完整的 sbe-boot-trace、
+nss-load "tier wired loaded"、uci-defaults 已执行），但 10G 管理口
+（eth0）没有任何流量，设备不可达。可见把 XPCS resets 交给 ssdk 独占
+会改变端口初始化行为。因此 resets 保留在 DTS 里，接受那 3 条 WARN
+作为已知噪声：PCS 驱动只消费时钟，从不 assert 该句柄（本内核没有带
+pcs-handle 的 dp 端口），功能上无影响。
+
 diff -ruN a/target/linux/qualcommbe/config-6.12 b/target/linux/qualcommbe/config-6.12
---- a/target/linux/qualcommbe/config-6.12	2026-11-18 02:02:25.985205111 +0000
-+++ b/target/linux/qualcommbe/config-6.12	2026-11-18 02:02:25.981739961 +0000
+--- a/target/linux/qualcommbe/config-6.12	2026-11-18 12:24:38.569286794 +0000
++++ b/target/linux/qualcommbe/config-6.12	2026-11-18 12:24:38.579968892 +0000
 @@ -328,7 +328,7 @@
  CONFIG_PCI_DOMAINS=y
  CONFIG_PCI_DOMAINS_GENERIC=y
@@ -43,11 +53,11 @@ diff -ruN a/target/linux/qualcommbe/config-6.12 b/target/linux/qualcommbe/config
  CONFIG_PGTABLE_LEVELS=3
  CONFIG_PHYLIB=y
 diff -ruN a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
---- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 02:02:25.987278098 +0000
-+++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 02:02:25.980606117 +0000
-@@ -523,22 +523,29 @@
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 12:24:38.581883480 +0000
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 12:24:38.582856072 +0000
+@@ -523,22 +523,38 @@
  };
- 
+
  /*
 - * UNIPHY register block consumed by qca-ssdk (ssdk_dt_parse_uniphy(), and
 - * the uniphy clock provider in ssdk_clk.c).  It covers the three 64 KiB
@@ -66,20 +76,29 @@ diff -ruN a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v
 + * itself; the PCS driver only maps its own 64 KiB windows and does not
 + * touch the hardware until a phylink consumer calls its ops, and none
 + * exists in this kernel (no pcs-handle on any dp port).
++ *
++ * The XPCS reset lines stay in place.  qca-ssdk requests the same three
++ * resets exclusively through its own gcc reset ids (ssdk_clk.c), so the PCS
++ * driver's devm_reset_control_get_optional() trips the shared/exclusive WARN
++ * in the reset core and fails with -EBUSY on every boot.  That is harmless:
++ * the driver never asserts the handle (no dp port carries a pcs-handle), it
++ * only needs its clocks.  Deleting the property was tried on 2026-11-18: the
++ * image still booted into userspace, but the 10G dp port never came up, so
++ * qca-ssdk must not be the only owner of the XPCS resets.
   */
  &pcs0 {
 -	status = "disabled";
 +	status = "okay";
  };
- 
+
  &pcs1 {
 -	status = "disabled";
 +	status = "okay";
  };
- 
+
  &pcs2 {
 -	status = "disabled";
 +	status = "okay";
  };
- 
+
  &soc {
