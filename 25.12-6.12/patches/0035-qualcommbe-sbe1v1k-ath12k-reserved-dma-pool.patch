@@ -1,0 +1,171 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: 每卡 128 MiB 预留 DMA 池给 ath12k 的 host-ddr-mem
+
+QCN9274 固件在 QMI 阶段一次性申请 28 MiB 连续 DMA 内存（dmesg：
+"qmi dma allocation failed (29360128 B type 1)"）。上游 ath12k 在 PCI
+上完全依赖 dma_alloc_coherent()，而 qualcommbe 的 6.12 配置沿用
+"# CONFIG_CMA is not set"。
+
+先试过打开 CMA/DMA_CMA（旧 0034，已删除）：硬件实测 v13-v16
+（2026-11-17）中，diag 内核在 switch_root 后 1-2 秒静默硬复位——
+无 panic/oops/hung task/RCU 任何输出，kmsg 里最后一条是兜底进程
+在 31.898 s 写的 tick=0；v12（同内核、无 CMA）跑满 960 s。CMA 的
+kconfig 差异只有 4 行，判定 CMA 在本 QSDK 6.12 内核上不可用，改走
+厂商同款方案。
+
+v17 真机（64 MiB/卡）证据：28 MiB host-ddr 分配成功，但三张卡一致
+在 12 MiB PAGEABLE（type 9）失败，随后 DP link desc 以 -ENOMEM 失败。
+根因在 kernel/dma/coherent.c 的分配语义：每个请求要求 2^order 页
+对齐的空闲连续区（bitmap_find_free_region），且设备挂上池之后
+dma_alloc_coherent() 失败不再回落到伙伴系统。28 MiB = order 13 需
+32 MiB 对齐槽位；两个 12 MiB = order 12 各需 16 MiB 对齐槽位。64 MiB
+池里 32+16+16 恰好占满：CE 管道 / MHI ring 也在同一设备池里做小
+分配，只要池头被弄脏，host-ddr 就被挤到高 32 MiB，两块 12 MiB 只能
+抢同一块 16 MiB 槽位，第二块必失败。128 MiB/卡保留同样布局并留出
+64 MiB 余量（DP link desc 每块 2 MiB，order 9）。
+
+方案（与 24.10 厂商 DTS / QSDK14 ath12k 对齐）：
+  1. sbe1v1k.dts 的 reserved-memory 增加三个 128 MiB、no-map 的
+     shared-dma-pool（qcn9224_pcie1/2/3，自厂商起始地址 0x50100000
+     顺延排布 0x50100000/0x58100000/0x60100000），并在各 pcie@0/
+     wifi@0 节点用 memory-region 引用（标签参考拨号与板级数据同源）；
+  2. backports 6.18.55 的 ath12k_pci_probe 在 ath12k_pci_claim() 之后
+     显式调用 of_reserved_mem_device_init()。PCI 设备不会自动挂接：
+     pci_dma_configure() 用的是桥的父节点，drivers/of/device.c 的
+     自动 attach 只认 restricted-dma-pool（本树里那是 SWIOTLB 池）。
+     挂上后 dma_alloc_attrs() 优先走 dma_alloc_from_dev_coherent()，
+     28 MiB 与后续 QMI 段都从预留池出。
+
+内核侧只需 CONFIG_OF_RESERVED_MEM=y（qualcommbe 基线已有）；
+kernel/dma/coherent.c 的 rmem_dma_device_init 在 6.12 由
+CONFIG_OF_RESERVED_MEM 守卫，不依赖 CMA。兼容性说明见 docs/。
+
+设备侧状态：v17 证明池挂接与 28 MiB 分配生效，12 MiB order 槽位不足
+失败；128 MiB 布局待 v18 真机验证。
+
+diff -Naur a/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-mem.patch b/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-mem.patch
+--- a/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-mem.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-mem.patch	2026-11-17 22:34:59.498547080 +0000
+@@ -0,0 +1,52 @@
++From: SBE1V1K build <noreply@example.invalid>
++Subject: [PATCH] wifi: ath12k: bind the endpoint's reserved DMA pool on probe
++
++QCN9274 固件在 QMI 阶段一次性申请 28 MiB 连续 DMA 内存（host-ddr-mem）。
++上游 ath12k 在 PCI 上完全依赖 dma_alloc_coherent() 从伙伴系统/CMA 取这块
++内存：qualcommbe 的 6.12 内核没开 CMA，256 MiB 的 CMA 池实测还会让 diag
++内核在 switch_root 后 1-2 s 静默硬复位（v13-v16），所以走厂商路线：DTS 给
++每张卡预留 64 MiB 的 shared-dma-pool（qcn9224_pcie1/2/3，no-map），本补丁
++在 probe 里把它挂到 PCI 设备上。
++
++PCI 设备不会自动挂接端点节点的 memory-region：pci_dma_configure() 用桥的
++父节点 of_dma_configure()，drivers/of/device.c 的自动 attach 也只认
++restricted-dma-pool。厂商 ath12k_pci.c 同样在这里显式调用
++of_reserved_mem_device_init()。
++
++--- a/drivers/net/wireless/ath/ath12k/pci.c	2026-10-03 14:50:59.000000000 +0000
+++++ b/drivers/net/wireless/ath/ath12k/pci.c	2026-11-17 13:44:31.116667917 +0000
++@@ -6,6 +6,7 @@
++ 
++ #include <linux/module.h>
++ #include <linux/msi.h>
+++#include <linux/of_reserved_mem.h>
++ #include <linux/pci.h>
++ #include <linux/time.h>
++ #include <linux/vmalloc.h>
++@@ -1600,6 +1601,18 @@
++ 		goto err_free_core;
++ 	}
++ 
+++	/* pci_dma_configure() derives the DMA domain from the bridge's node,
+++	 * so a memory-region on the endpoint node is never attached
+++	 * automatically.  Bind it here, before any QMI DMA allocation, so the
+++	 * firmware's host-ddr-mem comes from the reserved shared-dma-pool
+++	 * instead of order-13 buddy pages.
+++	 */
+++	ret = of_reserved_mem_device_init(&pdev->dev);
+++	if (ret && ret != -ENODEV) {
+++		ath12k_warn(ab, "failed to init reserved memory: %d\n", ret);
+++		ret = 0;
+++	}
+++
++ 	ath12k_dbg(ab, ATH12K_DBG_BOOT, "pci probe %04x:%04x %04x:%04x\n",
++ 		   pdev->vendor, pdev->device,
++ 		   pdev->subsystem_vendor, pdev->subsystem_device);
++@@ -1778,6 +1791,7 @@
++ 
++ 	ath12k_hal_srng_deinit(ab);
++ 	ath12k_ce_free_pipes(ab);
+++	of_reserved_mem_device_release(&pdev->dev);
++ 	ath12k_core_free(ab);
++ }
++ 
+diff -Naur a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-17 22:34:59.496474344 +0000
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-17 22:34:59.497511262 +0000
+@@ -176,6 +176,7 @@
+ 		ranges;
+ 
+ 		wifi@0 {
++			memory-region = <&qcn9224_pcie1>;
+ 			reg = <0x0 0x0 0x0 0x0 0x0>;
+ 			qcom,board_id = <0x01>;
+ 		};
+@@ -202,6 +203,7 @@
+ 		ranges;
+ 
+ 		wifi@0 {
++			memory-region = <&qcn9224_pcie2>;
+ 			reg = <0x0 0x0 0x0 0x0 0x0>;
+ 			qcom,board_id = <0x04>;
+ 		};
+@@ -228,6 +230,7 @@
+ 		ranges;
+ 
+ 		wifi@0 {
++			memory-region = <&qcn9224_pcie3>;
+ 			reg = <0x0 0x0 0x0 0x0 0x0>;
+ 			qcom,board_id = <0x02>;
+ 		};
+@@ -751,6 +754,42 @@
+ 		status = "okay";
+ 	};
+ 
++	/*
++	 * Per-card DMA pools for ath12k's QMI host-ddr-mem.  The firmware
++	 * asks for 28 MiB (host-ddr, order 13), 12 MiB (pageable, order 12)
++	 * and 12 MiB (mlo-global, order 12); the coherent allocator
++	 * (kernel/dma/coherent.c) hands out each request from a 2^order
++	 * aligned, fully free run and never falls back to the buddy
++	 * allocator, so the pool must fit 32+16+16 MiB of aligned slots
++	 * plus the CE/MHI and DP rings that also draw from it.  The vendor
++	 * 64 MiB per card (S1/S2, 24.10) leaves no slack: one small
++	 * allocation near the pool base forces host-ddr into the upper
++	 * 32 MiB and both 12 MiB requests then collide (v17, 2026-11-17:
++	 * "qmi dma allocation failed (12582912 B type 9)").  128 MiB per
++	 * card keeps the same layout with a 64 MiB margin.  ath12k binds
++	 * the region via of_reserved_mem_device_init() on the endpoint
++	 * node (see the ath12k patch).
++	 */
++	qcn9224_pcie1: qcn9224_pcie1@50100000 {
++		compatible = "shared-dma-pool";
++		no-map;
++		reg = <0x0 0x50100000 0x0 0x8000000>;
++		status = "okay";
++	};
++
++	qcn9224_pcie2: qcn9224_pcie2@58100000 {
++		compatible = "shared-dma-pool";
++		no-map;
++		reg = <0x0 0x58100000 0x0 0x8000000>;
++		status = "okay";
++	};
++
++	qcn9224_pcie3: qcn9224_pcie3@60100000 {
++		compatible = "shared-dma-pool";
++		no-map;
++		reg = <0x0 0x60100000 0x0 0x8000000>;
++		status = "okay";
++	};
+ };
+ 
+ /*

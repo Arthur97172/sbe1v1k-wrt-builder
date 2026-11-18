@@ -1,0 +1,85 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: enable the IPQ9574 PCS clock providers
+
+设备取证（2026-11-18，v3 PHY 修复后的生产镜像）：MDIO 扫描已全绿
+（0x10-0x13、0x1c 全部绑定），WAN eth1 载波 1 Gbps 但 RX 恒为 0、
+DHCP discover 无人应答，dmesg 每 ~0.37 s 刷一条：
+
+  nss_cc_port5_tx_clk_src: can't find a configuration for rate ...
+
+栈是 qca_hppe_mac_sw_sync_task → ssdk_port_speed_clock_set →
+ssdk_uniphy_clock_rate_set → clk_rcg2_fm_determine_rate →
+__clk_rcg2_select_conf。
+
+根因在时钟树：nsscc 的 port5 RX/TX 时钟源表以 UNIPHY0/1 的
+NSS RX/TX 时钟为父（nss_cc_parent_data_0 的 DT 索引 4..9），而这些
+父时钟由 mainline PCS 驱动（pcs-qcom-ipq9574.c，ipq_pcs_clk_register()
+注册 "%s::rx_clk"/"%s::tx_clk"）提供。板级 DTS 把 pcs0/pcs1/pcs2 全部
+disabled，内核配置也没打开 CONFIG_PCS_QCOM_IPQ9574，于是
+clk_hw_get_parent_by_index() 对每个候选 conf 都返回 NULL，
+__clk_rcg2_select_conf() 一个可用配置都选不出来 → WARN，port5 的
+时钟永远设不上。CCF 的父时钟是懒解析、失败不缓存
+（clk_core_fill_parent_index），所以只要提供者注册起来即可，
+无需关心它与 nsscc 的 probe 先后。
+
+共存性与 qca-ssdk 无冲突：qca-ssdk 通过自己 DT 节点 "ess-uniphy" 的
+裸 ioremap 访问同一地址段（ioremap 不占 IORESOURCE_MEM region），
+PCS 驱动 probe 只 ioremap 自己那三个 64 KiB 窗口、打开 sys/ahb 时钟、
+注册时钟提供者，不写 UNIPHY 寄存器；写寄存器的 ops 只有 phylink
+消费者才会调用，而本内核的 dp 端口都没有 pcs-handle。PCS 时钟在
+没有消费者时 recalc_rate 固定返回 125 MHz（SGMII 1G），正是 port5
+需要的父时钟速率。
+
+diff -ruN a/target/linux/qualcommbe/config-6.12 b/target/linux/qualcommbe/config-6.12
+--- a/target/linux/qualcommbe/config-6.12	2026-11-18 02:02:25.985205111 +0000
++++ b/target/linux/qualcommbe/config-6.12	2026-11-18 02:02:25.981739961 +0000
+@@ -328,7 +328,7 @@
+ CONFIG_PCI_DOMAINS=y
+ CONFIG_PCI_DOMAINS_GENERIC=y
+ CONFIG_PCI_MSI=y
+-# CONFIG_PCS_QCOM_IPQ9574 is not set
++CONFIG_PCS_QCOM_IPQ9574=y
+ CONFIG_PER_VMA_LOCK=y
+ CONFIG_PGTABLE_LEVELS=3
+ CONFIG_PHYLIB=y
+diff -ruN a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 02:02:25.987278098 +0000
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 02:02:25.980606117 +0000
+@@ -523,22 +523,29 @@
+ };
+ 
+ /*
+- * UNIPHY register block consumed by qca-ssdk (ssdk_dt_parse_uniphy(), and
+- * the uniphy clock provider in ssdk_clk.c).  It covers the three 64 KiB
+- * mainline ethernet-pcs windows, so disable those nodes: their driver is not
+- * built into this kernel (CONFIG_PCS_QCOM_IPQ9574 is not set), and enabling
+- * it later would fight qca-ssdk for the same registers.
++ * The mainline PCS driver registers the per-UNIPHY RX/TX clocks that NSSCC
++ * consumes as parents of the port clock-source dividers (nsscc "clocks"
++ * indices 4..9).  Without a provider those parents never resolve and every
++ * rate request on nss_cc_port5_*_clk_src hits the
++ * "can't find a configuration for rate" WARN in __clk_rcg2_select_conf, so
++ * the SGMII/2.5G WAN port can never be clocked and eth1 stays RX=0.
++ *
++ * Coexistence with qca-ssdk is safe: qca-ssdk reaches the UNIPHY registers
++ * through a bare ioremap of its own "ess-uniphy" node and parses the block
++ * itself; the PCS driver only maps its own 64 KiB windows and does not
++ * touch the hardware until a phylink consumer calls its ops, and none
++ * exists in this kernel (no pcs-handle on any dp port).
+  */
+ &pcs0 {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ &pcs1 {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ &pcs2 {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ &soc {

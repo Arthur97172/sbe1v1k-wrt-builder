@@ -1,0 +1,210 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: pulse the whole phy-reset array in the
+ MDIO driver, fix the LAN/WAN port bitmaps
+
+2026-11-18 production build on router B: the MDIO scan reported devices
+at 0x10-0x13 and 0x1c missing (mdio_bus 90000.mdio-1: MDIO device at
+address 16/17/18/19/28 is missing), hsl_phy_phydev_get failed, and
+ssdk_port_phylink_setup returned -19 for PPE ports 3/4/5, so eth1 (2.5G
+WAN) and eth2/eth3 (1G LAN) fell back to the legacy PHY path: no WAN
+DHCP, eth1 tx/rx stayed 0.
+
+Root cause: on 24.10 the QSDK mdio-ipq4019 driver pulses every entry of
+the "phy-reset-gpio" array (tlmm 60, the qca8075 package reset, and
+tlmm 52, the RTL8261N reset) inside ipq_mdio_reset(), before
+of_mdiobus_register(); dmesg then shows the 0x10-0x13 / 0x1c PHYs
+binding at 13.4-14.0s.  The upstream 6.12 mdio-ipq4019 driver has no
+such pulse.
+
+A first attempt used phylib's bus-level reset-gpios on the MDIO node
+(tlmm 60 only).  On the device that was not enough: the qca8075 package
+(0x10-0x13) and eth2/eth3 came back, but the qca8081 (0x1c) still
+failed to answer, so WAN stayed dead.  phylib only releases tlmm 52
+through the RTL8261N phy node's own reset-gpios, and the PHY devices
+probe in DT child order, after the 0x1c address has already been read.
+24.10's DTS has no reset-gpios on the RTL phy node for exactly this
+reason: the MDIO driver pulsed both lines up front.
+
+This patch therefore restores the QSDK pulse faithfully in the driver
+(bitmap over the whole array, 100 ms hold and 100 ms settle in both
+directions) and adds a longer post-deassert settle (1 s), because our
+bus is scanned about ten seconds earlier in the boot than QSDK's was
+and the PHYs are still powering up.  The RTL phy node's reset-gpios is
+dropped so phylib does not re-claim a line the driver already owns; the
+vendor "phy-reset-gpio" property itself stays for qca-ssdk, which parses
+its own property and only uses index 0.
+
+The QSDK CMN PLL poke (ipq_cmn_clk_reset()) is deliberately not ported.
+It writes the block at 0x9b000, but 6.12 has the upstream ipq-cmn-pll
+clock driver enabled, which already maps that register block exclusively
+and drives the same refclk/RSTN/lock sequence.  A second ioremap here
+would fail with -EBUSY and take down the whole MDIO bus.
+
+switch_lan_bmp / switch_wan_bmp go back to the 24.10 values: 0x58 =
+SSDK ports 3, 4, 6 (eth2, eth3, eth0 10G) LAN, 0x20 = port 5 (eth1
+2.5G) WAN.  The 0x38 / 0x40 pair put WAN on the 10G port and contradicts
+netifd (wan.device=eth1).
+
+Device status for this patch: NOT TESTED (local build plus the v2
+bus-reset variant's partial on-device result at the time of writing).
+
+diff -ruN a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 00:44:15.338855505 +0000
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 01:14:35.018791302 +0000
+@@ -238,12 +238,13 @@
+ };
+ 
+ /*
+- * qca-ssdk reads the PHY reset line as "phy-reset-gpio" (singular,
+- * ssdk_dt_parse_phy_info()), not as the phylib "reset-gpios".  It only
+- * consumes index 0 (SSDK_PHY_RESET_GPIO_INDEX), so the qca8075 reset
+- * (tlmm 60) must come first; the RTL8261N reset (tlmm 52) is declared here
+- * to keep the S1/S2 property intact and is also wired to the phy node below
+- * so phylib owns it.
++ * "phy-reset-gpio" (singular) is the vendor property: qca-ssdk reads it in
++ * ssdk_dt_parse_phy_info() and only consumes index 0 (the qca8075 package
++ * reset, tlmm 60), while the ipq4019 MDIO driver pulses the whole array
++ * before the PHY scan.  Both lines (tlmm 60 qca8075, tlmm 52 RTL8261N)
++ * must be pulsed before the scan: phylib's per-PHY reset of tlmm 52 only
++ * happens when the RTL8261N probes, which is after the qca8081 (0x1c)
++ * has already been read, and 24.10 pulsed both here for the same reason.
+  */
+ &mdio {
+ 	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW>;
+@@ -285,7 +286,6 @@
+ 	phy5: ethernet-phy@0 {
+ 		compatible = "ethernet-phy-ieee802.3-c45";
+ 		reg = <0>;
+-		reset-gpios = <&tlmm 52 GPIO_ACTIVE_LOW>;
+ 	};
+ };
+ 
+@@ -468,8 +468,8 @@
+ &ess_switch {
+ 	mdio-bus = <&mdio>;
+ 
+-	switch_lan_bmp = <0x38>;	/* lan: ports 3, 4 (1G) and 5 (2.5G) */
+-	switch_wan_bmp = <0x40>;	/* wan: port 6 (10G) */
++	switch_lan_bmp = <0x58>;	/* lan: SSDK ports 3, 4 (1G) and 6 (10G) */
++	switch_wan_bmp = <0x20>;	/* wan: SSDK port 5 (2.5G) */
+ 	/* Values are enum ssdk_port_wrapper_cfg (include/init/ssdk_init.h:129),
+ 	 * one per UNIPHY instance. */
+ 	switch_mac_mode = <0xb>;	/* uniphy 0: QSGMII */
+diff -ruN a/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch b/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch
+--- a/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch	2026-11-18 01:14:40.906159458 +0000
+@@ -0,0 +1,114 @@
++net: mdio: ipq4019: pulse phy-reset GPIOs before the PHY scan
++
++The QSDK 6.6 mdio-ipq4019 driver pulses the whole "phy-reset-gpio" GPIO
++array (bitmap over ndescs, IPQ_PHY_SET_DELAY_US hold and settle in both
++directions) inside ipq_mdio_reset(), right before the bus is scanned.
++Without it the PHYs behind the UNIPHYs do not answer on 6.12: on the
++SBE1V1K the qca8075 package (0x10-0x13) and the qca8081 (0x1c) are held
++in reset when of_mdiobus_register() starts probing.
++
++Restore that pulse faithfully, including every array entry, and add a
++longer post-deassert settle (1 s instead of 100 ms) because our bus is
++scanned about ten seconds earlier in the boot than QSDK's was: the PHYs
++are still powering up.
++
++The QSDK CMN PLL poke (ipq_cmn_clk_reset()) is deliberately not ported.
++It writes the block at 0x9b000, but 6.12 has the upstream ipq-cmn-pll
++clock driver enabled, which already maps that register block exclusively
++and drives the same refclk/RSTN/lock sequence.  A second ioremap here
++would fail with -EBUSY and take down the whole MDIO bus.
++
++Note that phylib's per-PHY "reset-gpios" is not a substitute: it pulses
++tlmm 52 only when the RTL8261N probes, which happens after the 0x1c
++address has already been read.  The vendor DTS has no per-PHY
++reset-gpios for exactly this reason.
++
++---
++--- a/drivers/net/mdio/mdio-ipq4019.c
+++++ b/drivers/net/mdio/mdio-ipq4019.c
++@@ -2,7 +2,9 @@
++ /* Copyright (c) 2015, The Linux Foundation. All rights reserved. */
++ /* Copyright (c) 2020 Sartura Ltd. */
++ 
+++#include <linux/bitmap.h>
++ #include <linux/delay.h>
+++#include <linux/gpio/consumer.h>
++ #include <linux/io.h>
++ #include <linux/iopoll.h>
++ #include <linux/kernel.h>
++@@ -48,9 +50,16 @@
++ 
++ #define IPQ_PHY_SET_DELAY_US	100000
++ 
+++/* The PHYs behind the UNIPHYs are also physically reset here, so give them
+++ * a full second to become MDIO-ready; the QSDK driver had the advantage of
+++ * being loaded about ten seconds later in the boot than we are.
+++ */
+++#define IPQ_PHY_SETTLE_DELAY_US	1000000
+++
++ struct ipq4019_mdio_data {
++ 	void __iomem	*membase;
++ 	void __iomem *eth_ldo_rdy;
+++	struct gpio_descs *reset_gpios;
++ 	struct clk *mdio_clk;
++ 	unsigned int mdc_rate;
++ };
++@@ -247,6 +256,36 @@
++ 	return -EINVAL;
++ }
++ 
+++/* Pulse every phy-reset line (the DT "phy-reset-gpio" array, whose index 0
+++ * is the qca8075 package reset).  The QSDK driver did this before the scan;
+++ * without it the PHYs behind the UNIPHYs do not answer.
+++ */
+++static void ipq_phy_reset_pulse(struct ipq4019_mdio_data *priv)
+++{
+++	unsigned long *values;
+++
+++	if (!priv->reset_gpios)
+++		return;
+++
+++	values = bitmap_zalloc(priv->reset_gpios->ndescs, GFP_KERNEL);
+++	if (!values)
+++		return;
+++
+++	bitmap_fill(values, priv->reset_gpios->ndescs);
+++	gpiod_set_array_value_cansleep(priv->reset_gpios->ndescs,
+++				       priv->reset_gpios->desc,
+++				       priv->reset_gpios->info, values);
+++	fsleep(IPQ_PHY_SET_DELAY_US);
+++
+++	bitmap_zero(values, priv->reset_gpios->ndescs);
+++	gpiod_set_array_value_cansleep(priv->reset_gpios->ndescs,
+++				       priv->reset_gpios->desc,
+++				       priv->reset_gpios->info, values);
+++	bitmap_free(values);
+++
+++	fsleep(IPQ_PHY_SETTLE_DELAY_US);
+++}
+++
++ static int ipq_mdio_reset(struct mii_bus *bus)
++ {
++ 	struct ipq4019_mdio_data *priv = bus->priv;
++@@ -263,6 +302,8 @@
++ 		fsleep(IPQ_PHY_SET_DELAY_US);
++ 	}
++ 
+++	ipq_phy_reset_pulse(priv);
+++
++ 	/* Configure MDIO clock source frequency if clock is specified in the device tree */
++ 	ret = clk_set_rate(priv->mdio_clk, IPQ_MDIO_CLK_RATE);
++ 	if (ret)
++@@ -358,6 +399,12 @@
++ 			return PTR_ERR(priv->eth_ldo_rdy);
++ 	}
++ 
+++	priv->reset_gpios = devm_gpiod_get_array_optional(&pdev->dev, "phy-reset",
+++							  GPIOD_OUT_LOW);
+++	if (IS_ERR(priv->reset_gpios))
+++		return dev_err_probe(&pdev->dev, PTR_ERR(priv->reset_gpios),
+++				     "couldn't get phy-reset GPIOs\n");
+++
++ 	bus->name = "ipq4019_mdio";
++ 	bus->read = ipq4019_mdio_read_c22;
++ 	bus->write = ipq4019_mdio_write_c22;
