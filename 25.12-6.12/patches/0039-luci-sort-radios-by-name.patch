@@ -1,0 +1,46 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] luci: sort the radio sections with a real comparator
+
+真机现象（2026-11-18，B 机 25.12）：网络 → 无线 概览页的射频块按
+radio2、radio1、radio0 显示，与 /etc/config/wireless 的段落顺序一致；同一块
+板子上 24.10 的页面是 radio0、radio1、radio2。
+
+根因：luci-mod-network 的 wireless.js 在 s.load 里想按名字排序射频，比较器
+却写成 `return a.getName() > b.getName();`，返回布尔值而不是负数/零/正数。
+Array#sort 把 false 当 0、true 当 1，构不成合法的比较关系，实测（V8/Node）
+对 ["radio2","radio1","radio0"] 与 ["radio0","radio1","radio2"] 都不做任何
+重排，页面于是沿用 network.getWifiDevices() 的返回顺序 —— UCI 配置的段落
+顺序。25.12 的段落顺序又随 ath12k 探测顺序变（每次 phy 热插拔触发一次
+wifi config，见 0038），所以显示顺序每台/每次刷机都可能不同。
+
+luci-mod-status 的 60_wifi.js（状态 → 概览的无线块）是同一处问题的变体：
+`radios.sort((a, b) => { a.getName() > b.getName() })` 的箭头函数体是块语句，
+没有 return，比较器恒为 undefined，同样不排序。
+
+上游 master 两处均已改为 a.getName().localeCompare(b.getName())，本补丁把
+这行改法回移到 pin 的 luci 提交上。排序键是段落名；radioN 在 N<10 时字典序
+与十进制顺序一致，与上游行为相同。
+
+---
+--- a/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
++++ b/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js
+@@ -890,7 +890,7 @@
+ 		s.load = function() {
+ 			return network.getWifiDevices().then(L.bind(function(radios) {
+ 				this.radios = radios.sort(function(a, b) {
+-					return a.getName() > b.getName();
++					return a.getName().localeCompare(b.getName());
+ 				});
+ 
+ 				const tasks = [];
+--- a/feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/60_wifi.js
++++ b/feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/60_wifi.js
+@@ -233,7 +233,7 @@
+ 
+ 		const table = E('div', { 'class': 'network-status-table' });
+ 
+-		for (let i = 0; i < radios.sort((a, b) => { a.getName() > b.getName() }).length; i++)
++		for (let i = 0; i < radios.sort((a, b) => a.getName().localeCompare(b.getName())).length; i++)
+ 			table.appendChild(this.renderbox(radios[i],
+ 				networks.filter(net => { return net.getWifiDeviceName() == radios[i].getName() })));
+ 
