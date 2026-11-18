@@ -40,8 +40,12 @@ dma_alloc_coherent() 失败不再回落到伙伴系统。28 MiB = order 13 需
 kernel/dma/coherent.c 的 rmem_dma_device_init 在 6.12 由
 CONFIG_OF_RESERVED_MEM 守卫，不依赖 CMA。兼容性说明见 docs/。
 
-设备侧状态：v17 证明池挂接与 28 MiB 分配生效，12 MiB order 槽位不足
-失败；128 MiB 布局待 v18 真机验证。
+设备侧状态：v17 证明池挂接与 28 MiB 分配生效、12 MiB order 槽位不足
+失败；128 MiB 布局 v18 真机 PASS（2026-11-17），此后 25.12 生产镜像一直
+携带本补丁（运行中设备的 DT 里 wifi@0/memory-region 指向 qcn9224_pcieN）。
+
+应用顺序：DTS 段的 hunk 1-3 用 0033（qcom,board_id）写出的 wifi@0 节点
+内容作上下文，本补丁必须排在 0033 之后；prepare-tree.sh 按文件名顺序应用。
 
 diff -Naur a/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-mem.patch b/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-mem.patch
 --- a/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-mem.patch	1970-01-01 00:00:00.000000000 +0000
@@ -99,9 +103,8 @@ diff -Naur a/package/kernel/mac80211/patches/ath12k/401-ath12k-sbe1v1k-reserved-
 + 	ath12k_core_free(ab);
 + }
 + 
-diff -Naur a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
---- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-17 22:34:59.496474344 +0000
-+++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-17 22:34:59.497511262 +0000
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
 @@ -176,6 +176,7 @@
  		ranges;
  
@@ -126,10 +129,11 @@ diff -Naur a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1
  			reg = <0x0 0x0 0x0 0x0 0x0>;
  			qcom,board_id = <0x02>;
  		};
-@@ -751,6 +754,42 @@
+@@ -750,6 +753,43 @@
+ 		reg = <0x0 0x40000000 0x0 0x2000000>;
  		status = "okay";
  	};
- 
++
 +	/*
 +	 * Per-card DMA pools for ath12k's QMI host-ddr-mem.  The firmware
 +	 * asks for 28 MiB (host-ddr, order 13), 12 MiB (pageable, order 12)

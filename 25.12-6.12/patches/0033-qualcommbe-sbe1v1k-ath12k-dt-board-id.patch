@@ -1,0 +1,151 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: ath12k 用 DT qcom,board_id 选板级数据
+
+25.12 diag 真机（v10，2026-11-17）里三块 QCN9274 全部探测失败：
+固件 CAP 报 board_id 0xff，ath12k 拿 "qmi-board-id=255" 去查厂商
+board-2.bin，而里面只有 1/2/4 三个条目（b1/b2/b4.bin），于是
+"failed to fetch board data"、hostapd 起不来、WiFi 管理面全灭。
+
+QSDK14 的 ath12k 在这里多一层设备树回退：固件给的值无效时读端点
+节点（wifi@0）的 qcom,board_id。24.10 的 DTS 正是这样标注三块卡
+（pcie1=1、pcie2=4、pcie3=2，S2 板级值）。本补丁把同一逻辑带到
+backports 6.18.55 的 mac80211 包（ath12k 模块由它编译，不来自
+内核树），并给 25.12 的 sbe1v1k.dts 补上等价的 pcie@0/wifi@0
+子节点——主线的 PCI/OF 匹配（pci_set_of_node）与 QSDK 相同，
+无需额外驱动改动即可让端点挂上设备树节点。
+
+依据：
+  - 24.10-6.6/build/p-b/files/.../ipq9574-sbe1v1k.dts 的 wifi@0 节
+    点与 board_id 注释（S2/RD 一致）；
+  - QSDK14 backports-6.1 ath12k/qmi.c ath12k_qmi_request_target_cap；
+  - v10 dmesg 的 board-2.bin 查找失败日志与 board-2.bin 内容
+    （仅 qmi-board-id=1/2/4 条目）。
+
+diff -Naur a/package/kernel/mac80211/patches/ath12k/400-ath12k-dt-board-id.patch b/package/kernel/mac80211/patches/ath12k/400-ath12k-dt-board-id.patch
+--- a/package/kernel/mac80211/patches/ath12k/400-ath12k-dt-board-id.patch
++++ b/package/kernel/mac80211/patches/ath12k/400-ath12k-dt-board-id.patch
+@@ -0,0 +1,61 @@
++From: SBE1V1K build <noreply@example.invalid>
++Subject: [PATCH] wifi: ath12k: fall back to DT qcom,board_id when firmware reports none
++
++SBE1V1K 的三块 QCN9274（pcie1/2/3）在 QSDK14 驱动里靠设备树子节点
++wifi@0 的 qcom,board_id（1/4/2）选定 board-2.bin 里的板级数据。backports
++6.18.55 的 ath12k 只认固件 CAP 应答里的 board_id：本机固件回 0xff
++（ATH12K_BOARD_ID_DEFAULT），驱动于是拿 "qmi-board-id=255" 去查
++board-2.bin，而厂商板级文件里只有 1/2/4 三个条目，探测失败：
++
++  ath12k ... failed to fetch board data for bus=pci,qmi-chip-id=0,qmi-board-id=255
++  ath12k ... qmi failed to load board data file:-12
++
++真机证据：2026-11-17 diag RAM 镜像（v10）dmesg 三块卡全部停在上述错误，
++hostapd 无从启动，管理面全灭。
++
++移植 QSDK14 ath12k（qmi.c ath12k_qmi_request_target_cap）的取值顺序：
++固件给的 board_id 有效且不是 0xFFFFFFFF 时用固件值；否则读设备树
++qcom,board_id（非 0xFF 才采用）；两者都没有才退回 0xFF。主线 ath12k
++至今没有这个回退，故由本补丁携带。
++
++diff -Naur a/drivers/net/wireless/ath/ath12k/qmi.c b/drivers/net/wireless/ath/ath12k/qmi.c
++--- a/drivers/net/wireless/ath/ath12k/qmi.c	2026-11-17 12:22:25.595562200 +0000
+++++ b/drivers/net/wireless/ath/ath12k/qmi.c	2026-11-17 12:22:25.597176141 +0000
++@@ -2790,7 +2790,8 @@
++ 	struct qmi_wlanfw_cap_req_msg_v01 req = {};
++ 	struct qmi_wlanfw_cap_resp_msg_v01 resp = {};
++ 	struct qmi_txn txn;
++-	unsigned int board_id = ATH12K_BOARD_ID_DEFAULT;
+++	struct device *dev = ab->dev;
+++	unsigned int board_id;
++ 	int ret = 0;
++ 	int r;
++ 	int i;
++@@ -2829,10 +2830,14 @@
++ 		ab->qmi.target.chip_family = resp.chip_info.chip_family;
++ 	}
++ 
++-	if (resp.board_info_valid)
+++	if (resp.board_info_valid &&
+++	    resp.board_info.board_id != ATH12K_BOARD_ID_INVALID)
++ 		ab->qmi.target.board_id = resp.board_info.board_id;
++-	else
+++	else if (!of_property_read_u32(dev->of_node, "qcom,board_id", &board_id) &&
+++		 board_id != ATH12K_BOARD_ID_DEFAULT)
++ 		ab->qmi.target.board_id = board_id;
+++	else
+++		ab->qmi.target.board_id = ATH12K_BOARD_ID_DEFAULT;
++ 
++ 	if (resp.soc_info_valid)
++ 		ab->qmi.target.soc_id = resp.soc_info.soc_id;
++diff -Naur a/drivers/net/wireless/ath/ath12k/qmi.h b/drivers/net/wireless/ath/ath12k/qmi.h
++--- a/drivers/net/wireless/ath/ath12k/qmi.h	2026-11-17 12:22:25.595657254 +0000
+++++ b/drivers/net/wireless/ath/ath12k/qmi.h	2026-11-17 12:22:25.597275134 +0000
++@@ -38,6 +38,7 @@
++ #define QMI_WLANFW_MAX_DATA_SIZE_V01		6144
++ #define ATH12K_FIRMWARE_MODE_OFF		4
++ 
+++#define ATH12K_BOARD_ID_INVALID	0xFFFFFFFF
++ #define ATH12K_BOARD_ID_DEFAULT	0xFF
++ 
++ struct ath12k_base;
+diff -Naur a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -167,6 +167,19 @@
+ 	perst-gpios = <&tlmm 26 GPIO_ACTIVE_LOW>;
+ 	wake-gpios = <&tlmm 27 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
++
++	pcie@0 {
++		device_type = "pci";
++		reg = <0x0 0x0 0x0 0x0 0x0>;
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		wifi@0 {
++			reg = <0x0 0x0 0x0 0x0 0x0>;
++			qcom,board_id = <0x01>;
++		};
++	};
+ };
+ 
+ &pcie2_phy {
+@@ -180,6 +193,19 @@
+ 	perst-gpios = <&tlmm 29 GPIO_ACTIVE_LOW>;
+ 	wake-gpios = <&tlmm 30 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
++
++	pcie@0 {
++		device_type = "pci";
++		reg = <0x0 0x0 0x0 0x0 0x0>;
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		wifi@0 {
++			reg = <0x0 0x0 0x0 0x0 0x0>;
++			qcom,board_id = <0x04>;
++		};
++	};
+ };
+ 
+ &pcie3_phy {
+@@ -193,6 +219,19 @@
+ 	perst-gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;
+ 	wake-gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
++
++	pcie@0 {
++		device_type = "pci";
++		reg = <0x0 0x0 0x0 0x0 0x0>;
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		wifi@0 {
++			reg = <0x0 0x0 0x0 0x0 0x0>;
++			qcom,board_id = <0x02>;
++		};
++	};
+ };
+ 
+ /*

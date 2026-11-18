@@ -919,8 +919,9 @@ run 41 的启动循环（3–4 分钟复位，PHY 有载波但主机零帧、WiF
 
 变体只产 **initramfs FIT**（TFTP + `bootm` 的 RAM 镜像，不写 eMMC）；
 两个变体都保留 ath12k + 厂商固件，三频 SSID 是外部可见的「用户态还活着」
-判据。CI 入口是 `.github/workflows/build-25.12-diag.yml`（只能手动触发），
-产物只进 Actions artifact、**不建 Release**；本地构建用环境变量：
+判据。这条诊断线已收尾（结论见 `docs/DIAG_RUN_2026-11-16.md`），CI 入口
+`build-25.12-diag.yml` 随之删除（它只能手动触发、产物只进 Actions
+artifact、不建 Release）；变体机制本身保留，需要时本地构建用环境变量：
 
 ```
 SBE_VARIANT=diag ./25.12-6.12/build/sbe1v1k-build.sh
