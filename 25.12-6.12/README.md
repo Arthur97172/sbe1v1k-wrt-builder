@@ -906,7 +906,8 @@ NSS 源码：本机若已有厂商树 `sources/buildroot/qca/src/nss/base`，`ns
 `check-kernel.sh`（只报告）→ 写 `.config` + `check-packages seed` +
 `defconfig` + `check-packages index` / `config` → `world` 编译 →
 `verify-image.sh`（含逐包反查）→ 上传日志/产物 → **每次运行新建一个 Release**，
-tag 为 `v<run>-<attempt>-<sha8>-25.12-6.12`，资产恰好三个固件文件，
+tag 为 `25.12-6.12-v<run>-<attempt>-<sha8>`，Release 显示名为
+`SBE1V1K 25.12-6.12 v<run>-<attempt>-<sha8>`，资产恰好三个固件文件，
 release notes 附插件提交表与内核检测结论。
 
 `workflow_dispatch` 有两个相关输入：`plugin_mode`（`latest` 默认 /

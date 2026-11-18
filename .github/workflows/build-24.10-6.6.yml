@@ -286,7 +286,9 @@ jobs:
         if: success()
         id: meta
         run: |
-          echo "tag=v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}" >> "$GITHUB_OUTPUT"
+          # tag 以固件线名开头（24.10-6.6-v<run>-<attempt>-<sha8>），Releases
+          # 列表里按 tag 排序时同一条线的版本聚在一起，也便于脚本按前缀筛选。
+          echo "tag=24.10-6.6-v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}" >> "$GITHUB_OUTPUT"
           VLINE=$(grep -m1 '^ Version:' sources/buildroot/files/etc/banner | sed 's/^ *//')
           echo "vline=$VLINE" >> "$GITHUB_OUTPUT"
 
@@ -393,7 +395,7 @@ jobs:
             if out=$(gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "SBE1V1K 24.10-6.6 ${TAG}" \
+              --title "SBE1V1K 24.10-6.6 ${TAG#24.10-6.6-}" \
               --notes-file "$REL/notes.md" \
               "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin" \
               "$REL/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb" \

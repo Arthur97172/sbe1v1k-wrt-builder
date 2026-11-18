@@ -255,7 +255,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          TAG="v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}-25.12-6.12"
+          # tag 以固件线名开头（25.12-6.12-v<run>-<attempt>-<sha8>），Releases
+          # 列表里按 tag 排序时同一条线的版本聚在一起，也便于脚本按前缀筛选。
+          VERSION_TAG="v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}"
+          TAG="25.12-6.12-${VERSION_TAG}"
           REL="$RUNNER_TEMP/release"
           VLINE=$(grep -m1 '^ Version:' sources/buildroot-25.12-6.12/files/etc/banner | sed 's/^ *//')
           # 0027 在 patches/disabled/ 时是 v28 对照构建，必须在 notes 里写明，
@@ -326,9 +329,10 @@ jobs:
             fi
           } >> "$REL/notes.md"
 
-          # 显示名带完整 tag（v<run>-<attempt>-<sha>-25.12-6.12），与 24.10 一致；
-          # 重跑靠 ATTEMPT 区分，sha 后缀便于在 Releases 列表里对号。
-          NAME="SBE1V1K 25.12-6.12 ${TAG}"
+          # 显示名带版本段（v<run>-<attempt>-<sha8>）；固件线名只在前缀出现一次，
+          # 因为 tag 本身已以 25.12-6.12 开头。重跑靠 ATTEMPT 区分，sha 后缀便于
+          # 在 Releases 列表里对号。
+          NAME="SBE1V1K 25.12-6.12 ${VERSION_TAG}"
           # 步骤日志对匿名不可读，失败原因折成 ::error:: 注解才看得到。
           enc() {
             awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");

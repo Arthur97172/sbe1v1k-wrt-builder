@@ -801,7 +801,7 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 | workflow | 触发 | 产物 |
 |---|---|---|
 | `sources-24.10-6.6.yml` 🧱 | `build/**`、`docs/**`、四个装配脚本变更 / 手动 | Release `sources-vN`：源码包 + `SHA256SUMS` + 指纹（恰好 3 个） |
-| `build-24.10-6.6.yml` 📦 | `24.10-6.6/**` 变更 / 手动（可指定 `source_tag`） | Release `v<run>-<attempt>-<sha8>`：三个固件（恰好 3 个） |
+| `build-24.10-6.6.yml` 📦 | `24.10-6.6/**` 变更 / 手动（可指定 `source_tag`） | Release `24.10-6.6-v<run>-<attempt>-<sha8>`：三个固件（恰好 3 个） |
 | `refresh-pins-24.10-6.6.yml` 🔄 | 每周一 04:23 UTC / 手动 | 分支 `auto/pin-refresh` + 一个 PR：插件 pin 的 old→new 表与内核检测结论；**从不自动合并** |
 
 插件怎么“跟最新”：`refresh-pins.sh` 把 11 个自维护插件与 7 个第三方仓库解析到

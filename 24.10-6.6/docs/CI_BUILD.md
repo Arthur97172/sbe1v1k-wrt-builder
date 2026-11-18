@@ -22,7 +22,7 @@
 | workflow | 文件 | 做什么 | 产物 |
 |---|---|---|---|
 | 🧱 Assemble | `.github/workflows/sources-24.10-6.6.yml` | 从 42 个固定提交装配源码树、比对指纹、打包 | Release `sources-vN`：**恰好 3 个**资产 |
-| 📦 Build | `.github/workflows/build-24.10-6.6.yml` | 下载源码包、七道门禁、编译、发布固件 | Release `v<run>-<attempt>-<sha8>`：**恰好 3 个**镜像 |
+| 📦 Build | `.github/workflows/build-24.10-6.6.yml` | 下载源码包、七道门禁、编译、发布固件 | Release `24.10-6.6-v<run>-<attempt>-<sha8>`：**恰好 3 个**镜像 |
 | 🔄 Refresh pins | `.github/workflows/refresh-pins-24.10-6.6.yml` | 每周把插件 pin 解析到最新、只读检测内核，开/更新 PR | 分支 `auto/pin-refresh` + 一个 PR（**不自动合并**） |
 
 改补丁/配置只需 push：装配 workflow 重新验证（可选发布新 `sources-vN`），构建 workflow 用
