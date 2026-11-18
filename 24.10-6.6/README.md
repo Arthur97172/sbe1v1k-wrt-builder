@@ -187,6 +187,25 @@ QCA8081，`qca808x_config_init()` 无条件把 MMD7 `0x901a` 的 BIT(6) 置上
 `max_brightness=255`、`brightness=0`）定位到驱动行为的。
 真机 NOT TESTED：24.10 本轮未重编、未刷机，结论来自同一份驱动代码。
 
+### 风扇测速（pwm-fan，2026-11-18，真机 NOT TESTED）
+
+p-b 设备树的 `pwm-fan` 节点补上了测速接线：
+
+```dts
+interrupts-extended = <&tlmm 40 IRQ_TYPE_EDGE_FALLING>;
+pulses-per-revolution = <2>;
+```
+
+GPIO 40 原本就由 `pwm_pins/mux_5` 配成上拉 GPIO，缺的只是把风扇的转速输出
+挂到中断上。6.6.147 的 `pwm-fan.c` 只在 `platform_irq_count(pdev) > 0` 时才
+创建风扇通道；没有中断时 hwmon 只暴露 `pwm1`/`pwm1_enable`，LuCI 的“风扇设备”
+列表显示 `pwmfan`，也不会有转速。补上之后多出 `fan1_input`（RPM），页面显示
+`pwmfan — 带测速`，与 25.12-6.12 一致。该写法与 25.12 板级 DTS 相同，DTB 用
+6.6.147 的构建树编译通过（`interrupts-extended = <&tlmm 40 2>`、
+`pulses-per-revolution = <2>` 已在反编译结果中确认）；设备行为尚未复验——
+24.10 本轮未重编、未刷机。不接测速也不影响风扇调速：占空比控制走
+`pwm1`，与中断无关。
+
 ### 以太网端口 MAC 固定化
 
 引导器（APPSBL）只把板级 base MAC 写进 `dp1` 的 DT `local-mac-address`

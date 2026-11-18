@@ -901,12 +901,23 @@
 	 * userspace drives /sys/class/hwmon/hwmonX/pwm1.  The vendor fills that
 	 * gap with its Go daemon.  This build has no equivalent yet -- tracked as
 	 * a P-C deliverable and a thermal-safety item in the device-definition doc.
+	 *
+	 * Tachometer: the fan's speed output is GPIO 40, two pulses per
+	 * revolution, already muxed as a pulled-up GPIO by pwm_pins/mux_5.  The
+	 * 6.6 pwm-fan driver only creates the fan channel when the node carries
+	 * an interrupt (platform_irq_count() > 0), so without these two
+	 * properties the hwmon device exposes pwm1/pwm1_enable but no
+	 * fan1_input, and luci-app-ledfancontrol can only show a duty cycle.
+	 * Declaring them adds fan1_input and the "with tachometer" hint in the
+	 * page's fan list.  Same wiring as the 25.12 board file.
 	 */
 	pwm-fan {
 		compatible = "pwm-fan";
 		cooling-min-state = <0>;
 		cooling-max-state = <3>;
 		pwms = <&pwm 3 40000 0>;
+		interrupts-extended = <&tlmm 40 IRQ_TYPE_EDGE_FALLING>;
+		pulses-per-revolution = <2>;
 		cooling-levels = <0 0x55 0xaa 0xff>;
 		#cooling-cells = <2>;
 	};

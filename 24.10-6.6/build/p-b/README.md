@@ -15,7 +15,7 @@
 
 | 路径 | 性质 | 状态 |
 |---|---|---|
-| `files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts` | 新设备树（801 行，2026-10-25 加入 eMMC：`sdc_default_state` + `&sdhc_1`） | 已用 `cpp` + `dtc` 离线校验：**0 error**（2026-10-25 复验，反编译 DTB 确认 `mmc@7804000` 为 `okay`） |
+| `files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts` | 新设备树（992 行，2026-10-25 加入 eMMC：`sdc_default_state` + `&sdhc_1`；2026-11-18 补 pwm-fan 测速中断） | 已用 6.6.147 构建树编译 DTB：**0 error**（2026-11-18 复验，反编译确认 `pwm-fan` 的 `interrupts-extended`/`pulses-per-revolution` 与 `mmc@7804000` 为 `okay`） |
 | `files/base-files/lib/upgrade/platform.sh` | target feed 的 `lib/upgrade/platform.sh` + `spectrum,sbe1v1k` 槽位探测与大小校验（770 行） | 单元测试 13/13 PASS（沙盒替换 `/proc`、`/sys` 路径后直接跑文件里的真函数）；真机 `NOT TESTED` |
 | `files/base-files/etc/board.d/01_network` | target feed 文件 + `spectrum,sbe1v1k` 分支 | 以 feed 版本为基线 |
 | `files/base-files/etc/board.d/02_ipq_board` | target feed 文件 + `spectrum,sbe1v1k` | 以 feed 版本为基线 |
