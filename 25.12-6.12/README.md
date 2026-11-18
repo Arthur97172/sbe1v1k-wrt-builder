@@ -220,6 +220,10 @@ panic=1，约 55–75 秒一次）。为拿到可启动基线与可定位平台�
 | `wired`（默认） | `qca-ssdk` + `qca-nss-dp`（dp 依赖 ppe，会连带 `qca-nss-ppe.ko`） | 有线管理与网络恢复 |
 | `full` | wired + `qca-nss-ppe` 全家 + `qca-nss-ecm` | 完整加速栈 |
 
+下一步验证：**`tier=full` 常开**（从手工 `nss-load` 过渡到生产默认，含 ECM
+出表判据与连续重启稳定性），2026-11-18 立项，计划与判据见
+`docs/NEXT_NSS_FULL.md`（真机 `NOT TESTED`）。
+
 启动流程：S15 `/etc/init.d/nss` → `nss-load boot` 读档位 → 按 `sdk`/`dp`/
 `ppe`/`ecm` 顺序 `modprobe`（sdk 另等 `/sys/ssdk`，dp/ppe/ecm 再执行对应
 init 脚本），每步把 uptime 与 modprobe/dmesg 输出写进
