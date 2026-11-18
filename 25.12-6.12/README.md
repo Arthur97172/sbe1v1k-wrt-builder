@@ -160,10 +160,28 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 
 | 包 | 6.12 补丁数 | 状态 |
 |----|------------|------|
-| `qca-ssdk`（nohnat） | 12 | `qca-ssdk.ko` 编译通过 |
+| `qca-ssdk`（nohnat） | 13 | `qca-ssdk.ko` 编译通过 |
 | `qca-nss-phy` | 8 | `qca-nss-phy.ko`、`qcom-lnx-phy.ko` 编译通过 |
-| `qca-nss-dp` | 7 | `qca-nss-dp.ko` 1,490,744 B，modpost 0 未定义 |
-| `qca-nss-ppe` | 20 | `qca-nss-ppe.ko` 编译通过（4.4 MB），导出 242 个 `ppe_drv_*` |
+| `qca-nss-dp` | 8 | `qca-nss-dp.ko` 编译通过，modpost 0 未定义；含 0008 sysctl 兼容 |
+| `qca-nss-ppe` | 25 | `qca-nss-ppe.ko` 编译通过，导出 242 个 `ppe_drv_*`；含 0025 sysctl 兼容 |
+
+### 6.11+ `register_sysctl()` 兼容（2026-11-17，真机验证）
+
+6.11 起 `register_sysctl()` 是
+`register_sysctl_sz(path, table, ARRAY_SIZE(table))` 的宏，QSDK 的 ctl_table
+数组以 `{}` 哨兵结尾，哨兵被计入条目数 → `sysctl_check_table()` 报
+`procname is null` → 注册返回 NULL → `ppe_drv_module_init` 的错误拆除路径
+在 `platform_driver_unregister` 里崩（PAN oops）→ `panic=20` 复位。这正是
+run 41 生产镜像启动循环与 diag v19 硬复位的死因（完整栈与复现见
+`docs/DIAG_RUN_2026-11-16.md` §27–28）。
+
+修复：`qca-nss-ppe/0025-sysctl-register-sz-6.12.patch`（3 处注册点）与
+`qca-nss-dp/0008-edma-sysctl-register-sz-6.12.patch`（2 处），均以
+`register_sysctl_sz(path, table, ARRAY_SIZE(table) - 1)` +
+`#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)` 门控。diag 真机
+v22（tier=wired）已 PASS：sdk/ppe/dp 一次装载，0 次 oops，eth0..eth3 出现，
+eth0 入 br-lan，有线管理面可用，三频 WiFi 并存（见 diag 文档 §29）。
+
 
 `qca-nss-dp` 引用 30 个 `ppe_drv_*` 符号，由 `qca-nss-ppe` 提供。符号不经过
 内核的 `Module.symvers`，而是走 `include/kernel.mk` 的
