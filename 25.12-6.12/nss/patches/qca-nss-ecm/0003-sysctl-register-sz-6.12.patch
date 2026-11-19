@@ -1,0 +1,41 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ecm: register the front-end sysctl table with an explicit entry count on 6.11+
+
+ecm_front_end_sysctl_tbl is the only ECM table built into ecm.ko that
+carries a trailing "{}" terminator.  On 6.11+ register_sysctl() counts
+it, sysctl_check_table() rejects the NULL-procname entry, and
+registration returns NULL:
+
+  sysctl table check failed: net/ecm/(null) procname is null
+  sysctl table check failed: net/ecm/(null) No proc_handler
+
+with the result that the front-end sysctl tree (front_end_conn_limit,
+ppe_fse_enable, udp/tcp_denied_ports, unidir_accel_en, sixth_tuple_mode,
+...) is missing from /proc/sys/net/ecm, and the
+ECM_FRONT_END_SFE_ENABLE guard skips ecm_sfe_sysctl_tbl_init().  Seen on
+2026-11-19 during a live "nss-load load full" on 25.12.
+
+Use register_sysctl_sz() with ARRAY_SIZE(table) - 1 on kernel 6.11+.
+linux/version.h is already included by this file.
+
+Signed-off-by: SBE1V1K build <noreply@example.invalid>
+---
+diff -ruN a/frontends/ecm_front_end_common.c b/frontends/ecm_front_end_common.c
+--- a/frontends/ecm_front_end_common.c	2026-11-19 01:08:34.755803464 +0000
++++ b/frontends/ecm_front_end_common.c	2026-11-19 01:08:48.284454746 +0000
+@@ -1753,7 +1753,15 @@
+ 	/*
+ 	 * Register sysctl table.
+ 	 */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
++	/* 6.11 起 register_sysctl() 取 ARRAY_SIZE(table) 作为条目数，把表尾的
++	 * "{}" 哨兵也算进去；哨兵 procname 为 NULL、无 proc_handler，校验失败
++	 * 导致注册返回 NULL。显式传真实条目数。 */
++	ecm_front_end_ctl_tbl_hdr = register_sysctl_sz("net/ecm", ecm_front_end_sysctl_tbl,
++			ARRAY_SIZE(ecm_front_end_sysctl_tbl) - 1);
++#else
+ 	ecm_front_end_ctl_tbl_hdr = register_sysctl("net/ecm", ecm_front_end_sysctl_tbl);
++#endif
+ #ifdef ECM_FRONT_END_SFE_ENABLE
+ 	if (ecm_front_end_ctl_tbl_hdr) {
+ 		ecm_sfe_sysctl_tbl_init();

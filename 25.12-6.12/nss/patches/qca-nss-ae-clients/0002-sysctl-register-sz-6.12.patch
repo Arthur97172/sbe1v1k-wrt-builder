@@ -1,0 +1,69 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ae-clients: register vlan/bridge sysctl tables with an explicit entry count on 6.11+
+
+Same 6.11 register_sysctl() change as qca-nss-ppe/0025: the macro now
+passes ARRAY_SIZE(table), which counts the trailing "{}" terminator, so
+sysctl_check_table() rejects the appended NULL-procname entry and
+registration returns NULL.
+
+Both the vlan manager (ppe/vlan_client) and the bridge manager
+(ppe/bridge_mgr) treat that as a fatal init error and return -EFAULT, so
+qca-nss-ppe-vlan.ko and qca-nss-ppe-bridge-mgr.ko never load.  This is
+what a live "nss-load load full" on 25.12 showed on 2026-11-19:
+
+  sysctl table check failed: ppe/vlan_client/(null) procname is null
+  sysctl table check failed: ppe/vlan_client/(null) No proc_handler
+  nss-load:   FAIL qca-nss-ppe-vlan did not load
+
+Use register_sysctl_sz() with ARRAY_SIZE(table) - 1 on kernel 6.11+,
+keeping the old call below; add linux/version.h to the bridge manager
+for the guard.  vlan manager already includes linux/version.h.
+
+Signed-off-by: SBE1V1K build <noreply@example.invalid>
+---
+diff -ruN a/clients/bridge/nss_ppe_bridge_mgr.c b/clients/bridge/nss_ppe_bridge_mgr.c
+--- a/clients/bridge/nss_ppe_bridge_mgr.c	2026-11-19 01:08:34.754421257 +0000
++++ b/clients/bridge/nss_ppe_bridge_mgr.c	2026-11-19 01:08:48.283811448 +0000
+@@ -13,6 +13,7 @@
+ #include <linux/if_vlan.h>
+ #include <linux/of.h>
+ #include <linux/module.h>
++#include <linux/version.h>
+ #include <linux/if_bridge.h>
+ #include <linux/netdevice.h>
+ #include <net/bonding.h>
+@@ -1842,7 +1843,15 @@
+ 	nss_ppe_bridge_mgr_info("Module (Build %s) loaded\n", NSS_PPE_BUILD_ID);
+ 	br_mgr_ctx.wan_netdev = NULL;
+ 	br_fdb_update_register_notify(&nss_ppe_bridge_mgr_fdb_update_notifier);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
++	/* 6.11 起 register_sysctl() 取 ARRAY_SIZE(table) 作为条目数，把表尾的
++	 * "{}" 哨兵也算进去；哨兵 procname 为 NULL、无 proc_handler，校验失败
++	 * 导致注册返回 NULL。显式传真实条目数。 */
++	br_mgr_ctx.nss_ppe_bridge_mgr_header = register_sysctl_sz("ppe/bridge_mgr", nss_ppe_bridge_mgr_table,
++			ARRAY_SIZE(nss_ppe_bridge_mgr_table) - 1);
++#else
+ 	br_mgr_ctx.nss_ppe_bridge_mgr_header = register_sysctl("ppe/bridge_mgr", nss_ppe_bridge_mgr_table);
++#endif
+ 	br_fdb_register_notify(&nss_ppe_bridge_mgr_fdb_delete_nb);
+ 
+ #if defined(NSS_PPE_BRIDGE_MGR_OVS_ENABLE)
+diff -ruN a/clients/vlan/nss_ppe_vlan_mgr.c b/clients/vlan/nss_ppe_vlan_mgr.c
+--- a/clients/vlan/nss_ppe_vlan_mgr.c	2026-11-19 01:08:34.752816779 +0000
++++ b/clients/vlan/nss_ppe_vlan_mgr.c	2026-11-19 01:08:48.271868261 +0000
+@@ -3762,7 +3762,15 @@
+ 	vlan_mgr_ctx.stpid_ext = ETH_P_8021AD;
+ #endif
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
++	/* 6.11 起 register_sysctl() 取 ARRAY_SIZE(table) 作为条目数，把表尾的
++	 * "{}" 哨兵也算进去；哨兵 procname 为 NULL、无 proc_handler，校验失败
++	 * 导致注册返回 NULL。显式传真实条目数。 */
++	vlan_mgr_ctx.sys_hdr = register_sysctl_sz("ppe/vlan_client", nss_vlan_table,
++			ARRAY_SIZE(nss_vlan_table) - 1);
++#else
+ 	vlan_mgr_ctx.sys_hdr = register_sysctl("ppe/vlan_client", nss_vlan_table);
++#endif
+ 	if (!vlan_mgr_ctx.sys_hdr) {
+ 		nss_ppe_vlan_mgr_warn("Unabled to register sysctl table for vlan manager\n");
+ 		return -EFAULT;
