@@ -1,0 +1,27 @@
+#!/bin/sh
+# SBE1V1K local default: Asia/Taipei timezone and 24-hour clock.
+#
+# zonename is the LuCI label, timezone is the POSIX TZ string procd passes
+# to userspace ("CST-8" is what luci-base zoneinfo.uc maps Asia/Taipei to;
+# Taiwan has no DST).  Both are only applied while the box still carries
+# the stock UTC default, so an operator's own setting survives a
+# keep-config sysupgrade.
+#
+# clock_hourcycle is the LuCI "Time Format" option ("h23" = 24-hour).
+# 25.12's LuCI reads it; 24.10's LuCI has no such option and always
+# renders 24-hour time, so the value is inert here but kept for parity.
+[ -f /etc/config/system ] || exit 0
+
+cur=$(uci -q get system.@system[0].zonename)
+case "$cur" in
+''|UTC)
+	uci -q set system.@system[0].zonename='Asia/Taipei'
+	uci -q set system.@system[0].timezone='CST-8'
+	;;
+esac
+
+[ -n "$(uci -q get system.@system[0].clock_hourcycle)" ] || \
+	uci -q set system.@system[0].clock_hourcycle='h23'
+
+uci -q commit system
+exit 0

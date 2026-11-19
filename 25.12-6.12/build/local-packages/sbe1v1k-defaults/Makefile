@@ -5,8 +5,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=sbe1v1k-defaults
-PKG_VERSION:=1
-PKG_RELEASE:=2
+PKG_VERSION:=2
+PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 
 include $(INCLUDE_DIR)/package.mk
@@ -25,7 +25,9 @@ define Package/sbe1v1k-defaults/description
  on in LuCI, and adds the Allow-LuCI-WAN and Allow-SSH-WAN firewall
  rules (tcp 80/443 and 22 ACCEPT on the wan zone) so the box stays
  reachable over the provider uplink.  fw4 keeps the wan zone input
- policy at REJECT; only these two ports are opened.
+ policy at REJECT; only these two ports are opened.  Also sets the
+ timezone to Asia/Taipei with a 24-hour clock
+ (system.clock_hourcycle=h23, the LuCI "Time Format" option).
 endef
 
 define Build/Prepare
@@ -40,6 +42,7 @@ define Package/sbe1v1k-defaults/install
 	$(INSTALL_BIN) ./files/99-ttyd-disable $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) ./files/99-allow-luci-wan $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) ./files/99-allow-ssh-wan $(1)/etc/uci-defaults/
+	$(INSTALL_BIN) ./files/99-system-timezone $(1)/etc/uci-defaults/
 endef
 
 $(eval $(call BuildPackage,sbe1v1k-defaults))

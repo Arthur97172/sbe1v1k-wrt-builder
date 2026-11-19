@@ -30,7 +30,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── required-packages-mainline.txt  mainline 变体的对应清单
 │   ├── thirdparty-pins.conf  18 个插件、18 个仓库的来源与离线 pin
 │   └── local-packages/       项目自带软件包
-│       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭、WAN 侧放行 LuCI/SSH）
+│       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭、WAN 侧放行 LuCI/SSH、时区 Asia/Taipei + 24 小时制）
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
 ├── docs/
 │   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
@@ -837,7 +837,12 @@ uci 规则，fw4 语义一致）：`99-allow-luci-wan` 放行 tcp 80/443、`99-a
 放行 tcp 22，其余 wan 输入仍是 REJECT。24.10 的 `99-opkg-distfeeds` **没有**
 移植——25.12 用 apk，没有 opkg 的 distfeeds 文件。
 
-无线与 WAN 规则的设备行为均为 `NOT TESTED`；静态部分由 `sh -n`、补丁 dry-run
+时区与时间格式由 `99-system-timezone` 设定：zonename 仍为 UTC（或空）时写入
+`Asia/Taipei` + `CST-8`，同时把 `system.@system[0].clock_hourcycle` 置为 `h23`
+——这正是 25.12 LuCI「系统 → 时间同步」页的「时间格式 = 24 小时制」选项
+（75a306df 起才有该选项，24.10 的 LuCI 没有、固定 24h 显示）。
+
+无线、WAN 规则与时区的设备行为均为 `NOT TESTED`；静态部分由 `sh -n`、补丁 dry-run
 与 `verify-image.sh` 的新断言覆盖。
 
 ## Stage 1 已知限制（未在真机验证，状态 `UNVERIFIED`）

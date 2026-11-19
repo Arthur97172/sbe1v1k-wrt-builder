@@ -342,9 +342,9 @@ fi
 # input REJECT，没有这两条规则时运营商上行链路上无法再进 LuCI/SSH。
 # 逐字节比对本仓库的脚本，防止包内文件被替换而包名仍对。
 DEFAULTS_FILES="$PROJ/build/local-packages/sbe1v1k-defaults/files"
-for f in 99-allow-luci-wan 99-allow-ssh-wan; do
+for f in 99-allow-luci-wan 99-allow-ssh-wan 99-system-timezone; do
 	if [ ! -f "$ROOTFS/etc/uci-defaults/$f" ]; then
-		bad "镜像缺少 /etc/uci-defaults/$f（WAN 侧将无法访问 LuCI/SSH）"
+		bad "镜像缺少 /etc/uci-defaults/$f（WAN 侧访问或时区默认值缺失）"
 	elif cmp -s "$DEFAULTS_FILES/$f" "$ROOTFS/etc/uci-defaults/$f"; then
 		ok "/etc/uci-defaults/$f 与 sbe1v1k-defaults 源文件逐字节一致"
 	else

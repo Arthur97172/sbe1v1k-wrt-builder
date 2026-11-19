@@ -65,6 +65,11 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 - `Allow-SSH-WAN`（`99-allow-ssh-wan`，section `allow_ssh_wan`）：`src=wan`、
   `proto=tcp`、`dest_port='22'`、`target=ACCEPT`，WAN 侧可直接 ssh 登录。
 
+时区默认值（`99-system-timezone`）：zonename 仍为 UTC（或空）时写入
+`Asia/Taipei` + `CST-8`，并把 `clock_hourcycle` 置为 `h23`。24.10 的 LuCI 没有
+「时间格式」选项、本来就固定 24 小时制显示（25.12 自 75a306df 起才有该选项，
+同样由该键控制）；操作员自己改过时区的，keep-config 升级后不会被覆盖。
+
 其余 wan 入站仍按 zone 默认策略 REJECT（fw4 把用户规则排在 zone 默认拒绝之前）。首启
 成功后脚本被删除，同一次安装内不再重跑；但 sysupgrade 只保留 `/etc/config` 等配置，
 刷入新镜像后首启脚本会再跑一遍——如果之前把某条 section 删了，它会被重新加回，要彻底

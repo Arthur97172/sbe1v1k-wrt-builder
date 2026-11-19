@@ -286,7 +286,8 @@ for f in \
 	etc/uci-defaults/99-ttyd-disable \
 	etc/uci-defaults/99-allow-luci-wan \
 	etc/uci-defaults/99-allow-ssh-wan \
-	etc/uci-defaults/99-opkg-distfeeds
+	etc/uci-defaults/99-opkg-distfeeds \
+	etc/uci-defaults/99-system-timezone
 do
 	[ -e "$ROOTFS/$f" ] && ok "存在 /$f" || bad "缺少 /$f"
 done

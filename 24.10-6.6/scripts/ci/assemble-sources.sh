@@ -363,11 +363,12 @@ cmp -s "$_dts_src" "$_dts" || die 4 "files-6.6 的 SBE DTS 与 build/p-b/files �
 # 首启默认值包：每个 uci-defaults 都必须装配进来，且 Makefile 都要安装
 # （少装一个不会报错，只会在设备上悄悄缺一项默认值，所以在这里挡）。
 _dfl="$SRC/buildroot/package/sbe1v1k-defaults"
-for _f in 99-ttyd-disable 99-allow-luci-wan 99-allow-ssh-wan 99-opkg-distfeeds; do
+for _f in 99-ttyd-disable 99-allow-luci-wan 99-allow-ssh-wan 99-opkg-distfeeds \
+          99-system-timezone; do
 	[ -f "$_dfl/files/$_f" ] || die 4 "sbe1v1k-defaults 缺少 $_f"
 	grep -q "files/$_f" "$_dfl/Makefile" || die 4 "sbe1v1k-defaults/Makefile 未安装 $_f"
 done
-logmsg "  SBE_DEFAULTS_OK ttyd-disable + allow-luci-wan + allow-ssh-wan + opkg-distfeeds"
+logmsg "  SBE_DEFAULTS_OK ttyd-disable + allow-luci-wan + allow-ssh-wan + opkg-distfeeds + system-timezone"
 logmsg "  SBE_DTS_OK 与 build/p-b/files 源文件逐字节一致"
 _mmc="$SRC/buildroot/target/linux/feeds/ipq95xx/base-files/lib/upgrade/mmc.sh"
 [ -f "$_mmc" ] || die 4 "mmc.sh 缺失"
