@@ -839,8 +839,8 @@ uci 规则，fw4 语义一致）：`99-allow-luci-wan` 放行 tcp 80/443、`99-a
 
 时区与时间格式由 `99-system-timezone` 设定：zonename 仍为 UTC（或空）时写入
 `Asia/Taipei` + `CST-8`，同时把 `system.@system[0].clock_hourcycle` 置为 `h23`
-——这正是 25.12 LuCI「系统 → 时间同步」页的「时间格式 = 24 小时制」选项
-（75a306df 起才有该选项，24.10 的 LuCI 没有、固定 24h 显示）。
+——这正是 25.12 锁定的 luci（75a306df）「系统 → 时间同步」页的「时间格式 = 24
+小时制」选项（24.10 锁定的 luci d0400718c5 没有该选项、固定 24h 显示）。
 
 无线、WAN 规则与时区的设备行为均为 `NOT TESTED`；静态部分由 `sh -n`、补丁 dry-run
 与 `verify-image.sh` 的新断言覆盖。
