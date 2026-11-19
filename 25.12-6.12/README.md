@@ -455,7 +455,12 @@ dnsmasq 做 DHCP，同一根线只换对端与速率：
 0030 新改法（保留 QCA8081 厂商驱动、只删 QCA8084 注册）。三端证据与复现
 步骤记录在 `docs/QCA8081_2P5G_2026-11-19.md`。
 
-**镜像状态：已按新改法重新出图，真机 2.5G 复测 `NOT TESTED`。**
+**镜像状态：v68-1（commit f382380）真机 2.5G 复测 PASS（2026-11-19）**：
+B 刷入后 eth1 绑定 `driver [Qualcomm QCA8081]`，USB 2.5G 卡直连 eth1 建链
+2500、主动 DHCP、双向 ping 全通；上游 10G 线接 eth1 亦协商 2500 并 ping
+10/10 —— 此前「上游 10G 口 → eth1 1000 零帧」确认为同一 genphy 故障。
+无 qca8084 -16。注意 NSS/ECM 卸载下 eth1 统计计数在加速流量期不增长，
+健康判据用 ARP/ping/应用层结果。
 
 
 ### 启动阻塞：CPU OPP、sleep_clk、NSS 保留区（`patches/0027`）
