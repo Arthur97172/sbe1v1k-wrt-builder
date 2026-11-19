@@ -19,17 +19,17 @@
 | # | 插件 | 包名 | 仓库（owner/repo） | 版本实测 | 中文包 | 授权 |
 |---|---|---|---|---|---|---|
 | 1 | FCC 加速 | luci-app-fcc | Arthur97172/luci-app-fcc | 1.2.4-r1 | luci-i18n-fcc-zh-cn | GPL-3.0 |
-| 2 | LED 风扇控制 | luci-app-ledfancontrol | Arthur97172/luci-app-ledfancontrol | 1.1.1-r1 | luci-i18n-ledfancontrol-zh-cn | GPL-3.0-only |
+| 2 | LED 风扇控制 | luci-app-ledfancontrol | Arthur97172/luci-app-ledfancontrol | 1.1.3-r1 | luci-i18n-ledfancontrol-zh-cn | GPL-3.0-only |
 | 3 | NS-SECM | luci-app-nssecm | Arthur97172/luci-app-nssecm | 1.0.1-r1 | luci-i18n-nssecm-zh-cn | GPL-3.0-only |
 | 4 | 在线升级 | luci-app-online-upgrade | Arthur97172/luci-app-online-upgrade | 1.1.3-r4 | luci-i18n-online-upgrade-zh-cn | GPL-2.0-only |
 | 5 | 订阅存储 | luci-app-substore | Arthur97172/luci-app-substore | 2.7.3-r3 | luci-i18n-substore-zh-cn | 未声明 |
 | 6 | 任务计划 | luci-app-tasks | Arthur97172/luci-app-tasks | 1.1.2-r1 | luci-i18n-tasks-zh-cn | GPL-3.0-only |
 | 7 | SmartNetPilot | luci-app-smartnetpilot | Arthur97172/luci-app-smartnetpilot | 1.1.9-r1 | luci-i18n-smartnetpilot-zh-cn | GPL-3.0-only |
-| 8 | 核心状态 | luci-app-corestatus | Arthur97172/luci-app-corestatus | 1.0.2-r1 | luci-i18n-corestatus-zh-cn | GPL-3.0-only |
-| 9 | OxiDNS | luci-app-oxidns | Arthur97172/luci-app-oxidns | 1.4.9-r1 | luci-i18n-oxidns-zh-cn | GPL-3.0-or-later |
+| 8 | 核心状态 | luci-app-corestatus | Arthur97172/luci-app-corestatus | 1.0.4-r1 | luci-i18n-corestatus-zh-cn | GPL-3.0-only |
+| 9 | OxiDNS | luci-app-oxidns | Arthur97172/luci-app-oxidns | 1.5.5-r1 | luci-i18n-oxidns-zh-cn | GPL-3.0-or-later |
 | 10 | 关机 | luci-app-poweroff | Arthur97172/luci-app-poweroff | 1.0.0-r1 | luci-i18n-poweroff-zh-cn | GPL-3.0-only |
-| 11 | Mesh 助手 | luci-app-meshassistant | Arthur97172/luci-app-meshassistant | 2.7.12-r1 | luci-i18n-meshassistant-zh-cn | GPL-3.0-only |
-| 12 | TurboACC | luci-app-turboacc | Arthur97172/luci-app-turboacc | 1.0.4-r1 | luci-i18n-turboacc-zh-cn | GPL-3.0-only |
+| 11 | Mesh 助手 | luci-app-meshassistant | Arthur97172/luci-app-meshassistant | 2.8.4-r1 | luci-i18n-meshassistant-zh-cn | GPL-3.0-only |
+| 12 | TurboACC | luci-app-turboacc | Arthur97172/luci-app-turboacc | 1.3.2-r1 | luci-i18n-turboacc-zh-cn | GPL-3.0-only |
 | 13 | PassWall | luci-app-passwall | Openwrt-Passwall/openwrt-passwall | 26.11.11-r1 | luci-i18n-passwall-zh-cn | LICENSE_REVIEW_REQUIRED |
 | 14 | Nikki | luci-app-nikki | nikkinikki-org/OpenWrt-nikki | 1.26.2-r1 | luci-i18n-nikki-zh-cn | LICENSE_REVIEW_REQUIRED |
 | 15 | OpenClash | luci-app-openclash | vernesong/OpenClash | 0.48.002 | 无独立包（自带 .lmo） | LICENSE_REVIEW_REQUIRED |
