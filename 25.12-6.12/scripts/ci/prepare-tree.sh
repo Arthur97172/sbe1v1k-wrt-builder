@@ -148,13 +148,19 @@ grep -q 'resets = <&gcc GCC_SDCC_BCR>;' \
 grep -q '^&qpic_nand { status = "disabled"; };$' \
 	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts" \
 	|| { echo "补丁应用不完整：设备树没有禁用 QPIC NAND（0029）" >&2; exit 1; }
-# 0030：目标内核配置必须关掉内置的上游 QCA808x PHY 驱动。6.12 的 qca808x.c
-# 注册的 libphy 名字与 QSDK 的 qca8084-phy.ko 相同，两者同在时后者加载报
-# EEXIST（-16），kmodloader 依赖链 qca8084-phy → qca-ssdk → qca-nss-ppe →
-# qca-nss-dp/sfe/ecm 全线断掉，开机后没有任何以太网口。补丁丢了就在这里失败。
-grep -q '^# CONFIG_QCA808X_PHY is not set$' \
+# 0030：内置 QCA808x 驱动必须保留、但 QCA8084 那一条注册必须去掉。6.12 的
+# qca808x.c 注册的 libphy 名字与 QSDK 的 qca8084-phy.ko 相同，两者同在时后者
+# 加载报 EEXIST（-16），kmodloader 依赖链 qca8084-phy → qca-ssdk →
+# qca-nss-ppe → qca-nss-dp/sfe/ecm 全线断掉，开机后没有任何以太网口。反过来
+# 把整个驱动关掉也不行：QCA8081 落到 genphy 后不会把 MAC/PCS 切到
+# PHY_INTERFACE_MODE_2500BASEX，eth1 在 2.5G 下链路 up 但零帧（2026-11-19
+# 真机对照：24.10 厂商驱动 2500 全通，25.12 genphy 2500 静默、1000 全通）。
+# 所以同时断言配置开着、且内核补丁 0801（只删 QCA8084 注册）确实落地。
+grep -q '^CONFIG_QCA808X_PHY=y$' \
 	"$BR/target/linux/qualcommbe/config-6.12" \
-	|| { echo "补丁应用不完整：目标配置没有关闭内置 QCA808x PHY（0030）" >&2; exit 1; }
+	|| { echo "补丁应用不完整：目标配置没有打开内置 QCA808x PHY（0030）" >&2; exit 1; }
+ls "$BR"/target/linux/qualcommbe/patches-6.12/0801-*.patch >/dev/null 2>&1 \
+	|| { echo "补丁应用不完整：缺少内核补丁 0801（保留 QCA8081、去掉 QCA8084 注册，0030）" >&2; exit 1; }
 
 # 写入目标同样要在编译前断言。25.12 的 sysupgrade 镜像必须改成 tar 容器
 # （emmc_upgrade_tar 只认它），升级脚本必须按当前槽位写 eMMC，设备树必须把

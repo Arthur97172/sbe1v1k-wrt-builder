@@ -82,7 +82,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0027-qualcommbe-sbe1v1k-boot-blockers.patch           CPU OPP / sleep_clk / NSS 保留区（v28 对照后恢复）
 │   ├── 0028-qualcommbe-sbe1v1k-emmc-core-reset.patch         eMMC 节点的 SDCC 核心复位（v29）
 │   ├── 0029-qualcommbe-sbe1v1k-disable-qpic-nand.patch       关掉 RDP433 基线的 QPIC NAND（v32 无 eMMC 的根因）
-│   ├── 0030-qualcommbe-disable-upstream-qca808x-phy.patch     QCA8084 PHY 驱动重名（v38）
+│   ├── 0030-qualcommbe-qca808x-keep-8081-drop-8084.patch      保留 QCA8081 驱动、只删 QCA8084 注册（eth1 2.5G）
 │   ├── 0031-qualcommbe-kernel-initramfs-xz-dict.patch        initramfs XZ 128 MiB 字典（诊断镜像尺寸）
 │   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
@@ -417,15 +417,44 @@ qca-ssdk）→ qca-nss-dp / qca-nss-sfe / ecm 全部装不进来，开机后交�
 所有以太网口都不存在。
 
 24.10-6.6 的 QSDK 内核树也带 `qca808x.c`，但配置没开，QCA8084 一直由 QSDK
-驱动负责。`patches/0030` 沿用同一分工关闭内置驱动、保留 `kmod-qca8084`；
-SBE1V1K 的板级 dts 不引用 `qca8084_serdes`，关掉不影响 serdes 节点。
-`prepare-tree.sh` 在编译前断言这一行，补丁丢失时直接失败。
+驱动负责。v38 起 `patches/0030` 最初的做法是"整个关掉内置驱动"（把
+`CONFIG_QCA808X_PHY` 置为 not set），这解决了重名，但把 QCA8081 的厂商驱动
+一起关掉了——见下面的 2.5G 回归小节。现在的 0030 改为：保留
+`CONFIG_QCA808X_PHY=y`，用新增的内核补丁 0801
+（`patches-6.12/0801-qca808x-drop-qca8084-driver.patch`）只删掉
+`qca808x_driver[]` 里 QCA8084 那一条注册。QCA8084 仍由 `kmod-qca8084`
+负责，QCA8081 用回厂商驱动；SBE1V1K 的板级 dts 不引用 `qca8084_serdes`，
+不影响 serdes 节点。`prepare-tree.sh` 在编译前同时断言配置开着与 0801
+落地，缺任何一条直接失败。
 
 **真机状态：v38 之后的 run 41 镜像（`b0a7389`）已于 2026-11-16 刷机验证，
 设备仍以约 3–4 分钟周期重启、局域网只有 PHY 载波且零帧，因此 0030 修复不改变
 这类启动失败（`FAIL`），记录见 `docs/V41_BOOT_LOOP_2026-11-16.md`。**
 日志与轨迹取证文件在开发机的 `~/sbe1v1k-ramtest/forensics/`（`diag-v9.log`、
 `events.log`），不入库。
+
+
+### eth1 2.5G 回归：genphy 与 2500BASEX（0030 新改法，2026-11-19）
+
+v38 的 0030 把 `CONFIG_QCA808X_PHY` 整个关掉后，QCA8081 落到 genphy。
+genphy 不会按 link partner 能力把 MAC/PCS 切到
+`PHY_INTERFACE_MODE_2500BASEX`，也没有 SGMII FIFO 与主从处理，表现为
+**2.5G 链路 up 但零帧**；1G 不受影响，所以上游千兆口接 WAN 一直正常。
+
+2026-11-19 对照实验：本机 USB 2.5G 网卡（RTL8156B）直连 eth1，主机侧
+dnsmasq 做 DHCP，同一根线只换对端与速率：
+
+| 对端 | 速率 | 结果 |
+|---|---|---|
+| B（25.12，genphy） | 2500 | 链路 up，25 s 抓包零帧、5 s 计数增量 0、ping 100% 丢 |
+| B（25.12，genphy） | 1000 | DHCP + ping 3/3、REACHABLE，全通 |
+| A（24.10，厂商驱动） | 2500 | A 主动发 DHCP DISCOVER，ping 3/3、REACHABLE，全通 |
+
+由此定案：故障在 25.12 树的 PHY 驱动选择，不在板级、上游或 EEE。修复即
+0030 新改法（保留 QCA8081 厂商驱动、只删 QCA8084 注册）。三端证据与复现
+步骤记录在 `docs/QCA8081_2P5G_2026-11-19.md`。
+
+**镜像状态：已按新改法重新出图，真机 2.5G 复测 `NOT TESTED`。**
 
 
 ### 启动阻塞：CPU OPP、sleep_clk、NSS 保留区（`patches/0027`）
