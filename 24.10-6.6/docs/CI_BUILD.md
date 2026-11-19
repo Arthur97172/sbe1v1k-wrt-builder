@@ -261,6 +261,8 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | `publish=true` 的 `sources-v13` 运行（run `43565539803`，head `5baee5c`） | FAIL：第 5 步 `Assemble sources` 失败，`Export bundle` 起全部 skipped，`publish` job 未执行。修复提交 `ab25c3e` 的 push 运行 `43566519007` 同样失败在同一步（两轮的注解都是 `Process completed with exit code 4`） |
 | 同批次的根因修复（`0023` 的落点 + `known-delta` 登记） | 静态 PASS：`bash -n` 通过；`0023` 补丁内容断言（`NEIGHBOR_REPORT_LEN=1024`、`strncpy` 有界拷贝）在补丁文件上命中，`0024` 的五条全局项断言在已打补丁的 `hostapd.sh` 上不误报、在补丁前的行形态上能拦住。但这一版**没修好 CI**：漏登记 `dawn/patches/` 目录本身（见文末 06:4x 小节），复验仍 FAIL |
 | `known-delta` 补目录规则 + `set +e` 改 `\|\| rc=$?`（第二次修复） | 本机 PASS：整树重装配（43 pin 全取、warm cache）跑完 16 步，`exit 0`；`compare: deltas=942 explained=942 unexplained=0`、`FINGERPRINT_MATCH`；`entries=195332`、`aggregate=5057a73a…d200`、`recipe_sha256=5f54e9cd…3bfb`；`FEEDS_OK src-link=11 package-links=175`、`SRC_DEPS_OK selected=412`。CI 复验 NOT TESTED |
+| 2026-11-19 插件 pin 刷新（用户清单 17 项）：`ledfancontrol` `1.1.1-r2` → `1.1.3-r1`、`smartnetpilot` `1.1.8-r1` → `1.1.9-r1`、`turboacc` `1.3.0-r1` → `1.3.2-r1`、`passwall-packages` 分支头（`efc4093b` → `8147e8bf`，7 个入选包内容无差异）；其余 14 项已等于远端最新 tag。`scripts/ci/refresh-pins.sh --no-kernel --apply` | PASS（首扫 4 项可更新、`nikki` 因分支头已过 `v1.26.2` 保持不动；`--apply` 同步 `PROVENANCE.md` pin 块后手工补版本注记；三个新板上游仍带 `po/zh_Hans`、`luci-i18n-*-zh-cn` 均已在包清单中；内核 pin 未动） |
+| 同批次的 CI 装配（push 触发 `sources-24.10-6.6.yml`） | NOT TESTED（结果以 CI 为准；通过后需以 `publish=true` 重发 `sources-vN`，`build-24.10-6.6.yml` 的 `source_tag=auto` 才会用到新 pin） |
 
 发布包由 runner 产出，`sbe1v1k-sources-24.10-6.6.tar.zst` 为 228,711,892 B；本地两次导出的
 是 228,502,877 B。两者**条目级指纹完全一致**（上面的 `entries`/`aggregate`/`recipe` 三项相同），

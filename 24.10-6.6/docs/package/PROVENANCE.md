@@ -337,21 +337,24 @@ xpu-status、oxidns、meshassistant），并把已有五个一并升到最新 re
 （`v1.0.4` / `1.1.1-r2` / `2.8.1-r1`，其余 pin 不动）；同日再把 `turboacc` 升到
 `1.3.0-r1`（`1.0.4-r1` → `1.3.0-r1`；`1.2.0-r1` 与 `1.3.0-r1` 指向同一提交，
 取后者）。2026-11-16（v92）用户要求把 `oxidns`、`meshassistant` 再刷到最新
-release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。
+release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户要求再查一轮：
+`ledfancontrol`（`1.1.1-r2` → `1.1.3-r1`）、`smartnetpilot`（`1.1.8-r1` →
+`1.1.9-r1`）、`turboacc`（`1.3.0-r1` → `1.3.2-r1`）与 `passwall-packages` 分支头
+前进；`nikki` 因分支头已过最新 tag `v1.26.2` 保持不动，其余 pin 不变。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
 | `luci-app-substore` | `luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2026-10-24T04:50:07Z | `docs(readme): 安装命令改用通配文件名，翻译包并入包管理器代码块（2.7.3-r3）` | GPL-3.0-or-later（`LICENSE`；Makefile 未设 `PKG_LICENSE`） | 3.3 MB |
 | `luci-app-fcc` | `luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 2026-11-08T13:03:42Z | `Let Ctrl+V paste into the Web Console and its browser window`（tag `1.2.4-r1`） | GPL-3.0（`LICENSE`） | 2.6 MB |
 | `luci-app-online-upgrade` | `luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 2026-10-24T04:11:06Z | `docs: 调整构建章节位置并合并从源码编译说明` | GPL-2.0-only（`LICENSE`；上游原作为 gooyjq） | 3.1 MB |
-| `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `e709ccbc6d37e2cf67ae9e78f4aad3c661d5a083` | 2026-11-14T01:39:32Z | `daemon: 启动时探测温度通道，跳过读不出来的 hwmon`（tag `1.1.1-r2`） | GPL-3.0-only（`LICENSE`） | 240 KB |
+| `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `1f032f39bb41e81f53389eb493711eecd3429834` | 2026-11-18T23:05:05Z | `daemon: 自动档改由用户态曲线驱动，内核 cooling map 只作兜底`（tag `1.1.3-r1`） | GPL-3.0-only（`LICENSE`） | 230 KB |
 | `luci-app-nssecm` | `luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 2026-11-13T03:48:43Z | `nssecm: add bottom padding for Argon section card, bump to 1.0.1-r1`（tag `1.0.1-r1`） | GPL-3.0-only（`LICENSE`） | 100 KB |
 | `luci-app-tasks` | `luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 2026-11-13T02:53:33Z | `Bump version to 1.1.2-r1`（tag `1.1.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 344 KB |
-| `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 2026-10-27T12:09:18Z | `feat: show the current LAN settings in the PPPoE and DH…` | GPL-3.0-only（`LICENSE`） | 1.6 MB |
+| `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `28b3be9553f6b17c6d00d8320242d25406498fcb` | 2026-11-19T11:54:41Z | `fix: show the management address on the chooser`（tag `1.1.9-r1`） | GPL-3.0-only（`LICENSE`） | 710 KB |
 | `luci-app-corestatus` | `luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | 2026-11-14T03:04:06Z | `Merge branch 'release-1.0.4'`（tag `v1.0.4`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 388 KB |
 | `luci-app-oxidns` | `luci-app-oxidns` | `2ab3ffe5927b295931cf41e4d83d6c71321c511f` | 2026-11-16T06:33:11Z | `refactor(overview): fold the dnsmasq upstream hint into the value`（tag `v1.5.5`，`PKG_VERSION 1.5.5`） | GPL-3.0-or-later（`LICENSE`） | 1.2 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `88f1056e7bdb0c712757fb9feecce3d7499186f7` | 2026-11-16T09:11:27Z | `Hide the per-band thresholds behind a checkbox`（tag `2.8.4-r1`） | GPL-3.0-only（`LICENSE`） | 944 KB |
-| `luci-app-turboacc` | `luci-app-turboacc` | `a5a4dd76c84df8c5f2bd4b3fc01852e6cc23d976` | 2026-11-14T09:19:18Z | `Drop unused dependencies and status plumbing`（tag `1.3.0-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 139 KB |
+| `luci-app-turboacc` | `luci-app-turboacc` | `d10cc9337a2a04dcdadd42ceac04aa272c780454` | 2026-11-19T11:32:51Z | `Release 1.3.2-r1`（tag `1.3.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 340 KB |
 
 十一个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。十一个应用
 都带 `po/zh_Hans`，`CONFIG_LUCI_LANG_zh_Hans=y` 让 `luci.mk` 生成对应的
@@ -459,7 +462,7 @@ mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本�
 | 目录 | 远端 | **固定 commit** | 提交时间 | 提交标题 | 许可证 |
 |---|---|---|---|---|---|
 | `openwrt-passwall` | `Openwrt-Passwall/openwrt-passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | 2026-11-10T16:44:36Z | `luci: bump 26.11.11`（tag `26.11.11-1`） | GPL-3.0（`LICENSE`；Makefile 头声明 GPLv3） |
-| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `efc4093be1477b66b95a33ca00e7a9d819ebc8fb` | 2026-11-15T15:17:26+08:00 | `hysteria: update to 2.14.0 (#777)`（仓库无版本 tag，取 `main` 分支头） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
+| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `8147e8bf8abc62b5357f76defa37f380e35f6e0a` | 2026-11-16T19:52:17+08:00 | `v2ray-geosite: update to 202611152204 (#779)`（仓库无版本 tag，取 `main` 分支头；2026-11-19 刷新，7 个入选包内容未变） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
 | `OpenWrt-nikki` | `nikkinikki-org/OpenWrt-nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | 2026-10-14T17:11:28+08:00 | `fix: do not restart cron service after crontab changed` | GPL-3.0（`LICENSE`） |
 | `OpenClash` | `vernesong/OpenClash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | 2026-10-11T13:10:57+08:00 | `0.48.002` | **MIT**（`LICENSE`，Copyright 2019-2026 vernesong） |
 | `luci-app-poweroff` | `Arthur97172/luci-app-poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | 2026-10-25T13:34:55Z | `docs: reorder README sections and add screenshot` | GPL-3.0-only（`LICENSE` 与 `PKG_LICENSE` 一致） |
@@ -553,21 +556,21 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | --- | --- | --- |
 | `apps/luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | v1.0.4（tag；PKG_VERSION 1.0.4；PKG_RELEASE 1） |
 | `apps/luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 1.2.4-r1（tag；PKG_VERSION 1.2.4） |
-| `apps/luci-app-ledfancontrol` | `e709ccbc6d37e2cf67ae9e78f4aad3c661d5a083` | 1.1.1-r2（tag；PKG_RELEASE 2） |
+| `apps/luci-app-ledfancontrol` | `1f032f39bb41e81f53389eb493711eecd3429834` | 1.1.3-r1（tag；PKG_VERSION 1.1.3；2026-11-19 刷新） |
 | `apps/luci-app-meshassistant` | `88f1056e7bdb0c712757fb9feecce3d7499186f7` | 2.8.4-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 1.0.1-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
 | `apps/luci-app-oxidns` | `2ab3ffe5927b295931cf41e4d83d6c71321c511f` | v1.5.5（tag；PKG_VERSION 1.5.5；overview 的 dnsmasq 上游改为显示实际生效值） |
-| `apps/luci-app-smartnetpilot` | `b80e836a0669c03fe6eb956e9e36205292e56f9f` | 1.1.8-r1（tag） |
+| `apps/luci-app-smartnetpilot` | `28b3be9553f6b17c6d00d8320242d25406498fcb` | 1.1.9-r1（tag；2026-11-19 刷新） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 1.1.2-r1（tag） |
-| `apps/luci-app-turboacc` | `a5a4dd76c84df8c5f2bd4b3fc01852e6cc23d976` | 1.3.0-r1（tag；PKG_VERSION 1.3.0；GPL-3.0-only；po/zh_Hans） |
+| `apps/luci-app-turboacc` | `d10cc9337a2a04dcdadd42ceac04aa272c780454` | 1.3.2-r1（tag；PKG_VERSION 1.3.2；GPL-3.0-only；po/zh_Hans；2026-11-19 刷新） |
 | `repo argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | thirdparty/luci-theme-argon |
 | `repo mosdns-luci` | `dbdd91ab8ac8b079b6a3ca1a48d99e970d17111b` | thirdparty/luci-app-mosdns |
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
 | `repo passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `efc4093be1477b66b95a33ca00e7a9d819ebc8fb` | thirdparty/openwrt-passwall-packages |
+| `repo passwall-packages` | `8147e8bf8abc62b5357f76defa37f380e35f6e0a` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
