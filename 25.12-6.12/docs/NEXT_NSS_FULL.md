@@ -120,6 +120,44 @@ TCP 流没有触发加速（`tcp_accelerated_count=0`），原因未定论：本
 常开 UDP 加速，需在 ECM init 里加一行 sysctl 或 UCI 选项，属后续小改动，
 本轮不动。
 
+## 3.3 真机取证：干净镜像复验（2026-11-19，v59 = 914e52d，`sysupgrade -n`）
+
+§3.2 的模块是 overlay 热替换件；本轮换成含两份 sysctl 修复的正式镜像（v59，
+`/etc/nss.conf` 出厂仍是 `tier=wired`），`sysupgrade -n` 干净刷入后设备侧
+`nss-load tier full` 切档，重启验证：
+
+- S15 启动装载 sdk → dp → ppe 全家 → ecm 全 PASS，无 sysctl 哨兵报错；
+- **连续 3 次重启**（10:32、10:43、10:49 三次启动）每次都
+  `boot #N: tier full loaded`，且约 366 s 后 `nss-load commit` 清零计数器
+  （日志 `was 2/1/1`），期间无复位、无 oops；
+- dmesg 仍只有两类已知 WARN：3 条 `__reset_control_get_internal`、1 条
+  `nf_conntrack_register_notifier`（`WARN_ON_ONCE` 后内核照常覆盖注册，
+  ECM 事件路径工作正常）；
+- 功能回归：`ping 8.8.8.8` 0% 丢包、LuCI 首页 200、WiFi 客户端以
+  286 Mbit/s（HE-MCS11）关联、load average 0.02。
+
+加速判据（UDP）：主机与 B 之间实际可用的通路是 **WiFi**（`phy0-ap0`），
+`eth0` 一直零收包，之前用有线 macvlan 构造流量的做法作废。改从主机
+`wlp0s20f3`（192.168.1.230）把 8.8.8.8 / 1.1.1.1 的 /32 路由指向
+192.168.1.1，打开 `net.ecm.udp_classification_enabled=1` 后发 UDP DNS 流：
+
+```
+ecm_db/connection_count=120        ecm_ppe_ipv4/accelerated_count=120
+ecm_db/iface_count=3               ecm_ppe_ipv4/udp_accelerated_count=120
+ecm_db/host_count=4                ecm_ppe_ipv4/pending_accel_count=0
+ecm_db/mapping_count=242           PPE common_stats v4_l3_flows=240
+PPE ppe_vp/vp_stats Active_VPs=3
+```
+
+120 条 UDP 连接全部下发加速命令，PPE 侧 L3 flow 计数与连接数 2:1 对应
+（每条连接上下行各一条 flow），比 §3.2 的 1 条样本更完整。TCP 仍未观测到
+加速，与 §3.2 相同的流量构造限制。
+
+结论：步骤 1–3 **PASS**；步骤 4 的「连续 3 次重启」**PASS**，其中
+「至少一次断电冷启」无法远程执行（无串口、无远程电源），与 24 h 复查
+一并留待现场/后续补测。在生产默认切换（第 5 步）前保持
+`fallback=wired` 不变。
+
 ## 4. 判据（PASS / FAIL）
 
 - **PASS**：full 档自动装载成功；ECM 表有计数且 CPU 占用下降；有线/无线全部
