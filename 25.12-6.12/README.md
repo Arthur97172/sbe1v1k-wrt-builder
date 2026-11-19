@@ -35,6 +35,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 ├── docs/
 │   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
 │   ├── NSS_AUTOLOAD_OFF.md   NSS 禁自动加载 / 分层装载的机制与定位流程
+│   ├── NSS_WIFI_OFFLOAD_QSDK_TRACKING.md  Wi-Fi 卸载现状、6.12 wlan-open 触发条件与接入清单
 │   ├── V21_BOOT_AND_FAN_FIX.md  v21/v24 起不来 + 风扇满速的静态定案（0024–0027）
 │   ├── V41_BOOT_LOOP_2026-11-16.md  run 41（b0a7389）真机启动循环：观察记录、判读与回滚
 │   └── CONTROL_EXPERIMENT_PLAN-2026-11-16.md  对照实验（diag/mainline 变体）方案与判读表
@@ -780,6 +781,9 @@ probe 失败。因此本阶段镜像“有驱动、有固件、有 BDF”，但�
 NSS Wi-Fi offload（`qca-nss-wifi-plugins` / `qca-wifi-nss-plugins`）以及厂商
 ath12k 的私有模块参数（`mlo_capable`、`cold_boot_cal`、`ppe_ds_enable` 等）
 本阶段 `NOT SUPPORTED`：装配树里没有这些包，也没有厂商 ath12k 分支。
+2026-11-19 决策：待 Qualcomm 发布对齐 6.12 的 wlan-open（新 QSDK 换代）后
+接入；现状分析、触发条件与接入清单见
+`docs/NSS_WIFI_OFFLOAD_QSDK_TRACKING.md`。
 
 本地编译与镜像静态校验 `PASS`（`world` rc=0；187 个包；两次出图 sha256
 完全相同；`verify-image.sh` 全 PASS）。真机驱动加载/校准 `NOT TESTED`，
