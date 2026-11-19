@@ -55,6 +55,68 @@ NSS Wi-Fi offload 与厂商 ath12k 私有参数。** 在那之前：
 4. 25.12 镜像里已有的一半（`qca-nss-ppe-ath-clients`、NSS 驱动/固件）只是
    NSS 侧登记件，缺 Wi-Fi 驱动侧的对应插件，单靠它无法形成卸载通路。
 
+## 厂商 ath12k 私有参数分类（2026-11-19）
+
+**结论先行：私有参数不能单独接入。** 参数是厂商 ath12k fork 的控制面开关，
+大多数背后是 mainline 不存在的代码路径；它们随「6.12 版厂商无线栈」一起
+进来，不需要（也无法）作为独立任务。好消息是厂家参数的**默认值对应的行为
+mainline 基本都已等价具备**，当前 25.12 的无线行为与厂商默认配置一致。
+
+依据：24.10 厂商树 `backports-6.1-9a0dddfb3/drivers/net/wireless/ath/ath12k`
+的 `core.c` 共约 48 个 `module_param`，逐个按引用文件分类；对照 25.12 的
+mainline 树 `backports-6.18.55`。
+
+### A 类：与 Wi-Fi 卸载绑死（约 13 个，随卸载栈一起进来）
+
+`ppe_ds_enable`、`ppe_ds_wifi8_enable`、`ppe2tcl_rings_max`、
+`reo2ppe_rings_max`、`txrx_hw_auto_idx`、`hw_buff_mgmt`、
+`ppe2wbm_ring_size`、`pkt_pre_hdr_mode`、`fse_3_tuple_enabled`、
+`ppe_rfs_support`、`rfs_core_mask`、`congestion_ctrl`、`drop_algo`。
+
+引用全在 `CPTCFG_ATH12K_PPE_DS_SUPPORT` 条件块及厂商 `ppeds.c`/`fse.c`/
+`dp*.c` 扩展里，mainline 无此代码。注意：mainline 6.18.55 的 `hw.c` 里有
+"PPE release ring address"，那只是上游对 PPE 硬件释放环的 HAL 描述，不是
+卸载数据通路。
+
+### B 类：厂商固件/调试接口的开关（约 15 个，开关小、背后特性大）
+
+`en_fwlog`、`boot_time_qdss`、`waltest_mode`、`upload_q6dump_to_cloud`、
+`rx_nwifi_err_dump`、`debug_level`、`debug_critical`、`cfr_enable_bmap`、
+`ssr_failsafe_mode`、`skip_caldata`、`cold_boot_cal`、`fw_mem_seg`、
+`wsi_bypass_bmap`、`erp_cumac_config`、`6ghz_sp_pwrmode_supp_enabled`，
+以及 AFC 相关（`afc_disable_req_id_check`、`afc_disable_timer_check`、
+`afc_reg_no_action` 等）。
+
+「接入」等于把背后的厂商 WMI/QMI 命令、reg 逻辑、coredump 上传通道一起搬；
+mainline 里没有 AFC 支持，fwlog 是另一套机制（见 C 类）。
+
+### C 类：mainline 已有等价机制，不需要搬
+
+| 厂商参数 | 厂商默认 | mainline 现状（backports 6.18.55） |
+|---|---|---|
+| `en_fwlog` | 开 | QMI 里硬编码 `enable_fwlog = 1`（`qmi.c:3371`） |
+| `frame_mode` | ethernet | 固定走以太网帧交付（与默认一致） |
+| `mlo_capable` | 开 | 按固件能力自动启用 MLO |
+| `max_clients` | 512 | 无此参数，由固件/资源上限决定 |
+| `io_coherency` | 开（编译开关） | 走标准 DMA API / dma-coherent 语义 |
+| `probe_order` | — | 用 DT 顺序 + 本项目补丁 0038（射频命名）解决 |
+| `debug_mask` / `ftm_mode` | — | 两个都有（仅有的两个 module_param） |
+
+### D 类：厂商数据面调优（约 5 个，依附卸载通路）
+
+`reorder_VI_timeout`、`mlo_3_link_tx`、`mcast_link_bmap_enable`、
+`carrier_vow_optimization` 等，是给 PPE/卸载数据面用的微调，随 A 类一起
+进来。
+
+### 对决策的意义
+
+- 触发条件满足后要做的只有一件事：**接入 6.12 版厂商无线栈**；参数随之
+  到位，届时只需决定配置层面（哪些用默认值、哪些启用/关闭）。
+- 在那之前「单独接入私有参数」没有收益也不可行：约一半参数对应功能不
+  存在，另一半的默认行为 mainline 已等价实现。
+- 若将来某个**具体行为**确有需求（而非「要有这些参数」），正确做法是给
+  mainline ath12k 写定向小补丁，单独评估。
+
 ## 触发条件（全部满足才立项）
 
 1. codelinaro 出现对齐 **kernel 6.12** 的 wlan-open：出现 `qca/src/linux-6.12`
