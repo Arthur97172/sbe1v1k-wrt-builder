@@ -58,6 +58,68 @@ CPU 占用下降），而不是只在特例下手工挂。
    `tier=wired` 改为 `tier=full`，重编镜像；`verify-image.sh`/README 档位表
    同步更新；真机结果回填本文与 `PROD_RUN_2026-11-18.md` 同期的生产记录。
 
+## 3.1 真机取证：第 1 步（2026-11-19，B 机，镜像 25.12-6.12 run-56）
+
+在 wired 档运行状态下执行 `nss-load load full`，stage 结果：
+
+- sdk / dp：PASS（已在跑）；
+- ppe：**FAIL**。`qca-nss-ppe-ds / -vp / -rule` 装载成功，
+  `qca-nss-ppe-vlan` 与 `qca-nss-ppe-bridge-mgr` 拒绝装载，dmesg：
+
+  ```
+  sysctl table check failed: ppe/vlan_client/(null) procname is null
+  sysctl table check failed: ppe/vlan_client/(null) No proc_handler
+  ```
+
+  根因与 ppe/0025 同源：6.11+ `register_sysctl()` 把表尾 `{}` 哨兵计入
+  条目数，校验失败返回 NULL，而 vlan/bridge 管理器把注册失败当致命错误。
+  新增 `nss/patches/qca-nss-ae-clients/0002-sysctl-register-sz-6.12.patch`。
+- ecm：模块装载成功，但前端 sysctl 树同样因哨兵注册失败
+  （`net/ecm/(null)`），`ecm_sfe_sysctl_tbl_init()` 被跳过。新增
+  `nss/patches/qca-nss-ecm/0003-sysctl-register-sz-6.12.patch`。
+
+热插补丁模块验证：把两处修复后编译的 `qca-nss-ppe-vlan.ko`、
+`qca-nss-ppe-bridge-mgr.ko` 直接放到 `/lib/modules/6.12.112/` 再装载，
+两个模块均 rc=0，`/proc/sys/ppe/{vlan_client,bridge_mgr}` 出现，无新增
+oops → 补丁有效。
+
+另一现象：ECM 在 uptime ≈444 s 才装载，此前 br-lan 与三张无线口早已
+就绪，`ecm_db/iface_count` 始终为 0（ECM 没接到任何接口事件），
+连接表不动。这属于「装载时机晚于接口创建」的测试态问题，判断真实行为
+必须走第 2 步（开机时序装载）。
+
+## 3.2 真机取证：第 2 步（2026-11-19，开机时序装载）
+
+把两处修复后编译的模块放进设备 `/lib/modules/6.12.112/`（overlay 暂存，
+原版备份在 `/overlay/ko-backup-*.ko`），`nss-load tier full` 后重启：
+
+- S15 启动装载：sdk → dp → ppe 全家 → ecm，全部 PASS
+  （`boot #1: tier full loaded`），无 sysctl 哨兵报错；
+- `/proc/sys/net/ecm/` 全树出现（前端 sysctl 修复生效）；
+- 300 s 后 `nss-load commit` 清零启动计数器（`nss-boots=0`），期间无复位；
+- dmesg 只剩两类 WARN：3 条 `__reset_control_get_internal`（已知项）与
+  1 条 `nf_conntrack_register_notifier`（`WARN_ON_ONCE` 后仍覆盖注册，
+  ECM 后续能收到 conntrack 事件，见下）。
+
+ECM 数据库：空闲时全 0；经 B 转发的 LAN→WAN 流量（netns 客户端走 B 路由）
+之后 `connection_count` / `iface_count` / `host_count` / `mapping_count` /
+`node_count` 均 > 0，证明 ECM 事件路径与数据库工作正常。
+
+**加速生效**：打开 `net.ecm.udp_classification_enabled=1` 后，从 netns
+发起的 UDP DNS 流经 B 转发时出现
+`ecm_ppe_ipv4/accelerated_count=1`、`udp_accelerated_count=1`，
+PPE `common_stats` 的 `v4_l3_flows` 同步 +2——ECM 的加速命令确实下发到了
+PPE，硬件加速通路可用。
+
+TCP 流没有触发加速（`tcp_accelerated_count=0`），原因未定论：本机到
+公网的所有路径都被 ISP fake-IP 代理接管，无法构造持续的经 B 转发大流量，
+短连接可能因为包数不够被 `ready_for_accel` 延迟掉。留待真实使用场景
+观察（判据仍是 `tcp_accelerated_count` 随上网流量增长）。
+
+`udp_classification_enabled` 默认 0（UCI 树里没有对应持久化项）。若要
+常开 UDP 加速，需在 ECM init 里加一行 sysctl 或 UCI 选项，属后续小改动，
+本轮不动。
+
 ## 4. 判据（PASS / FAIL）
 
 - **PASS**：full 档自动装载成功；ECM 表有计数且 CPU 占用下降；有线/无线全部
