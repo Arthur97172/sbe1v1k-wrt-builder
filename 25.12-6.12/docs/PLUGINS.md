@@ -24,7 +24,7 @@
 | 4 | 在线升级 | luci-app-online-upgrade | Arthur97172/luci-app-online-upgrade | 1.1.3-r4 | luci-i18n-online-upgrade-zh-cn | GPL-2.0-only |
 | 5 | 订阅存储 | luci-app-substore | Arthur97172/luci-app-substore | 2.7.3-r3 | luci-i18n-substore-zh-cn | 未声明 |
 | 6 | 任务计划 | luci-app-tasks | Arthur97172/luci-app-tasks | 1.1.2-r1 | luci-i18n-tasks-zh-cn | GPL-3.0-only |
-| 7 | SmartNetPilot | luci-app-smartnetpilot | Arthur97172/luci-app-smartnetpilot | 1.1.8-r1 | luci-i18n-smartnetpilot-zh-cn | GPL-3.0-only |
+| 7 | SmartNetPilot | luci-app-smartnetpilot | Arthur97172/luci-app-smartnetpilot | 1.1.9-r1 | luci-i18n-smartnetpilot-zh-cn | GPL-3.0-only |
 | 8 | 核心状态 | luci-app-corestatus | Arthur97172/luci-app-corestatus | 1.0.2-r1 | luci-i18n-corestatus-zh-cn | GPL-3.0-only |
 | 9 | OxiDNS | luci-app-oxidns | Arthur97172/luci-app-oxidns | 1.4.9-r1 | luci-i18n-oxidns-zh-cn | GPL-3.0-or-later |
 | 10 | 关机 | luci-app-poweroff | Arthur97172/luci-app-poweroff | 1.0.0-r1 | luci-i18n-poweroff-zh-cn | GPL-3.0-only |
