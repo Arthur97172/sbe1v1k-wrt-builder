@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 在 CI 工作区里装配 OpenWrt 25.12 构建树。
 #
-# 与 24.10-6.6 不同，25.12 Stage 1 不需要私有 QSDK 源码包：上游
+# 与 24.10-6.6 不同，25.12 不需要私有 QSDK 源码包：上游
 # openwrt/openwrt 的 openwrt-25.12 分支已经包含 qualcommbe/ipq95xx
 # （Linux 6.12 + PPE 以太网），本项目的改动只有设备定义和 pwm 特性，
 # 以补丁形式保存在 25.12-6.12/patches/。
@@ -64,10 +64,17 @@ OPENWRT_URL=${OPENWRT_URL:-https://github.com/openwrt/openwrt.git}
 OPENWRT_BRANCH=${OPENWRT_BRANCH:-openwrt-25.12}
 OPENWRT_SHA=${OPENWRT_SHA:-f3f5c2e54bf432b444e36b1a77077ff476361825}
 
-# REVISION 必须以十六进制分段结尾：base-files 把版本拼成
-# "<COMMITCOUNT>~<REVISION 最后一个 '-' 分段>"，而 apk 3.x 的 '~' 后缀
-# 只接受十六进制（sbe1v1k-25.12-stage1 → "~stage1" 会被拒绝）。
-REVISION=${SBE_REVISION:-sbe1v1k-25.12-stage1-${OPENWRT_SHA:0:8}}
+# REVISION 以本项目（构建仓库）当前提交的短 SHA 结尾，随每次提交自动变化，
+# 不再写死里程碑名（原 "stage1" 是 2026-10-23 首次装配时的残留，之后
+# Stage 2.x 全部落地后一直没人改）。无 git 元数据（导出的源码包等）时
+# 回退到钉住的上游 OpenWrt 提交短 SHA。
+# 必须以十六进制分段结尾：base-files 把版本拼成
+# "<COMMITCOUNT>~<REVISION 最后一个 '-' 分段>"，apk 3.x 的 '~' 后缀
+# 只接受十六进制（非十六进制的 "stage1" 会让 package/base-files 编译失败），
+# 而提交短 SHA 天然满足。
+SBE_COMMIT=$(git -C "$PROJ/.." rev-parse --short=8 HEAD 2>/dev/null || true)
+[ -n "$SBE_COMMIT" ] || SBE_COMMIT=${OPENWRT_SHA:0:8}
+REVISION=${SBE_REVISION:-sbe1v1k-25.12-$SBE_COMMIT}
 
 # feed 提交固定为 2026-10-23 本地装配时 feeds update 的结果。
 feed_sha() {

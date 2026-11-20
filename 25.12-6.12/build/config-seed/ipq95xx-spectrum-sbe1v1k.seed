@@ -39,7 +39,7 @@ CONFIG_PACKAGE_kmod-qca-nss-ecm-standard=y
 
 # Version string: left at the upstream defaults — VERSIONOPT is off, so
 # VERSION_NUMBER resolves to 25.12-SNAPSHOT (branch default) and VERSION_CODE
-# to the tree's `version` file (sbe1v1k-25.12-stage1-<sha8>).  The banner
+# to the tree's `version` file (sbe1v1k-25.12-<builder-commit-sha8>).  The banner
 # itself is rendered from files/ by scripts/render-overlay.sh.
 
 # LuCI, kept identical to the 24.10-6.6 image: luci-light collection

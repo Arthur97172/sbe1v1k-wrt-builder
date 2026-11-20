@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 25.12-6.12 Stage 1 编译后的静态检查（不接触设备、不执行目标二进制）。
+# 25.12-6.12 编译后的静态检查（不接触设备、不执行目标二进制）。
 #
 # 检查对象是最终交付物本身：本目标的 sysupgrade 镜像是 tar 容器
 #   sysupgrade-spectrum_sbe1v1k/{CONTROL,kernel,root}

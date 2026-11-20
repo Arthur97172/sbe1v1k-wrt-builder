@@ -1164,10 +1164,13 @@ ERROR: package/feeds/nss/qca-ssdk failed to build (build variant: nohnat).
 
 - `files/` 由 `include/image.mk` 原样复制进 rootfs，**不经过** `VERSION_SED_SCRIPT`，
   所以 banner 里的 `%V`/`%R` 必须由 `render-overlay.sh` 在构建前替换。
-- 构建树的 `version` 文件必须让**最后一个 `-` 分段是十六进制**（这里是上游提交短
-  SHA，如 `sbe1v1k-25.12-stage1-f3f5c2e5`）：`base-files` 把包版本拼成
-  `<COMMITCOUNT>~<该分段>`，而 apk 3.x 的 `~` 后缀只接受十六进制，非十六进制
-  （如 `stage1`）会让 `package/base-files` 编译失败。
+- 构建树的 `version` 文件由 `prepare-tree.sh` 生成，形如 `sbe1v1k-25.12-642bd12b`：
+  末尾是**本项目仓库**当前提交的短 SHA，随每次提交自动变化，不写死里程碑名
+  （早期的 `stage1` 是 2026-10-23 首次装配时的残留）。没有 git 元数据时回退到
+  钉住的上游 OpenWrt 提交短 SHA，也可用 `SBE_REVISION` 覆盖。注意**最后一个
+  `-` 分段必须是十六进制**：`base-files` 把包版本拼成 `<COMMITCOUNT>~<该分段>`，
+  而 apk 3.x 的 `~` 后缀只接受十六进制，非十六进制（如 `stage1`）会让
+  `package/base-files` 编译失败。
 - 25.12 默认使用 apk（`CONFIG_USE_APK=y`），镜像内包数据库是
   `/lib/apk/db/installed`（25.12 的位置；脚本也兼容 `/usr/lib/apk/db/installed`
   与 opkg 的 `/usr/lib/opkg/status`）。
