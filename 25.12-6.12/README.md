@@ -47,9 +47,11 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── etc/uci-defaults/99-spectrum-eth0-unmanaged-lan  把 eth0 从 netifd 的 br-lan 端口表摘出（与 24.10 同）
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
 │   ├── etc/init.d/eth0-lan-attach              procd 常驻 netlink 监听（START=23），兜底补挂 eth0
+│   ├── etc/init.d/sbe-lan-mac                  S19：eth2/eth3 的 MAC 由 eth0 派生，br-lan MAC 跨重启恒定
 │   ├── etc/init.d/sbe-boot-trace               S01 起后台采样启动现场（v35 起）
 │   ├── etc/rc.d/S01sbe-boot-trace              → ../init.d/sbe-boot-trace（符号链接，随 overlay 进镜像）
 │   ├── etc/rc.d/S15nss                         → ../init.d/nss（NSS 档位控制器）
+│   ├── etc/rc.d/S19sbe-lan-mac                 → ../init.d/sbe-lan-mac（LAN MAC 固定）
 │   ├── etc/hotplug.d/{iface/30,net/20}-eth0-lan-attach   挂桥主触发点与内核事件兜底
 │   ├── usr/sbin/eth0-lan-attach                attach/monitor 两种模式的实现
 │   ├── usr/sbin/nss-load                       NSS 分层装载器（status/load/commit/tier/stop）
@@ -683,8 +685,10 @@ S2 里的 `port_ledinfo`、`port_mac_sel` 没有抄：本树 qca-ssdk 的
 `led_ctrl_pattern_t[SSDK_MAX_PORT_NUM=8][PORT_LED_SOURCE_MAX=3]` 之外（越界写
 `ssdk_dt_cfg`），而 `ssdk_led_init()` 只读 source 0..2，节点根本配不到灯；
 qca-ssdk 在 HPPE（ipq9574）上也不调用 `ssdk_led_init()`。24.10 抄了 S1 的同一
-节点、行为同样是"什么都没发生"（2026-11-18 审计，24.10 那边已删除）。板级 MAC
-仍由 `eth_hw_addr_random()` 生成（DTS 无全零之外的 `local-mac-address`）。
+节点、行为同样是"什么都没发生"（2026-11-18 审计，24.10 那边已删除）。GMAC3/4
+（eth2/eth3）在 DTS 里没有 MAC，nss-dp 对它们调用 `eth_hw_addr_random()` 生成
+随机本地管理 MAC；LAN 侧由 overlay 的 `sbe-lan-mac`（S19）在 netifd 建桥前
+改写，见下节「LAN 侧 MAC 固定」。
 
 **端口表进 board.json（`0023`）。** `target/linux/qualcommbe/ipq95xx/base-files/
 etc/board.d/02_network` 原来没有 `spectrum,sbe1v1k` 分支，设备会落到 "Unsupported
@@ -712,6 +716,21 @@ board.json 的 `ports` 数组），LuCI「状态→概览→端口状态」（`2
 `usr/sbin/eth0-lan-attach` 只做 `ip link set dev eth0 master br-lan`，不碰端口
 状态；`touch /var/run/eth0-lan-attach.disabled` 可临时交回手工管理（tmpfs，重启
 失效）。`verify-image.sh` 断言这五个文件都在且可执行。
+
+**LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
+通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3
+没有注入，nss-dp 退化为 `eth_hw_addr_random()`（dmesg: `GMAC3/GMAC4 Invalid
+MAC@ - using …`），每次启动都是新的本地管理 MAC。br-lan 默认继承端口里数值
+最小的 MAC，随机值多数时候小于 eth0 的 `f4:…`，于是 br-lan 的 MAC 和它的
+`fe80::` 链路地址每次重启都跟着变（B 机实测 `b6:08:…`、`a2:36:…`、`c6:4b:…`）。
+
+`etc/init.d/sbe-lan-mac`（START=19，晚于 nss(S15) 的 dp 装载、早于 network(S20)
+建桥）读 eth0 的稳定 MAC，派生 eth2 = 基址+2、eth3 = 基址+3（延续厂商序列
+`…:22/…:23`）并写回；eth0 随后被 `eth0-lan-attach` 挂进 br-lan，桥 MAC 收敛到
+数值最小的 `f4:52:46:9d:db:20`，跨重启恒定。脚本只改写带本地管理位的随机
+MAC——将来 bootloader/DT 开始给 GMAC3/4 注入全局 MAC 时自动让位。NSS 档位为
+`off` 时 eth0 不存在，脚本安静跳过。`verify-image.sh` 断言脚本与 S19 链接在
+镜像里。状态：本机构建/静态检查按实际结果记，真机 `NOT TESTED`。
 
 **启动取证（v35 起，`files/` overlay）。** v34 在 S10boot 之后卡死时设备无串口、
 日志也不落盘，离线只剩 overlay 的磁盘痕迹，到不了 rcS 之后。为此：

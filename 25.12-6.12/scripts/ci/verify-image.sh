@@ -379,6 +379,19 @@ for f in etc/uci-defaults/99-spectrum-eth0-unmanaged-lan \
 	[ -x "$ROOTFS/$f" ] && ok "可执行 /$f" || bad "缺少或不可执行 /$f（eth0 将交回 netifd）"
 done
 
+# LAN 侧 MAC 固定（S19）：GMAC3/GMAC4 没有 bootloader 注入的 MAC，nss-dp 退化为
+# eth_hw_addr_random()，br-lan 继承端口里最小的随机 MAC，每次重启都变。S19 在
+# netifd(S20) 建桥之前把 eth2/eth3 派生为 eth0 基址 +2/+3，桥 MAC 才恒定。
+check_overlay etc/init.d/sbe-lan-mac
+[ -x "$ROOTFS/etc/init.d/sbe-lan-mac" ] && ok "可执行 /etc/init.d/sbe-lan-mac" \
+	|| bad "缺少或不可执行 /etc/init.d/sbe-lan-mac（br-lan MAC 会每次重启都变）"
+RCT="$ROOTFS/etc/rc.d/S19sbe-lan-mac"
+if [ -L "$RCT" ] && [ "$(readlink "$RCT")" = "../init.d/sbe-lan-mac" ]; then
+	ok "/etc/rc.d/S19sbe-lan-mac -> ../init.d/sbe-lan-mac"
+else
+	bad "缺少 /etc/rc.d/S19sbe-lan-mac（S19 不会执行，br-lan MAC 随机）"
+fi
+
 # ---- 启动取证（v35 起）：S01 采样器 + 两个 QSDK 等待循环的超时 --------------
 # v34 在 S10boot 之后卡死时拿不到任何日志；采样器从 S01 起把启动现场写进
 # overlay（/sbe-boot-trace/），断电重启后仍可读，所以它必须真的进镜像并在
