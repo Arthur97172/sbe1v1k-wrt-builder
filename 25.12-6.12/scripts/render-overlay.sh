@@ -115,6 +115,17 @@ if [ -n "$VSRC" ]; then
 	cp -a "$VSRC/." "$BR/files/"
 fi
 
+# Rx 埋点诊断构建（SBE_DP_DIAG=1，与 SBE_VARIANT 正交）：只多一个读取
+# /proc/edma_ring_util_stats/edma_rx_diag 的小工具，内核侧埋点补丁由
+# nss/install.sh 应用。生产构建不经过这里。
+if [ "${SBE_DP_DIAG:-0}" = 1 ]; then
+	DSRC=$PROJ/files-rxdiag
+	[ -d "$DSRC" ] \
+		|| { echo "render-overlay: SBE_DP_DIAG=1 但缺少 $DSRC" >&2; exit 1; }
+	echo "[render] overlay(SBE_DP_DIAG): $DSRC -> $BR/files（叠加）"
+	cp -a "$DSRC/." "$BR/files/"
+fi
+
 # dropbear 只在精确匹配客户端公钥时接受登录，私钥永远不进镜像；
 # 文件权限收紧到 600，避免仅靠默认 umask。
 AK=$BR/files/etc/dropbear/authorized_keys

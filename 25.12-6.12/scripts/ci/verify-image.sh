@@ -316,6 +316,21 @@ printf '%s' "$VLINE" | grep -Eq '^ Version: 25\.12-SNAPSHOT \(sbe1v1k-' \
 	&& ok "版本行为本项目实际版本串" \
 	|| bad "版本行不是 25.12-SNAPSHOT (sbe1v1k-…) 形式"
 
+# Rx 埋点诊断构建（SBE_DP_DIAG=1）正反两向都断言：诊断镜像必须带读取器、
+# 版本行必须带 dpdiag 段；生产镜像不得出现它。开关接线错了会立刻暴露。
+if [ "${SBE_DP_DIAG:-0}" = 1 ]; then
+	[ -x "$ROOTFS/usr/sbin/sbe-rx-diag" ] \
+		&& ok "诊断构建带 /usr/sbin/sbe-rx-diag" \
+		|| bad "SBE_DP_DIAG=1 但镜像缺少 /usr/sbin/sbe-rx-diag"
+	printf '%s' "$VLINE" | grep -q 'sbe1v1k-25\.12-dpdiag-' \
+		&& ok "诊断版本行带 dpdiag 段" \
+		|| bad "SBE_DP_DIAG=1 但版本行没有 dpdiag 段"
+else
+	[ -e "$ROOTFS/usr/sbin/sbe-rx-diag" ] \
+		&& bad "生产镜像出现了 /usr/sbin/sbe-rx-diag（SBE_DP_DIAG 开关泄漏）" \
+		|| ok "生产镜像没有诊断读取器"
+fi
+
 head -n1 "$ROOTFS/etc/init.d/wireless-defaults" | grep -Fxq '#!/bin/sh /etc/rc.common' \
 	&& ok "/etc/init.d/wireless-defaults 首行为 rc.common" \
 	|| bad "/etc/init.d/wireless-defaults 首行不是 '#!/bin/sh /etc/rc.common'"

@@ -1,0 +1,338 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] edma_v2: SBE Rx diagnostic counters (SBE_DP_DIAG only)
+
+Diagnostic-build-only instrumentation for the 25.12 eth1 "live promote to
+WAN -> link up, TX on the wire, zero RX" defect.  Adds atomic per-RxDesc-ring
+counters (IRQ, NAPI poll, descriptors reaped, source ports, handoff paths)
+plus a /proc/edma_ring_util_stats/edma_rx_diag reader that also samples the
+live producer index, so a ring filled by hardware without IRQ/NAPI activity
+is visible.
+
+Applied only when SBE_DP_DIAG=1 (see nss/install.sh); production builds are
+unaffected.  Reset counters: echo 1 > /proc/edma_ring_util_stats/edma_rx_diag
+
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_procfs.c b/hal/dp_ops/edma_dp/edma_v2/edma_procfs.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_procfs.c	2026-10-21 04:46:14.820857388 +0000
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_procfs.c	2026-11-21 13:14:03.575146244 +0000
+@@ -17,6 +17,7 @@
+ #include <linux/version.h>
+ #include "edma_procfs.h"
+ #include "edma.h"
++#include "edma_regs.h"
+ 
+ static struct proc_dir_entry *edma_procfs;
+ 
+@@ -94,11 +95,154 @@
+ #endif
+ 
+ /*
++ * SBE diagnostic build (SBE_DP_DIAG)
++ *
++ * Per-ring Rx counters plus live producer/consumer indices, exposed at
++ * /proc/edma_ring_util_stats/edma_rx_diag. The counters are bumped in
++ * edma_rx.c; the producer index is read from the EDMA register on every
++ * show, so a ring that the hardware fills without any IRQ/NAPI activity
++ * still shows up as prod advancing past cons.
++ */
++static int edma_procfs_rx_diag_show(struct seq_file *seq, void *v)
++{
++	struct edma_gbl_ctx *egc = edma_gbl_ctx;
++	uint32_t i, p;
++
++	if (!egc) {
++		seq_printf(seq, "sbe_edma_rx_diag egc=null\n");
++		return 0;
++	}
++
++	seq_printf(seq, "sbe_edma_rx_diag version=1 rings=%u rx_ring_sz=%u\n",
++		   egc->num_rxdesc_rings, egc->rx_ring_sz);
++
++	for (i = 0; i < EDMA_MAX_PORTS; i++) {
++		if (egc->netdev_arr[i])
++			seq_printf(seq, "netdev port=%u name=%s\n", i + 1,
++				   egc->netdev_arr[i]->name);
++	}
++
++	for (i = 0; i < egc->num_rxdesc_rings; i++) {
++		struct edma_rxdesc_ring *ring = &egc->rxdesc_rings[i];
++		struct edma_rx_desc_stats *st = &ring->rx_desc_stats;
++		uint32_t prod = edma_reg_read(
++			EDMA_REG_RXDESC_PROD_IDX(ring->ring_id)) &
++			EDMA_RXDESC_PROD_IDX_MASK;
++
++		seq_printf(seq,
++			   "ring id=%u cons=%u prod=%u avail=%u leftover=%u "
++			   "irq=%llu poll=%llu reap=%llu src_valid=%llu no_ndev=%llu "
++			   "linear_ok=%llu linear_consumed=%llu scatter=%llu "
++			   "handoff_gro=%llu handoff_skb=%llu src_port_other=%llu\n",
++			   ring->ring_id, ring->cons_idx, prod,
++			   EDMA_DESC_AVAIL_COUNT(prod, ring->cons_idx,
++						 egc->rx_ring_sz),
++			   ring->work_leftover,
++			   (unsigned long long)atomic64_read(&st->sbe_diag_irq),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_poll),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_reap_desc),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_src_valid),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_no_ndev),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_linear_ok),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_linear_consumed),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_scatter),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_handoff_gro),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_handoff_skb),
++			   (unsigned long long)atomic64_read(&st->sbe_diag_src_port_other));
++
++		seq_printf(seq, "ring%u srcport", ring->ring_id);
++		for (p = 0; p < SBE_DIAG_SRC_PORT_MAX; p++)
++			seq_printf(seq, " %u:%llu", p,
++				   (unsigned long long)atomic64_read(
++					   &st->sbe_diag_src_port[p]));
++		seq_printf(seq, "\n");
++	}
++
++	return 0;
++}
++
++static void edma_procfs_rx_diag_reset(void)
++{
++	struct edma_gbl_ctx *egc = edma_gbl_ctx;
++	uint32_t i, p;
++
++	if (!egc)
++		return;
++
++	for (i = 0; i < egc->num_rxdesc_rings; i++) {
++		struct edma_rx_desc_stats *st = &egc->rxdesc_rings[i].rx_desc_stats;
++
++		atomic64_set(&st->sbe_diag_irq, 0);
++		atomic64_set(&st->sbe_diag_poll, 0);
++		atomic64_set(&st->sbe_diag_reap_desc, 0);
++		atomic64_set(&st->sbe_diag_src_valid, 0);
++		atomic64_set(&st->sbe_diag_src_port_other, 0);
++		atomic64_set(&st->sbe_diag_no_ndev, 0);
++		atomic64_set(&st->sbe_diag_linear_ok, 0);
++		atomic64_set(&st->sbe_diag_linear_consumed, 0);
++		atomic64_set(&st->sbe_diag_scatter, 0);
++		atomic64_set(&st->sbe_diag_handoff_gro, 0);
++		atomic64_set(&st->sbe_diag_handoff_skb, 0);
++
++		for (p = 0; p < SBE_DIAG_SRC_PORT_MAX; p++)
++			atomic64_set(&st->sbe_diag_src_port[p], 0);
++	}
++}
++
++static int edma_procfs_rx_diag_open(struct inode *inode, struct file *file)
++{
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
++	return single_open(file, edma_procfs_rx_diag_show, PDE_DATA(inode));
++#else
++	return single_open(file, edma_procfs_rx_diag_show, pde_data(inode));
++#endif
++}
++
++static ssize_t edma_procfs_rx_diag_write(struct file *file,
++		const char __user *buf, size_t count, loff_t *ppos)
++{
++	int ret;
++	int reset;
++	char buffer[13];
++
++	memset(buffer, 0, sizeof(buffer));
++	if (count > sizeof(buffer) - 1)
++		count = sizeof(buffer) - 1;
++
++	if (copy_from_user(buffer, buf, count) != 0)
++		return -EFAULT;
++
++	ret = kstrtoint(strstrip(buffer), 10, &reset);
++	if (ret == 0 && reset)
++		edma_procfs_rx_diag_reset();
++
++	return count;
++}
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
++static const struct file_operations edma_procfs_rx_diag_fops = {
++	.owner   = THIS_MODULE,
++	.open    = edma_procfs_rx_diag_open,
++	.read    = seq_read,
++	.write   = edma_procfs_rx_diag_write,
++	.release = single_release,
++};
++#else
++static const struct proc_ops edma_procfs_rx_diag_fops = {
++	.proc_open    = edma_procfs_rx_diag_open,
++	.proc_read    = seq_read,
++	.proc_write   = edma_procfs_rx_diag_write,
++	.proc_release = single_release,
++};
++#endif
++
++/*
+  * edma_procfs_exit()
+  *	EDMA procfs exit
+  */
+ void edma_procfs_exit(void)
+ {
++	remove_proc_entry("edma_rx_diag", edma_procfs);
+ 	remove_proc_entry("enable_ring_stats_utilization", edma_procfs);
+ 	remove_proc_entry("edma_ring_util_stats", NULL);
+ }
+@@ -129,4 +273,9 @@
+ 				&edma_procfs_ring_stats_fops))
+ 		pr_err("cannot create enable stats\n");
+ #endif
++
++	/* SBE diagnostic build: Rx counters, see edma_procfs_rx_diag_show(). */
++	if (!proc_create("edma_rx_diag", S_IRUGO | S_IWUGO, edma_procfs,
++				&edma_procfs_rx_diag_fops))
++		pr_err("cannot create sbe rx diag entry\n");
+ }
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_rx.c b/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_rx.c	2026-11-21 13:03:47.433743320 +0000
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_rx.c	2026-11-21 13:06:50.118811454 +0000
+@@ -1697,6 +1697,17 @@
+ 	if (likely((src_info & EDMA_RXDESC_SRCINFO_TYPE_MASK)
+ 				== EDMA_RXDESC_SRCINFO_TYPE_PORTID)) {
+ 		src_port_num = src_info & EDMA_RXDESC_PORTNUM_BITS;
++
++		/*
++		 * SBE diagnostic build: frames that reached EDMA, bucketed by
++		 * the switch source port they carry.
++		 */
++		atomic64_inc(&rxdesc_stats->sbe_diag_src_valid);
++		if (likely(src_port_num < SBE_DIAG_SRC_PORT_MAX)) {
++			atomic64_inc(&rxdesc_stats->sbe_diag_src_port[src_port_num]);
++		} else {
++			atomic64_inc(&rxdesc_stats->sbe_diag_src_port_other);
++		}
+ 	} else {
+ 		if (net_ratelimit()) {
+ 			edma_debug("Src_info_type:0x%x. Drop skb:%px\n",
+@@ -1766,6 +1777,7 @@
+ 	u64_stats_update_begin(&rxdesc_stats->syncp);
+ 	++rxdesc_stats->src_port_inval_netdev;
+ 	u64_stats_update_end(&rxdesc_stats->syncp);
++	atomic64_inc(&rxdesc_stats->sbe_diag_no_ndev);
+ 	return NULL;
+ }
+ 
+@@ -2241,6 +2253,13 @@
+ 
+ 	rxdesc_ring->work_leftover -= work_to_do;
+ 
++	/*
++	 * SBE diagnostic build: descriptors the hardware has completed and that
++	 * this reap pass is about to consume. If this stays flat while the PHY
++	 * sees frames, the drop happened before EDMA.
++	 */
++	atomic64_add(work_to_do, &rxdesc_stats->sbe_diag_reap_desc);
++
+ 	end_idx = (cons_idx + work_to_do) & EDMA_RX_RING_SIZE_MASK;
+ 
+ 	rxdesc_desc = EDMA_RXDESC_PRI_DESC(rxdesc_ring, cons_idx);
+@@ -2359,21 +2378,28 @@
+ 				struct nss_dp_dev *dp_dev = netdev_priv(skb->dev);
+ 
+ 				if (likely(edma_rx_handle_linear_packets(egc, rxdesc_ring, rxdesc_desc, dp_dev, skb))) {
++					atomic64_inc(&rxdesc_stats->sbe_diag_linear_ok);
++
+ 					tree_id_type = EDMA_RXDESC_TREE_ID_TYPE_GET(rxdesc_sec);
+ 					if (tree_id_type == PPE_DRV_TREE_ID_TYPE_UDP_ST && likely(nss_dp_udp_st_rx_cb)) {
+ 						nss_dp_udp_st_rx_cb(skb);
++						atomic64_inc(&rxdesc_stats->sbe_diag_handoff_skb);
+ 					} else if (unlikely(ndev->features & NETIF_F_GRO)) {
+ 						skb->protocol = eth_type_trans(skb, ndev);
+ 						mem_debug_update_skb(skb);
+ 						napi_gro_receive(&rxdesc_ring->napi, skb);
++						atomic64_inc(&rxdesc_stats->sbe_diag_handoff_gro);
+ 					} else if (test_bit(__NSS_DP_NO_LIST, &dp_dev->flags)) {
+ 						prefetch(skb_shinfo(skb));
+ 						skb->protocol = eth_type_trans(skb, skb->dev);
+ 						mem_debug_update_skb(skb);
+ 						netif_receive_skb(skb);
++						atomic64_inc(&rxdesc_stats->sbe_diag_handoff_skb);
+ 					} else {
+ 						list_add_tail(&skb->list, &rx_list);
+ 					}
++				} else {
++					atomic64_inc(&rxdesc_stats->sbe_diag_linear_consumed);
+ 				}
+ 				goto next_rx_desc;
+ 			}
+@@ -2383,6 +2409,7 @@
+ 		 * Handle scatter frame processing for first/middle/last segments
+ 		 */
+ 		mem_debug_update_skb(skb);
++		atomic64_inc(&rxdesc_stats->sbe_diag_scatter);
+ 		edma_rx_handle_scatter_frames(egc, rxdesc_ring, rxdesc_desc, skb);
+ 
+ next_rx_desc:
+@@ -2425,6 +2452,7 @@
+ 		skb_list_del_init(cur_skb);
+ 		cur_skb->protocol = eth_type_trans(cur_skb, cur_skb->dev);
+ 		netif_receive_skb(cur_skb);
++		atomic64_inc(&rxdesc_stats->sbe_diag_handoff_skb);
+ 	}
+ 
+ 	if (unlikely(rxfill_ring->num_rxfill_pending >=
+@@ -2487,6 +2515,8 @@
+ 	int32_t work_done = 0;
+ 	uint32_t status;
+ 
++	atomic64_inc(&rxdesc_ring->rx_desc_stats.sbe_diag_poll);
++
+ 	do {
+ 		work_done += edma_rx_reap(egc, budget - work_done, rxdesc_ring);
+ 		if (likely(work_done >= budget)) {
+@@ -2525,6 +2555,7 @@
+ 	struct edma_rx_desc_stats *rxdesc_stats = &rxdesc_ring->rx_desc_stats;
+ 
+ 	edma_debug("irq: irq=%d rxdesc_ring_id=%u\n", irq, rxdesc_ring->ring_id);
++	atomic64_inc(&rxdesc_stats->sbe_diag_irq);
+ 
+ 	/*
+ 	 * Disable RxDesc interrupt
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_rx.h b/hal/dp_ops/edma_dp/edma_v2/edma_rx.h
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_rx.h	2026-10-21 04:46:14.820857388 +0000
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_rx.h	2026-11-21 13:04:32.187068492 +0000
+@@ -8,6 +8,15 @@
+ #ifndef __EDMA_RX_H__
+ #define __EDMA_RX_H__
+ 
++#include <linux/atomic.h>
++
++/*
++ * SBE diagnostic build (SBE_DP_DIAG): number of source-port buckets kept per
++ * ring. ipq95xx has NSS_DP_HAL_MAX_PORTS(6) + VP(1); the extra bucket absorbs
++ * anything unexpected instead of overflowing.
++ */
++#define SBE_DIAG_SRC_PORT_MAX		8
++
+ #define EDMA_RXFILL_RING_PER_CORE_MAX	1
+ #define EDMA_RXDESC_RING_PER_CORE_MAX	1
+ 
+@@ -340,6 +349,24 @@
+ 	uint64_t src_port_inval_netdev;		/* Invalid net device for the source port */
+ 	uint64_t rx_napi_sched;			/* Number of times napi is scheduled for RxDesc */
+ 	uint64_t payload_buf_alloc_failed;	/* SKB Allocation failed when in PP Mode */
++	/*
++	 * SBE diagnostic build counters (SBE_DP_DIAG). atomic64_t because IRQ
++	 * handler, NAPI poll and procfs readers all touch them; they are read
++	 * via /proc/edma_ring_util_stats/edma_rx_diag.
++	 */
++	atomic64_t sbe_diag_irq;		/* IRQ entries for this RxDesc ring */
++	atomic64_t sbe_diag_poll;		/* NAPI poll invocations */
++	atomic64_t sbe_diag_reap_desc;		/* descriptors reaped from HW */
++	atomic64_t sbe_diag_src_valid;		/* descriptors with valid PORTID source */
++	atomic64_t sbe_diag_src_port[SBE_DIAG_SRC_PORT_MAX];
++						/* reaped descriptors by source port */
++	atomic64_t sbe_diag_src_port_other;	/* src port >= SBE_DIAG_SRC_PORT_MAX */
++	atomic64_t sbe_diag_no_ndev;		/* source dev resolution dropped skb */
++	atomic64_t sbe_diag_linear_ok;		/* linear packets ready for stack */
++	atomic64_t sbe_diag_linear_consumed;	/* linear handler consumed skb (false) */
++	atomic64_t sbe_diag_scatter;		/* scatter-frame descriptors */
++	atomic64_t sbe_diag_handoff_gro;	/* delivered via napi_gro_receive */
++	atomic64_t sbe_diag_handoff_skb;	/* delivered via netif_receive_skb */
+ 	struct edma_ring_util_stats ring_stats;	/* Tracking EDMA Rx Desc ring utilization */
+ 	struct u64_stats_sync syncp;		/* Synchronization pointer */
+ };

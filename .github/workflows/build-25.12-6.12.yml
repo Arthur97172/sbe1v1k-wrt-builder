@@ -35,6 +35,10 @@ on:
           - latest
           - pinned
         default: latest
+      dp_diag:
+        description: '诊断构建：给 qca-nss-dp Rx 路径加埋点（/proc/edma_ring_util_stats/edma_rx_diag），产物非生产用'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -93,6 +97,9 @@ jobs:
           # CI 用严格模式：远端不可达/分叉时直接失败，避免“以为在跟新”。
           SBE_PLUGIN_MODE: ${{ inputs.plugin_mode || 'latest' }}
           SBE_PLUGIN_STRICT: '1'
+          # 诊断构建开关：1 时 nss/install.sh 追加 patches-diag/ 下的 Rx 埋点
+          # 补丁，REVISION 带 -dpdiag 段，overlay 叠加 files-rxdiag/。
+          SBE_DP_DIAG: ${{ inputs.dp_diag && '1' || '' }}
         run: ./25.12-6.12/scripts/ci/prepare-tree.sh "$GITHUB_WORKSPACE"
 
       # 6.12 内核漂移检测：只报告，不修改 OPENWRT_SHA / 内核版本 / 补丁。
@@ -130,6 +137,10 @@ jobs:
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)=' "$CFG"
 
       - name: Build
+        # render-overlay.sh 在 sbe1v1k-build.sh 里跑，诊断读取器靠这个变量
+        # 叠进 files/；漏了这个 env，镜像里就没有 /usr/sbin/sbe-rx-diag。
+        env:
+          SBE_DP_DIAG: ${{ inputs.dp_diag && '1' || '' }}
         run: |
           set -o pipefail
           if ./25.12-6.12/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee build.log; then
@@ -175,6 +186,10 @@ jobs:
       - name: Verify image (static)
         id: verify
         if: success()
+        env:
+          # verify-image.sh 会重新渲染 overlay 做逐字节对照，必须与 Prepare
+          # 时使用同一个开关，否则诊断构建的 overlay 会被判成不一致。
+          SBE_DP_DIAG: ${{ inputs.dp_diag && '1' || '' }}
         run: |
           set -o pipefail
           ./25.12-6.12/scripts/ci/verify-image.sh "$GITHUB_WORKSPACE" 2>&1 | tee verify.log
@@ -253,12 +268,19 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
+          SBE_DP_DIAG: ${{ inputs.dp_diag && '1' || '' }}
         run: |
           set -eu
           # tag 以固件线名开头（25.12-6.12-v<run>-<attempt>-<sha8>），Releases
           # 列表里按 tag 排序时同一条线的版本聚在一起，也便于脚本按前缀筛选。
           VERSION_TAG="v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}"
           TAG="25.12-6.12-${VERSION_TAG}"
+          # 诊断构建单独加后缀，避免和同 run 的生产镜像混淆。
+          DPNOTE="未启用"
+          if [ "${SBE_DP_DIAG:-0}" = 1 ]; then
+            TAG="25.12-6.12-${VERSION_TAG}-dpdiag"
+            DPNOTE="**已启用（SBE_DP_DIAG=1）：qca-nss-dp Rx 埋点，非生产用**（见 25.12-6.12/docs/RX_DIAG_BUILD-2026-11-21.md）"
+          fi
           REL="$RUNNER_TEMP/release"
           VLINE=$(grep -m1 '^ Version:' sources/buildroot-25.12-6.12/files/etc/banner | sed 's/^ *//')
           # 0027 在 patches/disabled/ 时是 v28 对照构建，必须在 notes 里写明，
@@ -276,6 +298,7 @@ jobs:
 
           - 版本行：${VLINE}
           - 构建变体：${VARIANT}
+          - Rx 埋点诊断（SBE_DP_DIAG）：${DPNOTE}
           - eMMC 核心复位（0028）：${RESET_NOTE}
           - 提交：\`${GITHUB_SHA}\`
           - 运行：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
@@ -333,6 +356,9 @@ jobs:
           # 因为 tag 本身已以 25.12-6.12 开头。重跑靠 ATTEMPT 区分，sha 后缀便于
           # 在 Releases 列表里对号。
           NAME="SBE1V1K 25.12-6.12 ${VERSION_TAG}"
+          if [ "${SBE_DP_DIAG:-0}" = 1 ]; then
+            NAME="${NAME} 诊断埋点"
+          fi
           # 步骤日志对匿名不可读，失败原因折成 ::error:: 注解才看得到。
           enc() {
             awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");

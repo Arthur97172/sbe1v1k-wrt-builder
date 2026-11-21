@@ -60,6 +60,22 @@ production|diag|mainline) ;;
 esac
 echo "[prepare] 构建变体 SBE_VARIANT=$VARIANT"
 
+# 正交的 Rx 埋点开关（SBE_DP_DIAG=1）：只在 qca-nss-dp 的接收路径上加计数器
+# （/proc/edma_ring_util_stats/edma_rx_diag），产出诊断镜像；默认 0 时生产
+# 构建不打这个补丁。用于定位「PHY 已收、协议栈未收」之间丢在哪一级。
+DPDIAG=${SBE_DP_DIAG:-0}
+case "$DPDIAG" in
+0|1) ;;
+*) echo "SBE_DP_DIAG 只能是 0 或 1（当前：$DPDIAG）" >&2; exit 1 ;;
+esac
+if [ "$DPDIAG" = 1 ]; then
+	echo "[prepare] SBE_DP_DIAG=1：应用 qca-nss-dp Rx 埋点补丁（诊断镜像）"
+	ls "$PROJ"/nss/patches-diag/qca-nss-dp/*.patch >/dev/null 2>&1 \
+		|| { echo "SBE_DP_DIAG=1 但 nss/patches-diag/qca-nss-dp 下没有补丁" >&2; exit 1; }
+	[ -x "$PROJ/files-rxdiag/usr/sbin/sbe-rx-diag" ] \
+		|| { echo "SBE_DP_DIAG=1 但缺少 files-rxdiag/usr/sbin/sbe-rx-diag" >&2; exit 1; }
+fi
+
 OPENWRT_URL=${OPENWRT_URL:-https://github.com/openwrt/openwrt.git}
 OPENWRT_BRANCH=${OPENWRT_BRANCH:-openwrt-25.12}
 OPENWRT_SHA=${OPENWRT_SHA:-f3f5c2e54bf432b444e36b1a77077ff476361825}
@@ -71,10 +87,15 @@ OPENWRT_SHA=${OPENWRT_SHA:-f3f5c2e54bf432b444e36b1a77077ff476361825}
 # 必须以十六进制分段结尾：base-files 把版本拼成
 # "<COMMITCOUNT>~<REVISION 最后一个 '-' 分段>"，apk 3.x 的 '~' 后缀
 # 只接受十六进制（非十六进制的 "stage1" 会让 package/base-files 编译失败），
-# 而提交短 SHA 天然满足。
+# 而提交短 SHA 天然满足。诊断构建的 "dpdiag" 段放在 SHA 之前，末尾分段仍是
+# 十六进制。
 SBE_COMMIT=$(git -C "$PROJ/.." rev-parse --short=8 HEAD 2>/dev/null || true)
 [ -n "$SBE_COMMIT" ] || SBE_COMMIT=${OPENWRT_SHA:0:8}
-REVISION=${SBE_REVISION:-sbe1v1k-25.12-$SBE_COMMIT}
+if [ "$DPDIAG" = 1 ]; then
+	REVISION=${SBE_REVISION:-sbe1v1k-25.12-dpdiag-$SBE_COMMIT}
+else
+	REVISION=${SBE_REVISION:-sbe1v1k-25.12-$SBE_COMMIT}
+fi
 
 # feed 提交固定为 2026-10-23 本地装配时 feeds update 的结果。
 feed_sha() {
@@ -371,7 +392,14 @@ EOF
 	rm -rf "$nss_work"
 	SBE_NSS_BASE=$NSS_CACHE/nss-src-v1
 fi
-SBE_NSS_BASE="$SBE_NSS_BASE" SBE_BUILDROOT="$BR" "$PROJ/nss/install.sh" "$ROOT"
+SBE_NSS_BASE="$SBE_NSS_BASE" SBE_BUILDROOT="$BR" SBE_DP_DIAG="$DPDIAG" \
+	"$PROJ/nss/install.sh" "$ROOT"
+if [ "$DPDIAG" = 1 ]; then
+	grep -q 'sbe_diag_reap_desc' \
+		"$BR/qca/src/nss/base/qca-nss-dp/hal/dp_ops/edma_dp/edma_v2/edma_rx.h" \
+		|| { echo "SBE_DP_DIAG=1 但装配树里的 qca-nss-dp 没有埋点（补丁未应用？）" >&2; exit 1; }
+	echo "[prepare]   qca-nss-dp Rx 埋点已确认（/proc/edma_ring_util_stats/edma_rx_diag）"
+fi
 for f in "$BR/package/feeds/nss/qca-ssdk/Makefile" \
          "$BR/package/feeds/nss/qca-ssdk-shell/Makefile" \
          "$BR/qca/src/nss/base/qca-nss-dp/nss_dp_attach.c" \
