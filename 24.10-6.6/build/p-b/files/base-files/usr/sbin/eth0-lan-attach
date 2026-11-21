@@ -29,9 +29,13 @@ attach() {
 	[ "$(uci -q get sbe_ports.main.wan_port 2>/dev/null)" = "eth0" ] && return 0
 	[ -e /sys/class/net/eth0 ] || return 1
 	[ -e /sys/class/net/br-lan ] || return 1
+
+	# 角色回切时 netifd 会把 eth0 置成 admin down，而它可能仍是 br-lan
+	# 成员；如果先判「已在桥里」就早退，eth0 会一直 DOWN。up 必须幂等地
+	# 放在早退之前。
+	ip link set dev eth0 up 2>/dev/null
 	[ "$(master)" = "br-lan" ] && return 0
 
-	ip link set dev eth0 up 2>/dev/null
 	ip link set dev eth0 master br-lan 2>/dev/null
 	if [ "$(master)" = "br-lan" ]; then
 		log "attached eth0 to br-lan"
