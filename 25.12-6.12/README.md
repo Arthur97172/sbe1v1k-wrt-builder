@@ -1258,8 +1258,13 @@ return，port5 也被忽略。于是 SGMII adapter 在「同速率轻量重连�
 |---|---|
 | 对「pristine + 0001–0013」`patch --fuzz=0` 应用、结果与修改树逐字节相同 | PASS |
 | 本机 `package/feeds/nss/qca-ssdk/clean` 后重编 | PASS（rc=0，0 warning/0 error；`ssdk_init.o`/`adpt_hppe_portctrl.o` 重新编译；`strings` 可见 re-init 日志串；`kmod-qca-ssdk-nohnat-6.12.112-r1.apk` 649,156 B） |
-| CI 全流程 + verify-image | 见触发本条的 run |
-| 真机角色切换复测 | NOT TESTED |
+| CI 全流程 + verify-image | PASS（run `82`，`44896263334`，commit `cf26e07`） |
+| 真机角色切换复测（v82-1，2026-11-21） | **FAIL——补丁未修复缺陷**：两 trigger 均点火（dmesg 3 条 port 5 re-init），故障签名不变（DHCP 超时、同二层直连也 ping 不通、PHY RX 有帧零交付）。结论：adapter reset 不是缺失步骤。 |
+
+后续分步实验（同日晚）把触发点进一步锁定在「eth1 切为独立 WAN 接口」这一步：
+降为 LAN 时收包正常、再提升为 WAN 立刻死、降回去又复活；成员表写入与 promisc
+均被排除（改表不杀、promisc 不救）。证据与判据（广播 `InReceives` 增量）见
+`logs/relink-2026-11-21/step-test-2026-11-21.md`（本地存档，目录不入库）。
 
 风险：每个 PHY 口 netdev 起或真实 re-link 多一次约 20 ms 的 adapter 软复位；
 角色切换本身伴随网络重配，影响可接受。仅 25.12 需要，不移植 24.10。
