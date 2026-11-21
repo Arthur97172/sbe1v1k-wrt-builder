@@ -154,12 +154,15 @@ sbe-port-roles status               # 打印角色与三处现状
 `eth0-lan-attach` 在 `wan_port=eth0` 时直接返回，不再把 eth0 挂回 br-lan。
 `verify-image.sh` 断言脚本、S19 链接、helper 角色判断与 uci-defaults 默认值。
 
-真机验证（2026-11-21，第三台刷的是 25.12 树，本树同文脚本）：`ssdk_sh`
-写入与回读链路可用——eth1 角色四口全部收敛到 `0x51/0x49/0x1/0x19`，连通性
-无损；同批修复了两个共有的脚本缺陷——回读原先按字符串比较（`0x1` vs `0x01`
-误判失败）、`uci set` 对不存在的 `sbe_ports` 配置直接报 `Entry not found`
-（现在先 `touch`）。24.10 镜像本轮未重编、未刷机，开机自动收敛与 eth0/none
-两个角色仍为 `NOT TESTED`。
+真机验证（2026-11-21，第三台）：早期在 25.12 树上用本树同文脚本验证了
+`ssdk_sh` 写入与回读链路（eth1 角色四口收敛到 `0x51/0x49/0x1/0x19`，连通性
+无损），同批修复两个共有缺陷——回读按字符串比较（`0x1` vs `0x01` 误判失败）、
+`uci set` 对不存在的 `sbe_ports` 配置报 `Entry not found`（现在先 `touch`）。
+**2026-11-21 晚间 24.10 线首次上真机**（v113-2-e0ee12cd，`sysupgrade -n`）：
+首启全项 PASS；`set eth0` + 重启后 UCI/成员表/桥成员/WAN DHCP/隔离全 PASS；
+运行期 live 切换会触发 RTL8261N 假 10G 环回、10G 口需重启，但**回切 eth1
+后 2.5G 口直接恢复转发**（25.12 不会，见对照）。`none` 角色仍 `NOT TESTED`。
+全过程取证：`docs/WAN_LAN_ROLE_TESTS-2026-11-21.md`。
 
 eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp1 打进 10G
 假环回。所以 board.json 只负责“显示”，首启脚本 `99-spectrum-eth0-unmanaged-lan`

@@ -761,8 +761,17 @@ qca-ssdk-shell`，ISC；依赖 `kmod-qca-ssdk-nohnat` 与 `libgcc`——两个�
 写入与回读经 `sbe-port-roles set eth1` 验证——eth1 角色四口全部收敛到
 `0x51/0x49/0x1/0x19`，上游网关、公网与本机到 LAN 连通性无损。该次运行还暴露了
 两个已修缺陷（回读按字符串比较误判 `0x1` vs `0x01`；`uci set` 对不存在的
-`sbe_ports` 报 `Entry not found`）。开机时的自动收敛（S19 读回后按需写入）与
-eth0/none 两个角色仍待重编镜像复测。
+`sbe_ports` 报 `Entry not found`）。
+
+真机复测（第三台，v80-1-e0ee12cd，2026-11-21）：开机自动收敛与
+`set eth0` + 重启路径 PASS（表 `0x31/0x29/0x19/0x1`、WAN eth0 DHCP、隔离
+有效）。**运行期 live 切换不可用**：`set eth0`（不重启）会把 eth0 打进
+RTL8261N 假 10G 环回（链路报 10G，对端 2.5G 网卡无载波），down/up 与对端
+`ethtool -r` 都无法恢复；**live 回切 eth1 后 2.5G 口也不恢复**——链路
+`2.5Gbps/Full` 但 RX/TX 恒 0、udhcpc 只发不出、WAN pending，dmesg 伴随
+`uniphy autoneg time out!`，只能重启。24.10 线上同样测试的回切可恢复转发，
+两棵树表现不同（见对照）。`none` 角色仍 `NOT TESTED`。全过程取证：
+`../24.10-6.6/docs/WAN_LAN_ROLE_TESTS-2026-11-21.md`。
 
 **LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
 通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3
