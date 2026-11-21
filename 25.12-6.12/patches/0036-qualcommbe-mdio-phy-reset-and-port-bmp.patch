@@ -11,7 +11,7 @@ DHCP, eth1 tx/rx stayed 0.
 
 Root cause: on 24.10 the QSDK mdio-ipq4019 driver pulses every entry of
 the "phy-reset-gpio" array (tlmm 60, the qca8075 package reset, and
-tlmm 52, the RTL8261N reset) inside ipq_mdio_reset(), before
+tlmm 52, the QCA8081 (0x1c) reset) inside ipq_mdio_reset(), before
 of_mdiobus_register(); dmesg then shows the 0x10-0x13 / 0x1c PHYs
 binding at 13.4-14.0s.  The upstream 6.12 mdio-ipq4019 driver has no
 such pulse.
@@ -19,11 +19,12 @@ such pulse.
 A first attempt used phylib's bus-level reset-gpios on the MDIO node
 (tlmm 60 only).  On the device that was not enough: the qca8075 package
 (0x10-0x13) and eth2/eth3 came back, but the qca8081 (0x1c) still
-failed to answer, so WAN stayed dead.  phylib only releases tlmm 52
-through the RTL8261N phy node's own reset-gpios, and the PHY devices
-probe in DT child order, after the 0x1c address has already been read.
-24.10's DTS has no reset-gpios on the RTL phy node for exactly this
-reason: the MDIO driver pulsed both lines up front.
+failed to answer, so WAN stayed dead.  phylib only released tlmm 52
+through the RTL8261N phy node's own reset-gpios at the time (the S1/S2
+property wired it there although the line belongs to the QCA8081), and
+the PHY devices probe in DT child order, after the 0x1c address has
+already been read.  The MDIO driver must pulse the line up front
+instead.
 
 This patch therefore restores the QSDK pulse faithfully in the driver
 (bitmap over the whole array, 100 ms hold and 100 ms settle in both
@@ -33,6 +34,15 @@ and the PHYs are still powering up.  The RTL phy node's reset-gpios is
 dropped so phylib does not re-claim a line the driver already owns; the
 vendor "phy-reset-gpio" property itself stays for qca-ssdk, which parses
 its own property and only uses index 0.
+
+2026-11-21: the array also gains tlmm 41, the RTL8261N (0x0, C45) reset
+(assert 40 ms / deassert 150 ms per the vendor QSDK14 DTB and the
+upstream OpenWrt qualcommbe DTS).  QSDK13 and 24.10 never drove it: the
+PHY came up because its driver toggles reset bit 0 of MMD30 0x145 in
+config_init and the line is released at power-on.  With tlmm 41 in the
+array a warm reboot also hard-resets the PHY, as the stock firmware
+does.  qca-ssdk still reads only index 0 (tlmm 60), which must stay
+first in the array.
 
 The QSDK CMN PLL poke (ipq_cmn_clk_reset()) is deliberately not ported.
 It writes the block at 0x9b000, but 6.12 has the upstream ipq-cmn-pll
@@ -49,29 +59,36 @@ Device status for this patch: NOT TESTED (local build plus the v2
 bus-reset variant's partial on-device result at the time of writing).
 
 diff -ruN a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
---- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 00:44:15.338855505 +0000
-+++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-18 01:14:35.018791302 +0000
-@@ -238,12 +238,13 @@
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-21 01:20:09.597576874 +0000
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts	2026-11-21 01:20:09.597736847 +0000
+@@ -238,15 +238,19 @@
  };
  
  /*
 - * qca-ssdk reads the PHY reset line as "phy-reset-gpio" (singular,
 - * ssdk_dt_parse_phy_info()), not as the phylib "reset-gpios".  It only
 - * consumes index 0 (SSDK_PHY_RESET_GPIO_INDEX), so the qca8075 reset
-- * (tlmm 60) must come first; the RTL8261N reset (tlmm 52) is declared here
-- * to keep the S1/S2 property intact and is also wired to the phy node below
-- * so phylib owns it.
+- * (tlmm 60) must come first; tlmm 52 is the QCA8081 (0x1c) reset here,
+- * declared to keep the S1/S2 property intact, and is also wired to the
+- * phy node below so phylib owns it at this stage.
 + * "phy-reset-gpio" (singular) is the vendor property: qca-ssdk reads it in
 + * ssdk_dt_parse_phy_info() and only consumes index 0 (the qca8075 package
-+ * reset, tlmm 60), while the ipq4019 MDIO driver pulses the whole array
-+ * before the PHY scan.  Both lines (tlmm 60 qca8075, tlmm 52 RTL8261N)
-+ * must be pulsed before the scan: phylib's per-PHY reset of tlmm 52 only
-+ * happens when the RTL8261N probes, which is after the qca8081 (0x1c)
-+ * has already been read, and 24.10 pulsed both here for the same reason.
++ * reset, tlmm 60, which must stay first), while the ipq4019 MDIO driver
++ * pulses the whole array before the PHY scan:
++ *   tlmm 60  qca8075 package reset
++ *   tlmm 52  QCA8081 2.5G (0x1c)
++ *   tlmm 41  RTL8261N 10G (0x0, C45; assert 40 ms / deassert 150 ms)
++ * phylib's per-PHY resets are no substitute: they only fire when that PHY
++ * probes, after the 0x1c address has already been read.
   */
  &mdio {
- 	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW>;
-@@ -285,7 +286,6 @@
+-	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW>;
++	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW
++			  &tlmm 41 GPIO_ACTIVE_LOW>;
+ 	clock-frequency = <6250000>;
+ 	status = "okay";
+ 
+@@ -285,7 +289,6 @@
  	phy5: ethernet-phy@0 {
  		compatible = "ethernet-phy-ieee802.3-c45";
  		reg = <0>;
@@ -79,7 +96,7 @@ diff -ruN a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v
  	};
  };
  
-@@ -468,8 +468,8 @@
+@@ -468,8 +471,8 @@
  &ess_switch {
  	mdio-bus = <&mdio>;
  
@@ -92,8 +109,8 @@ diff -ruN a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v
  	switch_mac_mode = <0xb>;	/* uniphy 0: QSGMII */
 diff -ruN a/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch b/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch
 --- a/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch	1970-01-01 00:00:00.000000000 +0000
-+++ b/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch	2026-11-18 01:14:40.906159458 +0000
-@@ -0,0 +1,114 @@
++++ b/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset-gpios.patch	2026-11-21 01:20:09.597736847 +0000
+@@ -0,0 +1,115 @@
 +net: mdio: ipq4019: pulse phy-reset GPIOs before the PHY scan
 +
 +The QSDK 6.6 mdio-ipq4019 driver pulses the whole "phy-reset-gpio" GPIO
@@ -115,9 +132,10 @@ diff -ruN a/target/linux/qualcommbe/patches-6.12/0150-net-mdio-ipq4019-phy-reset
 +would fail with -EBUSY and take down the whole MDIO bus.
 +
 +Note that phylib's per-PHY "reset-gpios" is not a substitute: it pulses
-+tlmm 52 only when the RTL8261N probes, which happens after the 0x1c
-+address has already been read.  The vendor DTS has no per-PHY
-+reset-gpios for exactly this reason.
++a line only when that PHY probes, after the earlier addresses have
++already been read.  The board array therefore carries all three reset
++lines: tlmm 60 (qca8075 package), tlmm 52 (QCA8081, 0x1c) and tlmm 41
++(RTL8261N, 0x0); qca-ssdk still only consumes index 0.
 +
 +---
 +--- a/drivers/net/mdio/mdio-ipq4019.c

@@ -647,8 +647,10 @@ DEVICE_PACKAGES := kmod-leds-pwm kmod-hwmon-pwmfan \
 | NET（裁决） | 24.10-6.6 真机（B 机数周运行） | — | `eth1` = WAN（2.5G），`eth0`/`eth2`/`eth3` = LAN；与厂商 rootfs `etc/board.d/01_network` 的 eth0 特殊处理一致 |
 
 板级拓扑（`0011`）：QCA8075 四口封装（QSGMII）在 switch port 1–4，QCA8081 2.5G
-在 port 5（SGMII），RTL8261N 10G 在 port 6（USXGMII/C45）。`switch_lan_bmp` 因而是
-`0x38`（BIT(3..5)）、`switch_wan_bmp` 是 `0x40`（BIT(6)），S1 的 `0x58`/`0x20` 被否决。
+在 port 5（SGMII），RTL8261N 10G 在 port 6（USXGMII/C45）。`0011` 先按 S2 写了
+`switch_lan_bmp = 0x38`、`switch_wan_bmp = 0x40`（WAN 在 10G 口）；`0036` 其后按
+NET/24.10 真机结论改回 `0x58`/`0x20`——netifd 的 WAN 是 eth1（port 5），S2 那组
+位图与它矛盾，细节见 `docs/PROD_RUN_2026-11-18.md`。
 
 `nss-dp` 按 DT 顺序 probe 并用 `alloc_etherdev_mqs()` 依次取 `eth%d`，所以 DTS 里
 `dp1`–`dp4` 的顺序就是 `eth0`–`eth3`：`eth0` = port 6（RTL8261N 10G）、
@@ -666,10 +668,16 @@ interface 与 `phy-handle`（S2/RDP 的做法；S1 的逐节点 `phy-mode` 属�
    `mdio-bus = <&mdio>`；不能改 compatible，那会遮蔽 `mdio-ipq4019` 驱动自身的匹配。
    同理 `kmod-qca-mdio`（`mdio-ahb.ko`）只匹配 `qcom,mdio-ahb-ipq52xx`，在 IPQ9574
    上不提供总线，真正注册 `mii_bus` 的是内建的 `mdio-ipq4019`（`CONFIG_MDIO_IPQ4019=y`）。
-2. **两个 reset 分开归属。** `ssdk_dt_parse_phy_info()` 读的是 `phy-reset-gpio`
-   （单数）且只消费 index 0，所以 QCA8075 的 `tlmm 60` 排第一；RTL8261N 的
-   `tlmm 52` 同时写进 `phy-reset-gpio`（保持 S1/S2 属性）并作为 `reset-gpios`
-   挂到 `ethernet-phy@0`，由 phylib 持有。
+2. **PHY 复位三条线一起脉冲。** `ssdk_dt_parse_phy_info()` 读的是
+   `phy-reset-gpio`（单数）且只消费 index 0，所以 QCA8075 的 `tlmm 60` 必须
+   排第一。数组另有 `tlmm 52`（QCA8081，0x1c）与 `tlmm 41`（RTL8261N，0x0，
+   assert 40 ms / deassert 150 ms，厂商 QSDK14 DTB 与上游 OpenWrt qualcommbe
+   DTS 一致）。6.12 的上游驱动不脉冲数组，`0036` 内嵌的
+   `patches-6.12/0150` 在扫描前把整条数组 100 ms 拉低 + 1 s 静置；逐 PHY 的
+   `reset-gpios` 不够用——它要等该 PHY probe 才动作，0x1c 在那之前已经被读过，
+   所以 `0036` 删掉了 `ethernet-phy@0` 上的 `reset-gpios`，数组由 MDIO 驱动独占。
+   `tlmm 41` 是 2026-11-21 追加的：QSDK13/24.10 从不驱动它，RTL8261N 靠驱动
+   自身的寄存器软复位（MMD30 0x145 bit0）起来；追加后暖重启也会硬复位 PHY。
 3. **QCA8075 用 `qsgmii` 而不是 `psgmii`。** 主线 `qca807x.c` 要求
    `phydev->interface == package_mode` 才下发 package mode；S2 是 QSGMII，
    `switch_mac_mode = <0xb>` 与之对应（`enum ssdk_port_wrapper_cfg`，

@@ -14,10 +14,10 @@ as this tree):
                          so &ess_switch gets an explicit "mdio-bus" phandle,
                          which ssdk_dt_parse_mdio_node() checks before its
                          compatible scan.
-  phy-reset-gpio         two lines again (tlmm 60 qca8075, tlmm 52
-                         RTL8261N).  qca-ssdk only consumes index 0, so the
-                         second line is also wired to the RTL8261N phy node
-                         as "reset-gpios" for phylib.
+  phy-reset-gpio         two lines again (tlmm 60 qca8075, tlmm 52, the
+                         QCA8081).  qca-ssdk only consumes index 0, so the
+                         second line is also wired to the phy node as
+                         "reset-gpios" for phylib at this stage.
   qca8075 package        qsgmii (was psgmii)
   2.5G PHY (QCA8081)     address 0x1c, sgmii, not C45 (was 0x08, c45, aqr fw)
   10G PHY (RTL8261N)     address 0x00, C45 (unchanged), AQR fw cells dropped
@@ -103,9 +103,9 @@ diff --git a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1
 - * management path is SSDK's own MDIO, so use the vendor spelling.
 + * ssdk_dt_parse_phy_info()), not as the phylib "reset-gpios".  It only
 + * consumes index 0 (SSDK_PHY_RESET_GPIO_INDEX), so the qca8075 reset
-+ * (tlmm 60) must come first; the RTL8261N reset (tlmm 52) is declared here
-+ * to keep the S1/S2 property intact and is also wired to the phy node below
-+ * so phylib owns it.
++ * (tlmm 60) must come first; tlmm 52 is the QCA8081 (0x1c) reset here,
++ * declared to keep the S1/S2 property intact, and is also wired to the
++ * phy node below so phylib owns it at this stage.
   */
  &mdio {
 -	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW>;
