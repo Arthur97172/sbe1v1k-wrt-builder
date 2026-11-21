@@ -1221,6 +1221,49 @@ ERROR: package/feeds/nss/qca-ssdk failed to build (build variant: nohnat).
 注意：只跑 `package/qca-ssdk/compile` 而不先 `clean`，会复用 `build_dir` 里的旧
 `ssdk_plat.o`，看起来“编译通过”其实没编到新代码——本地验证必须先 `clean`。
 
+### 2026-11-21：live 回切后 2.5G 口收不到包——SGMII adapter re-init（0014）
+
+25.12 上 live 改端口角色（`sbe-port-roles set eth0` → `set eth1`）后，eth1
+（QCA8081，SGMII PLUS，ssdk 口 5）链路 up、发包上铜线，但收不到任何应答；
+24.10（6.6）同流程正常。拔插网线、PHY 软复位、nss-dp unbind/rebind 三种
+受控实验全部不能恢复（证据见 `logs/relink-2026-11-21/`，本仓库外的
+工作区目录）。
+
+**根因（源码级）**：ssdk 每秒的轮询任务 `qca_hppe_mac_sw_sync_task()` 发现
+速度/双工/流控都没变时，`adpt_hppe_port_phy_status_change()` 返回 A_FALSE，
+整个重配块被跳过——包括 `adpt_hppe_uniphy_port_adapter_reset()`。live 角色
+切换时网线没动，phylib 始终报 link up，ssdk 看不到 down→up 过渡；而 netdev
+停/起对应的 `ssdk_phylink_mac_link_up/down` 对非 `PHY_F_FORCE` 端口直接
+return，port5 也被忽略。于是 SGMII adapter 在「同速率轻量重连」后从未被复位。
+
+**改动**：`nss/patches/qca-ssdk/0014-sgmii-adapter-reinit-on-relink.patch`
+
+- 新函数 `adpt_hppe_port_sgmii_adapter_reinit()`：关 bridge_txmac/txmac/rxmac
+  → 10 ms → `adpt_hppe_uniphy_port_adapter_reset()` → 10 ms → 重开三个
+  MAC 门控；只对 SGMII/QSGMII/PSGMII 家族生效，USXGMII/UQXGMII 保持原
+  speed-change 路径；
+- 触发点 1：轮询任务同速 down→up 分支也执行 re-init（此前只重开门控）；
+- 触发点 2：`ssdk_phylink_mac_link_up()` 对 PHY 连接端口置
+  `port_relink_reinit`（`struct ssdk_port_priv` 新字段），由轮询在本轮
+  PHY up 时执行一次并清标志——覆盖「netdev 重启但 PHY 链路没断」的角色
+  切换场景；
+- 每次执行打印 `port N: re-init SGMII adapter after same-speed re-link`
+  供 dmesg 取证。
+
+设计文档：`docs/SGMII_RELINK_FIX-2026-11-21.md`。
+
+**验证**：
+
+| 检查点 | 状态 |
+|---|---|
+| 对「pristine + 0001–0013」`patch --fuzz=0` 应用、结果与修改树逐字节相同 | PASS |
+| 本机 `package/feeds/nss/qca-ssdk/clean` 后重编 | PASS（rc=0，0 warning/0 error；`ssdk_init.o`/`adpt_hppe_portctrl.o` 重新编译；`strings` 可见 re-init 日志串；`kmod-qca-ssdk-nohnat-6.12.112-r1.apk` 649,156 B） |
+| CI 全流程 + verify-image | 见触发本条的 run |
+| 真机角色切换复测 | NOT TESTED |
+
+风险：每个 PHY 口 netdev 起或真实 re-link 多一次约 20 ms 的 adapter 软复位；
+角色切换本身伴随网络重配，影响可接受。仅 25.12 需要，不移植 24.10。
+
 ## 注意
 
 - `files/` 由 `include/image.mk` 原样复制进 rootfs，**不经过** `VERSION_SED_SCRIPT`，

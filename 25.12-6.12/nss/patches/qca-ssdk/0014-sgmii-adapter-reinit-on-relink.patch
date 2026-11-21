@@ -1,0 +1,166 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] hppe: re-init the SGMII adapter on a same-speed re-link
+
+A live WAN/LAN port-role change on the SBE1V1K (no DSA; the role switch
+rewrites the qca-ssdk port-VLAN member bitmaps) can leave port 5
+(QCA8081, SGMII PLUS) able to transmit but unable to receive: frames
+reach the PHY and the PHY counters increase, but they never arrive at the
+PPE MAC / netdev.  A cold boot or a full driver rebind recovers the port,
+so the stuck state lives below the netdev/phylink/PHY driver.
+
+Root cause match in the SSDK polling task: on link-up with an unchanged
+speed/duplex, adpt_hppe_port_phy_status_change() returns A_FALSE and the
+whole re-configuration block, including
+adpt_hppe_uniphy_port_adapter_reset(), is skipped.  A phylink re-start
+caused by the role change never drops the physical PHY link (the PHY
+keeps reporting link up while the netdev is stopped/started), so the SSDK
+polling task never observes a link transition at all and the SGMII
+adapter is never reset.
+
+Fix, two complementary triggers:
+
+ 1. Link-up with unchanged speed/duplex now also runs an SGMII adapter
+    re-init (uniphy adapter reset with the port MACs gated off).
+ 2. ssdk_phylink_mac_link_up() queues a one-shot SGMII adapter re-init
+    for PHY-connected ports; the polling task performs it on the next
+    round once the PHY link is up.
+
+USXGMII/UQXGMII ports keep their existing speed-change path.  The
+re-init is logged with SSDK_INFO so it can be verified in dmesg after a
+field test.
+--- a/include/init/ssdk_plat.h
++++ b/include/init/ssdk_plat.h
+@@ -344,6 +344,8 @@
+ 	a_uint32_t configured_fec; /* configured fec */
+ 	/* link state reported by the phylink */
+ 	a_bool_t port_phylink_up;
++	/* one-shot SGMII adapter re-init requested by phylink mac_link_up */
++	a_bool_t port_relink_reinit;
+ };
+ 
+ struct ssdk_ppe_tunnel_priv {
+--- a/src/adpt/hppe/adpt_hppe_portctrl.c
++++ b/src/adpt/hppe/adpt_hppe_portctrl.c
+@@ -4021,6 +4021,51 @@
+ 	return;
+ }
+ 
++/*
++ * Re-initialise the uniphy SGMII adapter of a PHY-connected port.
++ *
++ * On a same-speed re-link (cable flap, or a live WAN/LAN port-role change
++ * that restarts the netdev under phylink) the MAC speed and duplex do not
++ * change, so the polling task below takes the A_FALSE branch of
++ * adpt_hppe_port_phy_status_change() and skips
++ * adpt_hppe_uniphy_speed_set() / adpt_hppe_uniphy_port_adapter_reset().
++ * The SGMII adapter can then stay in a state where ingress frames never
++ * reach the PPE MAC while egress keeps working.  Reset the adapter with the
++ * port MACs gated off; MACs are re-enabled here as well, so callers can
++ * invoke this from any point of the link-up path.
++ */
++static void
++adpt_hppe_port_sgmii_adapter_reinit(a_uint32_t dev_id, a_uint32_t port_id)
++{
++	fal_port_interface_mode_t port_mode = PORT_INTERFACE_MODE_MAX;
++
++	adpt_hppe_port_interface_mode_get(dev_id, port_id, &port_mode);
++	switch (port_mode)
++	{
++		case PHY_PSGMII_BASET:
++		case PORT_QSGMII:
++		case PHY_SGMII_BASET:
++		case PORT_SGMII_FIBER:
++		case PORT_SGMII_PLUS:
++			break;
++		default:
++			/* USXGMII/UQXGMII are covered by the speed-change path */
++			return;
++	}
++
++	SSDK_INFO("port %d: re-init SGMII adapter after same-speed re-link\n",
++			port_id);
++	adpt_hppe_port_bridge_txmac_set(dev_id, port_id, A_FALSE);
++	adpt_hppe_port_txmac_status_set(dev_id, port_id, A_FALSE);
++	adpt_hppe_port_rxmac_status_set(dev_id, port_id, A_FALSE);
++	aos_mdelay(10);
++	adpt_hppe_uniphy_port_adapter_reset(dev_id, port_id);
++	aos_mdelay(10);
++	adpt_hppe_port_txmac_status_set(dev_id, port_id, A_TRUE);
++	adpt_hppe_port_rxmac_status_set(dev_id, port_id, A_TRUE);
++	adpt_hppe_port_bridge_txmac_set(dev_id, port_id, A_TRUE);
++}
++
+ static void
+ adpt_hppe_uniphy_usxgmii_mac_type_set(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_port_speed_t speed)
+@@ -4619,6 +4664,18 @@
+ 					port_id, rv);
+ 			continue;
+ 		}
++		/*
++		 * One-shot SGMII adapter re-init requested by the phylink
++		 * mac_link_up callback (the netdev was re-started, e.g. by a live
++		 * port-role change).  Wait for the PHY link to be up so the
++		 * adapter is reset against a live link.
++		 */
++		if (priv->ports[port_id].port_relink_reinit &&
++		    phy_status.link_status == PORT_LINK_UP) {
++			priv->ports[port_id].port_relink_reinit = A_FALSE;
++			adpt_hppe_port_sgmii_adapter_reinit(priv->device_id,
++					port_id);
++		}
+ 		link_changed = A_FALSE;
+ 		SSDK_DEBUG("polling task external phy %d link status is %d and speed is %d\n",
+ 				port_id, phy_status.link_status, phy_status.speed);
+@@ -4796,6 +4853,18 @@
+ 
+ 				adpt_hppe_uniphy_port_adapter_reset(priv->device_id, port_id);
+ 			}
++			else
++			{
++				/*
++				 * Same-speed re-link: the PHY link came back without a
++				 * speed/duplex change, so the block above was skipped.
++				 * The SGMII adapter still needs a reset, otherwise
++				 * ingress can stay dead after the re-link.
++				 */
++				adpt_hppe_port_sgmii_adapter_reinit(priv->device_id,
++						port_id);
++				priv->ports[port_id].port_relink_reinit = A_FALSE;
++			}
+ #ifdef HMSPPE
+ 			if (adpt_ppe_type_get(priv->device_id) == HMSPPE_TYPE) {
+ 				rv = adpt_hmsppe_port_interface_clk_set(priv->device_id, port_id, A_TRUE);
+--- a/src/init/ssdk_init.c
++++ b/src/init/ssdk_init.c
+@@ -1206,10 +1206,28 @@
+ 			"rx_pause %d\n", port_priv->port_id, phy_modes(interface), speed,
+ 			duplex, tx_pause, rx_pause);
+ 
+-	if (!priv || !hsl_port_feature_get(port_priv->dev_id,
+-					   port_priv->port_id, PHY_F_FORCE))
++	if (!priv)
+ 		return;
+ 
++	if (!hsl_port_feature_get(port_priv->dev_id,
++				  port_priv->port_id, PHY_F_FORCE)) {
++		/*
++		 * PHY-connected port: phylink re-started the netdev (e.g. a
++		 * live WAN/LAN port-role change).  The PHY link never dropped,
++		 * so the SSDK polling task cannot see a link transition and
++		 * would skip the uniphy adapter reset.  Queue a one-shot
++		 * SGMII adapter re-init; the reset itself must run from the
++		 * polling task, which owns the port MAC/MAC-gating state.
++		 */
++		if (hsl_port_phy_connected(port_priv->dev_id, port_priv->port_id)) {
++			WRITE_ONCE(port_priv->port_relink_reinit, A_TRUE);
++			if (priv->link_polling_required &&
++			    _ssdk_mac_sw_sync_chip_check(priv) == SW_OK)
++				mod_delayed_work(system_wq, &priv->mac_sw_sync_dwork, 0);
++		}
++		return;
++	}
++
+ 	mutex_lock(&priv->mac_sw_sync_lock);
+ 	WRITE_ONCE(port_priv->port_phylink_up, A_TRUE);
+ 	mutex_unlock(&priv->mac_sw_sync_lock);
