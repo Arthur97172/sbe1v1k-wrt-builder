@@ -11,9 +11,12 @@
 #   - the obsolete lan-apply-watch removal is kept, because a preserved
 #     overlay from the stock firmware would otherwise re-add eth0 to br-lan.
 
-[ "$(board_name 2>/dev/null)" = "spectrum,sbe1v1k" ] || exit 0
-
+# board_name() 来自 /lib/functions.sh；uci-defaults 的 runner（/etc/init.d/boot
+# 的 uci_apply_defaults）只预载 /lib/functions/system.sh，所以必须先自己 source，
+# 否则这里永远拿到空值、脚本静默 exit 0 被当作成功删除。
 . /lib/functions.sh
+
+[ "$(board_name 2>/dev/null)" = "spectrum,sbe1v1k" ] || exit 0
 
 remove_eth0_from_br_lan() {
 	local section="$1"
