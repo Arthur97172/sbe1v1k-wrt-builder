@@ -40,8 +40,6 @@ CONFIG_PACKAGE_kmod-qca-nss-ppe-vlan-mgr=y
 CONFIG_PACKAGE_kmod-qca-nss-ppe-ath-clients=y
 CONFIG_PACKAGE_kmod-qca-nss-sfe=y
 CONFIG_PACKAGE_kmod-qca-nss-ecm-standard=y
-# 生产同款 SSDK 用户态工具（阶段 B）：诊断时也要能读/写端口成员表取证。
-CONFIG_PACKAGE_qca-ssdk-shell=y
 
 # 无线：ath12k + 厂商 QCN92XX 固件/BDF。诊断镜像靠三频 SSID（WiFi_2.4G /
 # WiFi_5G / WiFi_6G，密钥 12345678，来自 files/ 的 uci-defaults）提供
