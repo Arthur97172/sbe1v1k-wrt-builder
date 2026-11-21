@@ -157,11 +157,18 @@
  * ---------------------------------------------------------------------------
  */
 
-/* S1: two reset lines, tlmm 60 (qca8075) and tlmm 52 (RTL8261N). */
+/*
+ * S1: three reset lines, pulsed together by ipq_mdio_reset() before the PHY
+ * scan: tlmm 60 (qca8075 package), tlmm 52 (QCA8081 2.5G, 0x1c) and
+ * tlmm 41 (RTL8261N 10G, 0x0, C45; assert 40 ms / deassert 150 ms per the
+ * vendor and upstream DTs).  tlmm 60 must stay first: qca-ssdk reads
+ * index 0 only.
+ */
 &mdio {
 	pinctrl-0 = <&mdio_pins>;
 	pinctrl-names = "default";
-	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW>;
+	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW
+			  &tlmm 41 GPIO_ACTIVE_LOW>;
 	status = "okay";
 
 	ethernet-phy-package@0 {
