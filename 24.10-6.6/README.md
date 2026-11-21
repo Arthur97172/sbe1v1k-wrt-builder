@@ -25,6 +25,7 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 │   ├── known-delta.conf              与审计基线的允许差异（新增源码路径要登记）
 │   ├── build-fixes/  luci-patches/  openwrt-patches/  local-packages/  p-b/   装配期改动与本地软件包
 │   │                       └─ luci-patches：LuCI 树补丁（`tree` 目标是 sources/luci，装不进 build-fixes）
+│   │                       └─ p-b/files/base-files：板级 overlay（board.d/01_network、uci-defaults、eth0-lan-attach、sbe-port-roles）
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
@@ -115,12 +116,41 @@ src/gz openwrt_telephony https://downloads.openwrt.org/releases/24.10-SNAPSHOT/p
 （`ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"`），这样生成的
 `/etc/board.json` 里有四个口，LuCI「状态 → 概况 → 端口状态」会全部列出：
 
-| 口 | PPE 端口 | PHY | 角色 |
+| 口 | PPE 端口 | PHY | 角色（默认） |
 | --- | --- | --- | --- |
 | `eth0` | 6 | RTL8261N 10G | LAN（unmanaged，由 `eth0-lan-attach` 挂进 br-lan） |
 | `eth1` | 5 | QCA8081 2.5G | WAN |
 | `eth2` | 3 | qca8075 1G | LAN |
 | `eth3` | 4 | qca8075 1G | LAN |
+
+**端口角色可配（2026-11-21，阶段 A，真机 NOT TESTED）。** `sbe_ports.main.wan_port`
+决定 eth0/eth1 谁是 WAN，`none` 表示四个口全在 LAN；未设置或非法值保持上表的
+eth1=WAN。切换由 `/usr/sbin/sbe-port-roles` 完成，它按下表同时收敛三处：
+
+| 场景 | `wan_port` | SSDK 成员表（port3/4/5/6） | br-lan `ports` |
+| --- | --- | --- | --- |
+| 1 | `eth0` | `0x31 0x29 0x19 0x01` | eth1 eth2 eth3 |
+| 2 | `none` | `0x71 0x69 0x59 0x39` | eth1 eth2 eth3（eth0 另由 helper 挂回） |
+| 3（默认） | `eth1` | `0x51 0x49 0x01 0x19` | eth2 eth3（eth0 由 helper 挂） |
+
+无 DSA，芯片级 LAN/WAN 隔离只有 SSDK 端口成员表（`ssdk_sh portVlan member
+update`，即 DTS `switch_lan_bmp/wan_bmp` 的产物），所以只改 UCI 会让防火墙在
+芯片层被绕过。脚本的顺序是硬性的：先写 SSDK 表并逐口读回校验，失败即放弃、
+UCI 一概不动；通过后才改 `network.<br-lan>.ports` 与 WAN 接口的 `device`
+（`none` 时给 wan/wan6 置 `auto=0`），再按新角色重建 `/etc/board.json` 的
+网络段（删文件后跑 `board_detect`，失败则还原备份），最后清一次 FDB。
+`/etc/init.d/sbe-port-roles`（START=19）在开机时执行同一套收敛（早于
+qca-ssdk S16 之后、network S20 之前）；角色为 eth1 的开机路径不写 SSDK 表，
+因为 DTS 默认就是这一组、S16/S18 每次开机都会重写。运行期切换用：
+
+```sh
+sbe-port-roles set eth0|eth1|none   # 写 UCI 并立即收敛（含 network/firewall reload）
+sbe-port-roles apply                # 只按现有 UCI 收敛一次
+sbe-port-roles status               # 打印角色与三处现状
+```
+
+`eth0-lan-attach` 在 `wan_port=eth0` 时直接返回，不再把 eth0 挂回 br-lan。
+`verify-image.sh` 断言脚本、S19 链接、helper 角色判断与 uci-defaults 默认值。
 
 eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp1 打进 10G
 假环回。所以 board.json 只负责“显示”，首启脚本 `99-spectrum-eth0-unmanaged-lan`

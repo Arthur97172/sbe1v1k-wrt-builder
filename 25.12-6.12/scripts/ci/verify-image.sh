@@ -379,6 +379,55 @@ for f in etc/uci-defaults/99-spectrum-eth0-unmanaged-lan \
 	[ -x "$ROOTFS/$f" ] && ok "可执行 /$f" || bad "缺少或不可执行 /$f（eth0 将交回 netifd）"
 done
 
+# 端口角色（2026-11-21 阶段 A，与 24.10 同一脚本）：sbe_ports.main.wan_port
+# 决定 eth0/eth1 谁是 WAN。脚本对缺工具的场景必须**硬失败**：读不到/写不了
+# SSDK 成员表时不许改 UCI（软硬不一致会让 WAN/LAN 在芯片里直通）。阶段 B 起
+# 镜像自带 ssdk_sh，下一节另做镜像级断言；这里仍核对 fail-closed 代码路径。
+for f in usr/sbin/sbe-port-roles etc/init.d/sbe-port-roles; do
+	check_overlay "$f"
+	[ -x "$ROOTFS/$f" ] && ok "可执行 /$f" || bad "缺少或不可执行 /$f（端口角色不生效）"
+done
+ROLEH="$ROOTFS/usr/sbin/sbe-port-roles"
+if grep -q 'START=19' "$ROOTFS/etc/init.d/sbe-port-roles" 2>/dev/null; then
+	ok "init.d/sbe-port-roles 为 START=19（晚于 nss S15、早于 network S20）"
+else
+	bad "init.d/sbe-port-roles 缺失或不是 START=19"
+fi
+RCT="$ROOTFS/etc/rc.d/S19sbe-port-roles"
+if [ -L "$RCT" ] && [ "$(readlink "$RCT")" = "../init.d/sbe-port-roles" ]; then
+	ok "/etc/rc.d/S19sbe-port-roles -> ../init.d/sbe-port-roles"
+else
+	bad "缺少 /etc/rc.d/S19sbe-port-roles（角色不会随开机收敛）"
+fi
+for pat in 'portVlan member update' 'sbe_ports.main.wan_port' 'board_detect'; do
+	if grep -qF "$pat" "$ROLEH" 2>/dev/null; then
+		ok "sbe-port-roles 含 $pat"
+	else
+		bad "sbe-port-roles 缺少 $pat"
+	fi
+done
+if grep -q 'command -v ssdk_sh' "$ROLEH" 2>/dev/null; then
+	ok "sbe-port-roles 在缺 ssdk_sh 时按角色失败关闭（不改 UCI）"
+else
+	bad "sbe-port-roles 没有 ssdk_sh 可用性判断（缺工具时可能软硬不一致）"
+fi
+if grep -q 'sbe_ports.main.wan_port' "$ROOTFS/usr/sbin/eth0-lan-attach" 2>/dev/null; then
+	ok "eth0-lan-attach 按 sbe_ports 角色停手（eth0 作 WAN 时不挂桥）"
+else
+	bad "eth0-lan-attach 没有角色判断：eth0 作 WAN 时会被挂回 br-lan"
+fi
+if grep -q "wan_port='eth1'" "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan" &&
+   grep -q 'sbe-port-roles enable' "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan"; then
+	ok "uci-defaults 写 sbe_ports 默认值（eth1）并启用角色服务"
+else
+	bad "uci-defaults 缺少 sbe_ports 默认值或没有启用 sbe-port-roles"
+fi
+if grep -q 'sbe_ports.main.wan_port' "$BOARDD_NET"; then
+	ok "/etc/board.d/02_network 按 sbe_ports 角色生成 board.json 网络段"
+else
+	bad "/etc/board.d/02_network 没有角色分支（首启/重建 board.json 会写死 eth1）"
+fi
+
 # LAN 侧 MAC 固定（S19）：GMAC3/GMAC4 没有 bootloader 注入的 MAC，nss-dp 退化为
 # eth_hw_addr_random()，br-lan 继承端口里最小的随机 MAC，每次重启都变。S19 在
 # netifd(S20) 建桥之前把 eth2/eth3 派生为 eth0 基址 +2/+3，桥 MAC 才恒定。
@@ -454,6 +503,21 @@ if ls "$ROOTFS/etc/modules.d" 2>/dev/null | grep -qE 'qca-nss-phy|qca8084'; then
 	ok "PHY 驱动仍随 kmodloader 自动装载（qca-nss-phy/qca8084）"
 else
 	bad "PHY 驱动的自动装载条目不见了（以太网 PHY 不会初始化）"
+fi
+
+# ---- SSDK 用户态工具（阶段 B，端口角色运行期改表）--------------------------
+# sbe-port-roles 靠它写芯片级成员表；镜像里缺任何一个文件，eth0/none 角色
+# 就只能 fail closed（默认 role=eth1 仍可启动）。db 反查另由 check-packages.sh
+# 按 required-packages.txt 做，这里只看文件落点与依赖。
+SSDKSH="$ROOTFS/usr/sbin/ssdk_sh"
+[ -f "$SSDKSH" ] && ok "存在 /usr/sbin/ssdk_sh" \
+	|| bad "缺少 /usr/sbin/ssdk_sh（端口角色无法运行期改表）"
+[ -x "$SSDKSH" ] && ok "可执行 /usr/sbin/ssdk_sh" \
+	|| bad "/usr/sbin/ssdk_sh 不可执行"
+if [ -f "$ROOTFS/usr/lib/libssdk_us.so" ]; then
+	ok "存在 /usr/lib/libssdk_us.so"
+else
+	bad "缺少 /usr/lib/libssdk_us.so（ssdk_sh 无法启动）"
 fi
 
 # ---- LuCI 基础栈 ------------------------------------------------------------

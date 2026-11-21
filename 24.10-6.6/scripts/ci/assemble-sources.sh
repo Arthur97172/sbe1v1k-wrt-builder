@@ -390,6 +390,24 @@ for _h in etc/hotplug.d/iface/30-eth0-lan-attach etc/hotplug.d/net/20-eth0-lan-a
 done
 logmsg "  ETH0_HOOKS_OK hotplug.d/iface + hotplug.d/net 均调用 eth0-lan-attach attach"
 
+# 端口角色（2026-11-21 阶段 A）：sbe-port-roles 在 S19 按 sbe_ports.main.wan_port
+# 收敛 SSDK 成员表、UCI 与 board.json；helper 必须按同一角色停手。缺一件就会出现
+# "eth0 作 WAN 却被挂回 br-lan" 或 "UCI 改了、硬件表没改" 的软硬不一致。
+_role="$SRC/buildroot/target/linux/feeds/ipq95xx/base-files"
+for _f in usr/sbin/sbe-port-roles etc/init.d/sbe-port-roles; do
+	[ -f "$_role/$_f" ] || die 4 "目标 base-files 缺 $_f（端口角色不生效）"
+	[ -x "$_role/$_f" ] || die 4 "$_f 不可执行"
+done
+grep -q 'START=19' "$_role/etc/init.d/sbe-port-roles" \
+	|| die 4 "sbe-port-roles 不是 START=19（须晚于 qca-ssdk S16、早于 network S20）"
+grep -q 'portVlan member update' "$_role/usr/sbin/sbe-port-roles" \
+	|| die 4 "sbe-port-roles 没有 SSDK 成员表写入（角色只改软件侧）"
+grep -q 'sbe_ports.main.wan_port' "$_role/usr/sbin/eth0-lan-attach" \
+	|| die 4 "eth0-lan-attach 没有角色判断：eth0 作 WAN 时会被挂回 br-lan"
+grep -q "wan_port='eth1'" "$_role/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan" \
+	|| die 4 "uci-defaults 没有写 sbe_ports 默认值"
+logmsg "  PORT_ROLES_OK sbe-port-roles(S19) + helper 角色判断 + uci-defaults 默认值"
+
 # =============================================================== 9. blob
 step "校验 Wi-Fi blob（FILES-SHA256）"
 _pkg="$SRC/buildroot/package/sbe-wifi-firmware"

@@ -48,12 +48,15 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
 │   ├── etc/init.d/eth0-lan-attach              procd 常驻 netlink 监听（START=23），兜底补挂 eth0
 │   ├── etc/init.d/sbe-lan-mac                  S19：eth2/eth3 的 MAC 由 eth0 派生，br-lan MAC 跨重启恒定
+│   ├── etc/init.d/sbe-port-roles               S19：按 sbe_ports.main.wan_port 收敛端口角色（SSDK 成员表 / UCI / board.json）
 │   ├── etc/init.d/sbe-boot-trace               S01 起后台采样启动现场（v35 起）
 │   ├── etc/rc.d/S01sbe-boot-trace              → ../init.d/sbe-boot-trace（符号链接，随 overlay 进镜像）
 │   ├── etc/rc.d/S15nss                         → ../init.d/nss（NSS 档位控制器）
 │   ├── etc/rc.d/S19sbe-lan-mac                 → ../init.d/sbe-lan-mac（LAN MAC 固定）
+│   ├── etc/rc.d/S19sbe-port-roles              → ../init.d/sbe-port-roles（端口角色收敛）
 │   ├── etc/hotplug.d/{iface/30,net/20}-eth0-lan-attach   挂桥主触发点与内核事件兜底
 │   ├── usr/sbin/eth0-lan-attach                attach/monitor 两种模式的实现
+│   ├── usr/sbin/sbe-port-roles                 角色收敛：apply/live/status/set（SSDK 成员表 + UCI + board.json）
 │   ├── usr/sbin/nss-load                       NSS 分层装载器（status/load/commit/tier/stop）
 │   ├── usr/sbin/sbe-boot-trace                 启动取证采样器（写 /sbe-boot-trace/）
 │   └── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
@@ -90,7 +93,8 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
-│   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义
+│   ├── packages/             qca-ssdk、qca-nss-phy、qca-nss-dp、qca-nss-ppe、qca-nss-debug 的包定义；
+│   │                         qca-ssdk-shell（阶段 B：ssdk_sh + libssdk_us.so）
 │   ├── patches/              按包分开的 6.12 可移植性补丁
 │   └── nss-src.tar.gz.sha256  CI 自产 NSS 源码包的校验值（见下）
 └── scripts/
@@ -702,9 +706,11 @@ qca-ssdk 在 HPPE（ipq9574）上也不调用 `ssdk_led_init()`。24.10 抄了 S
 etc/board.d/02_network` 原来没有 `spectrum,sbe1v1k` 分支，设备会落到 "Unsupported
 hardware"，随后 `99-default_network` 写 `lan=eth0` / `wan=eth1`——比实际少两个口，
 而且 2.5G 口（eth1）被划进 LAN 后上游直接断网。补丁按 24.10-6.6 的真机结论声明
-`ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"`（空格分隔的 LAN 列表会变成
-board.json 的 `ports` 数组），LuCI「状态→概览→端口状态」（`29_ports.js`）据此显示
-四个网口。`prepare-tree.sh` 在编译前断言补丁已生效，`verify-image.sh` 在镜像的
+LAN/WAN（空格分隔的 LAN 列表会变成 board.json 的 `ports` 数组），LuCI「状态→概览
+→端口状态」（`29_ports.js`）据此显示四个网口。2026-11-21 起该分支读
+`sbe_ports.main.wan_port` 分三路：`eth0` → LAN `"eth1 eth2 eth3"` / WAN `eth0`；
+`none` → 四口全 LAN；未设置或非法值 → 原来的 `"eth2 eth3 eth0"` / `eth1`。
+`prepare-tree.sh` 在编译前断言补丁已生效，`verify-image.sh` 在镜像的
 `/etc/board.d/02_network` 上复查。状态：静态检查 PASS，真机 `NOT TESTED`。
 
 **eth0（10G）不归 netifd 管（与 24.10 同，`files/` overlay）。** eth0 在 board.d
@@ -724,6 +730,29 @@ board.json 的 `ports` 数组），LuCI「状态→概览→端口状态」（`2
 `usr/sbin/eth0-lan-attach` 只做 `ip link set dev eth0 master br-lan`，不碰端口
 状态；`touch /var/run/eth0-lan-attach.disabled` 可临时交回手工管理（tmpfs，重启
 失效）。`verify-image.sh` 断言这五个文件都在且可执行。
+
+**端口角色可配（2026-11-21，阶段 A）。** `sbe_ports.main.wan_port` 决定
+eth0/eth1 谁是 WAN（`none` = 四口全 LAN），未设置或非法值保持 eth1=WAN。
+`usr/sbin/sbe-port-roles` 收敛三处：SSDK 端口成员表（port3/4/5/6 分别为
+`eth0`: `0x31 0x29 0x19 0x01`、`eth1`: `0x51 0x49 0x01 0x19`、`none`:
+`0x71 0x69 0x59 0x39`）、`/etc/config/network`（br-lan `ports` 与 WAN 接口
+`device`，`none` 时置 `auto=0`）、`/etc/board.json`（删后以新角色跑
+`board_detect` 重建）。顺序固定：SSDK 表逐口读回校验通过后才动 UCI，表失败则
+整体放弃，避免软硬不一致；最后清一次 FDB。`etc/init.d/sbe-port-roles`
+（START=19，与 `sbe-lan-mac` 同档）开机执行，角色为 eth1 的启动路径不写 SSDK
+表（DTS 默认即此表，S16/S18 每次开机重写）。运行期：`sbe-port-roles set
+eth0|eth1|none`、`apply`、`status`。`eth0-lan-attach` 在角色为 eth0 时直接返回。
+
+25.12 的工具补齐（阶段 B，2026-11-21）：`nss/packages/qca-ssdk-shell` 把厂商
+`ssdk_sh` 与 `libssdk_us.so` 打进镜像（源码随 nss-src-v1 的 `apps-oss/
+qca-ssdk-shell`，ISC；依赖 `kmod-qca-ssdk-nohnat` 与 `libgcc`——两个二进制都
+链 `libgcc_s.so.1`，apk 不会自动补这条），seed 选
+`CONFIG_PACKAGE_qca-ssdk-shell=y`，`prepare-tree.sh` 与 `verify-image.sh` 分别
+断言包进树、二进制进镜像。三种角色由此齐备。脚本仍保留 fail-closed 分支：镜像
+里万一没有 `ssdk_sh`（如模块包被剪裁），角色不是 eth1 就报错退出、UCI 不动。
+`/dev/switch_ssdk` 在内核无 devtmpfs 时按 `/sys/class/misc` 的 major:minor
+兜底 `mknod`。状态：静态检查、桩测试与本地单包编译（15.7 s，apk 307 KB）PASS，
+真机 `NOT TESTED`。
 
 **LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
 通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3
@@ -760,8 +789,11 @@ MAC——将来 bootloader/DT 开始给 GMAC3/4 注入全局 MAC 时自动让位
 `prepare-tree.sh` 与 `verify-image.sh` 都断言两个等待循环带超时、采样器三件
 （init.d、usr/sbin、rc.d 链接）在镜像里且可执行。状态：真机 `NOT TESTED`。
 
-跨版本升级的注意点：端口角色现在与 24.10 一致（eth1 = WAN，其余 = LAN），从
-24.10 保留过来的 `/etc/config/network` 不需要改设备名；但 `99-spectrum-eth0-
+跨版本升级的注意点：端口角色默认与 24.10 一致（eth1 = WAN，其余 = LAN），从
+24.10 保留过来的 `/etc/config/network` 不需要改设备名；升级保留的配置里没有
+`sbe_ports` 节时按默认角色处理，已有的 `eth0/none` 会随配置带过来（阶段 B 起
+镜像带 `ssdk_sh`，可以直接生效；如果该镜像里工具缺失，脚本会 fail closed）。
+此外 `99-spectrum-eth0-
 unmanaged-lan` 依赖 `br-lan` 以 device 节声明 ports（`config_generate` 的产物），
 若保留的配置里 br-lan 仍是老式 `ifname` 写法，需要人工把它改成 device 节的
 `ports`，否则 eth0 不会被摘出，hotplug 补挂也无桥可挂。
@@ -1095,8 +1127,8 @@ CI 的装配树里没有厂商 QSDK 树，而默认设备的 `DEVICE_PACKAGES` �
 主线 PPE 节点，缺了它们就没有以太网）。因此 CI 在装配时**自己产出**这份源码包：
 
 - 内容：`qca-ssdk`、`qca-nss-phy`、`qca-nss-dp`、`qca-nss-ppe`、
-  `qca-nss-ecm`、`qca-nss-ae-clients`、`qca-nss-sfe`，逐字取自 QSDK 14.x 树，
-  **仅源码、无任何二进制固件**；
+  `qca-nss-ecm`、`qca-nss-ae-clients`、`qca-nss-sfe`、`qca-ssdk-shell`（阶段 B
+  起加入，apps-oss），逐字取自 QSDK 14.x 树，**仅源码、无任何二进制固件**；
 - 授权：文件头全部是 ISC（带 SPDX 行或完整 ISC 文本），版权归 The Linux Foundation
   与 Qualcomm；包内附 `NOTICE-ISC.txt`；
 - 来源：对 `everything411/qsdk` @ `21a8d13393aa8c7d2abf806e62a8dac2ba7af52f`
@@ -1104,15 +1136,17 @@ CI 的装配树里没有厂商 QSDK 树，而默认设备的 `DEVICE_PACKAGES` �
   必须等于该提交，否则按 `PIN_MISMATCH` / `SOURCE_UNAVAILABLE` 失败，**不降级到分支头**；
 - 生成：`prepare-tree.sh` 调 `scripts/ci/export-nss-src.sh`（固定排序/mtime/属主，
   输出可重复；打包前复核许可并拒绝任何 `*.bin`/`*.ko`/`*.o`）；
-- 校验：仓库里提交 `nss/nss-src.tar.gz.sha256`（当前 `6cd707b7…`）。自产结果必须
+- 校验：仓库里提交 `nss/nss-src.tar.gz.sha256`（当前 `39545b6b…`，阶段 B 加入
+  `qca-ssdk-shell` 后重算）。自产结果必须
   `sha256sum -c` 通过——不一致说明上游不再是同一份源码，直接失败。CI 端缓存到
-  `<工作区>/.sbe-cache/nss-src-v1`，缓存命中时跳过重新自产。
+  `<工作区>/.sbe-cache/nss-src-v1`，缓存命中时跳过重新自产；阶段 B 起缓存必须
+  含 `qca-ssdk-shell/`，旧缓存自动作废重产。
 
 **不再依赖任何人工上传的 Release 资产**：`nss-src-v1` 这个 tag 只是历史产物，
 workflow 不引用它。`export-nss-src.sh --upload` 仍保留，仅用于手工重发/留档，
 需要 `GH_TOKEN`。
 
-本机已有厂商树时不需要自产；也可以用 `SBE_NSS_BASE=<已解包的 7 包目录>` 直接指定。
+本机已有厂商树时不需要自产；也可以用 `SBE_NSS_BASE=<已解包的 8 包目录>` 直接指定。
 
 ### 2026-10-25：`qca-ssdk` 编译失败（run `40177614372`）与 MDIO 寄存器访问移植
 

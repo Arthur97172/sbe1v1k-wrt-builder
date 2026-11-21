@@ -35,6 +35,11 @@ ca-certificates
 kmod-hwmon-pwmfan
 kmod-leds-pwm
 
+# --- QSDK SSDK 用户态工具（阶段 B） ----------------------------------------
+# 端口角色运行期改表的唯一手段（sbe-port-roles 调 ssdk_sh）；包的 DEPENDS
+# 带 kmod-qca-ssdk-nohnat，模块本身仍由 nss-load 按档位装载。
+qca-ssdk-shell
+
 # --- 公共运行时与包变体 ----------------------------------------------------
 firewall4
 dnsmasq-full

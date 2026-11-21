@@ -426,6 +426,56 @@ if grep -q 'init.d/eth0-lan-attach enable' "$ROOTFS/etc/uci-defaults/99-spectrum
 else
 	bad "uci-defaults 没有摘除 eth0 或没有启用 attach 服务"
 fi
+# 端口角色（2026-11-21 阶段 A）：sbe_ports.main.wan_port 决定 eth0/eth1 谁是
+# WAN。SSDK 成员表（芯片内隔离）、UCI（netifd）与 board.json（LuCI 显示）由
+# 同一个 S19 脚本收敛；helper 必须按角色停手，否则 eth0 作 WAN 时会被挂回
+# br-lan。这里核对四件都在镜像里，且角色值只从 UCI 读。
+ROLEH="$ROOTFS/usr/sbin/sbe-port-roles"
+if [ -x "$ROLEH" ]; then
+	ok "/usr/sbin/sbe-port-roles 可执行"
+else
+	bad "缺少或不可执行 /usr/sbin/sbe-port-roles（端口角色不会收敛）"
+fi
+for pat in 'portVlan member update' 'portVlan member get' 'fdb entry flush' \
+           'sbe_ports.main.wan_port' 'board_detect'; do
+	if grep -qF "$pat" "$ROLEH" 2>/dev/null; then
+		ok "sbe-port-roles 含 $pat"
+	else
+		bad "sbe-port-roles 缺少 $pat"
+	fi
+done
+if grep -q 'START=19' "$ROOTFS/etc/init.d/sbe-port-roles" 2>/dev/null; then
+	ok "init.d/sbe-port-roles 为 START=19（晚于 qca-ssdk S16、早于 network S20）"
+else
+	bad "init.d/sbe-port-roles 缺失或不是 START=19"
+fi
+if [ -L "$ROOTFS/etc/rc.d/S19sbe-port-roles" ]; then
+	ok "/etc/rc.d/S19sbe-port-roles -> $(readlink "$ROOTFS/etc/rc.d/S19sbe-port-roles")"
+else
+	bad "缺少 /etc/rc.d/S19sbe-port-roles（角色不会随开机收敛）"
+fi
+if grep -q 'sbe_ports.main.wan_port' "$ETH0H" 2>/dev/null; then
+	ok "eth0-lan-attach 按 sbe_ports 角色停手（eth0 作 WAN 时不挂桥）"
+else
+	bad "eth0-lan-attach 没有角色判断：eth0 作 WAN 时会被挂回 br-lan"
+fi
+if grep -q "wan_port='eth1'" "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan" &&
+   grep -q 'sbe-port-roles enable' "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan"; then
+	ok "uci-defaults 写 sbe_ports 默认值（eth1）并启用角色服务"
+else
+	bad "uci-defaults 缺少 sbe_ports 默认值或没有启用 sbe-port-roles"
+fi
+if grep -q 'sbe_ports.main.wan_port' "$ROOTFS/etc/board.d/01_network"; then
+	ok "board.d 01_network 按 sbe_ports 角色生成 board.json 网络段"
+else
+	bad "board.d 01_network 没有角色分支（首启/重建 board.json 会写死 eth1）"
+fi
+# 端口角色运行期改表依赖厂商工具 ssdk_sh：24.10 的包集一直带它，但若哪天
+# 被剪裁，eth0/none 角色就只能 fail closed（默认 eth1 不受影响）。
+[ -f "$ROOTFS/usr/sbin/ssdk_sh" ] && ok "存在 /usr/sbin/ssdk_sh" \
+	|| bad "缺少 /usr/sbin/ssdk_sh（端口角色无法运行期改表）"
+[ -f "$ROOTFS/usr/lib/libssdk_us.so" ] && ok "存在 /usr/lib/libssdk_us.so" \
+	|| bad "缺少 /usr/lib/libssdk_us.so（ssdk_sh 无法启动）"
 # QCA wifi-scripts 原本无条件向 hostapd 配置发 disable_iface_during_cac 与
 # athnewind，这两项只有 qcn-app-extns 解析；镜像用 noextns 变体，hostapd 把
 # 它们当 unknown configuration item，整份配置 2 errors 后 add_iface 失败，

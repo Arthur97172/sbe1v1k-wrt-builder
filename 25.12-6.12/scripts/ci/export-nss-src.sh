@@ -10,11 +10,16 @@
 # 只打包源码，不含任何二进制固件：
 #   base/     qca-ssdk  qca-nss-phy  qca-nss-dp  qca-nss-ppe
 #   clients/  qca-nss-ecm  qca-nss-ae-clients  qca-nss-sfe
+#   apps-oss/ qca-ssdk-shell
 #
 # clients/ 的三个包是 W1（PPE 数据通路）才接入的：ecm 是连接管理器，
 # ae-clients 的 Makefile 定义了 bridge-mgr / vlan-mgr / ath-clients 等子包，
 # sfe 提供 ipq95xx 上 ECM 的 SFE 前端所需的快捷转发模块。
 # 它们只在 ipq95xx 上被选中，不改变既有四个包的内容。
+#
+# apps-oss/ 只取 qca-ssdk-shell（ssdk_sh + libssdk_us.so，ISC）：WAN/LAN
+# 端口角色在运行期要用它改 SSDK 成员表（阶段 B）。同目录的
+# nss-userspace-oss / qca-lacpd 不进包。
 #
 # 授权：这些包内的 .c/.h/Makefile 全部是 ISC（部分文件带 SPDX 行，其余在
 # 文件头写明同样的 ISC 许可文本）。脚本最后会复核一次，并生成
@@ -40,6 +45,9 @@ TAG=nss-src-v1
 NAME=nss-src-v1
 PKGS_BASE="qca-ssdk qca-nss-phy qca-nss-dp qca-nss-ppe"
 PKGS_CLIENTS="qca-nss-ecm qca-nss-ae-clients qca-nss-sfe"
+# 阶段 B（端口角色运行期改表）：只打 qca-ssdk-shell，同一 apps-oss 下的
+# nss-userspace-oss / qca-lacpd 不参与本镜像的构建。
+PKGS_APPS="qca-ssdk-shell"
 
 UPLOAD=0
 if [ "${1:-}" = "--upload" ]; then
@@ -50,13 +58,16 @@ OUT=${1:-/var/tmp/sbe-nss}
 
 SRC_BASE=${SBE_NSS_SRC_BASE:-$ROOT/sources/buildroot/qca/src/nss/base}
 SRC_CLIENTS=${SBE_NSS_SRC_CLIENTS:-$ROOT/sources/buildroot/qca/src/nss/clients}
+SRC_APPS=${SBE_NSS_SRC_APPS:-$ROOT/sources/buildroot/qca/src/nss/apps-oss}
 [ -d "$SRC_BASE" ] || { echo "缺少 NSS 源码目录：$SRC_BASE" >&2; exit 1; }
 [ -d "$SRC_CLIENTS" ] || { echo "缺少 NSS 源码目录：$SRC_CLIENTS" >&2; exit 1; }
+[ -d "$SRC_APPS" ] || { echo "缺少 NSS 源码目录：$SRC_APPS" >&2; exit 1; }
 
 # 打平成一层：install.sh 按 LOCAL_SRC 的 basename 去 $SBE_NSS_BASE 下找。
 PKG_PATHS=
 for p in $PKGS_BASE; do PKG_PATHS="$PKG_PATHS $SRC_BASE/$p"; done
 for p in $PKGS_CLIENTS; do PKG_PATHS="$PKG_PATHS $SRC_CLIENTS/$p"; done
+for p in $PKGS_APPS; do PKG_PATHS="$PKG_PATHS $SRC_APPS/$p"; done
 
 for d in $PKG_PATHS; do
 	[ -d "$d" ] || { echo "缺少源码目录：$d" >&2; exit 1; }
@@ -102,8 +113,9 @@ NSS source bundle (nss-src-v1)
 ==============================
 
 Contents: qca-ssdk, qca-nss-phy, qca-nss-dp, qca-nss-ppe (from
-qca/src/nss/base) and qca-nss-ecm, qca-nss-ae-clients, qca-nss-sfe (from
-qca/src/nss/clients), taken verbatim from the QSDK 14.x vendor tree.
+qca/src/nss/base), qca-nss-ecm, qca-nss-ae-clients, qca-nss-sfe (from
+qca/src/nss/clients) and qca-ssdk-shell (from qca/src/nss/apps-oss),
+taken verbatim from the QSDK 14.x vendor tree.
 
 License: ISC, as stated in every source file (either as an SPDX line or as the
 full ISC permission text in the file header). Copyright remains with The Linux

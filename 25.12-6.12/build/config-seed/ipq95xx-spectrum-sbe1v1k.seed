@@ -37,6 +37,12 @@ CONFIG_PACKAGE_kmod-qca-nss-ppe-ath-clients=y
 CONFIG_PACKAGE_kmod-qca-nss-sfe=y
 CONFIG_PACKAGE_kmod-qca-nss-ecm-standard=y
 
+# 阶段 B：端口角色的运行期改表工具。ssdk_sh 直接操作 /dev/switch_ssdk 的
+# 端口 VLAN 成员表（无 DSA 时唯一的芯片级 LAN/WAN 隔离），sbe-port-roles
+# 没有它只能对默认角色 eth1 工作。依赖 kmod-qca-ssdk-nohnat 由包的
+# DEPENDS 带入；模块何时装载仍归 nss-load 档位。
+CONFIG_PACKAGE_qca-ssdk-shell=y
+
 # Version string: left at the upstream defaults — VERSIONOPT is off, so
 # VERSION_NUMBER resolves to 25.12-SNAPSHOT (branch default) and VERSION_CODE
 # to the tree's `version` file (sbe1v1k-25.12-<builder-commit-sha8>).  The banner

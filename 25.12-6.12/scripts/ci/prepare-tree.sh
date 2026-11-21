@@ -120,6 +120,20 @@ for feed in luci packages routing telephony video; do
 	git -C "$BR/feeds/$feed" -c advice.detachedHead=false checkout -q "$sha"
 done
 
+# feeds update 在默认分支 tip 上生成索引；上面已检出固定提交，索引必须按固定
+# 的树重建，否则装进来的包集合和 pin 对不上。本地曾因一次失败的克隆留下 0 字节
+# 的 packages.index，feeds install 不报错却整片跳过 packages feed（ttyd 等依赖
+# 在 package/install 阶段才炸）；所以重建后再逐 feed 断言索引非空。
+echo "[prepare] 重建 feed 索引（按固定提交）"
+( cd "$BR" && ./scripts/feeds update -i -a )
+for feed in luci packages routing telephony video; do
+	idx="$BR/feeds/$feed.tmp/.packageinfo"
+	[ -s "$idx" ] || {
+		echo "[prepare] feed $feed 的索引为空（$idx）：feeds install 会静默丢掉整个 feed" >&2
+		exit 1
+	}
+done
+
 echo "[prepare] feeds install -a"
 ( cd "$BR" && ./scripts/feeds install -a )
 
@@ -196,6 +210,19 @@ grep -q 'fstools_ignore_partname=1' \
 grep -q 'ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"' \
 	"$BR/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network" \
 	|| { echo "补丁应用不完整：02_network 没有 spectrum,sbe1v1k 的 LAN/WAN 端口映射" >&2; exit 1; }
+# 端口角色（2026-11-21 阶段 A）：同一分支还要能按 sbe_ports.main.wan_port
+# 选择 eth0/eth1 作 WAN。默认行保留在上面那条断言里；这里只确认角色分支存在，
+# 免得补丁被回退成写死 eth1 而没人发现。
+grep -q 'sbe_ports.main.wan_port' \
+	"$BR/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network" \
+	|| { echo "补丁应用不完整：02_network 没有 sbe_ports 角色分支" >&2; exit 1; }
+for f in usr/sbin/sbe-port-roles etc/init.d/sbe-port-roles; do
+	[ -x "$PROJ/files/$f" ] || { echo "files overlay 缺少或不可执行 $f（端口角色不生效）" >&2; exit 1; }
+done
+grep -q 'START=19' "$PROJ/files/etc/init.d/sbe-port-roles" \
+	|| { echo "sbe-port-roles 不是 START=19（须晚于 nss S15、早于 network S20）" >&2; exit 1; }
+grep -q 'sbe_ports.main.wan_port' "$PROJ/files/usr/sbin/eth0-lan-attach" \
+	|| { echo "eth0-lan-attach 没有角色判断：eth0 作 WAN 时会被挂回 br-lan" >&2; exit 1; }
 # v21 的 FIT 把内核装到 0x41000000（Device/Default），落在厂商给 NSS 固件保留的
 # 0x40000000..0x42000000 里，设备起不来；PWM 驱动缺失时风扇恒为满速。两个都
 # 断在编译前，不要等真机刷入才发现。
@@ -288,7 +315,10 @@ echo "[prepare] 接入 NSS 源码"
 mkdir -p "$NSS_CACHE"
 if [ -n "${SBE_NSS_BASE:-}" ]; then
 	echo "[prepare]   使用 SBE_NSS_BASE=$SBE_NSS_BASE"
-elif [ -d "$NSS_CACHE/nss-src-v1/qca-ssdk" ]; then
+elif [ -d "$NSS_CACHE/nss-src-v1/qca-ssdk" ] && \
+     [ -d "$NSS_CACHE/nss-src-v1/qca-ssdk-shell" ]; then
+	# 缓存必须是含 qca-ssdk-shell 的版本（阶段 B 起）：旧缓存解出来没有
+	# apps-oss，install.sh 会跳过源码，qca-ssdk-shell 编译必失败。
 	echo "[prepare]   复用 $NSS_CACHE/nss-src-v1"
 	SBE_NSS_BASE=$NSS_CACHE/nss-src-v1
 else
@@ -323,12 +353,14 @@ EOF
 	[ "$got" = "$NSS_QSDK_COMMIT" ] \
 		|| { echo "qsdk 基座 HEAD 不符：$got（PIN_MISMATCH）" >&2; rm -rf "$nss_work"; exit 1; }
 	for d in base/qca-ssdk base/qca-nss-phy base/qca-nss-dp base/qca-nss-ppe \
-	         clients/qca-nss-ecm clients/qca-nss-ae-clients clients/qca-nss-sfe; do
+	         clients/qca-nss-ecm clients/qca-nss-ae-clients clients/qca-nss-sfe \
+	         apps-oss/qca-ssdk-shell; do
 		[ -d "$nss_clone/qca/src/nss/$d" ] \
 			|| { echo "稀疏检出缺少 qca/src/nss/$d" >&2; rm -rf "$nss_work"; exit 1; }
 	done
 	SBE_NSS_SRC_BASE="$nss_clone/qca/src/nss/base" \
 	SBE_NSS_SRC_CLIENTS="$nss_clone/qca/src/nss/clients" \
+	SBE_NSS_SRC_APPS="$nss_clone/qca/src/nss/apps-oss" \
 		"$SELF/export-nss-src.sh" "$nss_work/out" \
 		|| { echo "NSS 源码包自产失败" >&2; rm -rf "$nss_work"; exit 1; }
 	cp "$NSS_SHA_FILE" "$nss_work/out/nss-src.tar.gz.sha256"
@@ -341,8 +373,19 @@ EOF
 fi
 SBE_NSS_BASE="$SBE_NSS_BASE" SBE_BUILDROOT="$BR" "$PROJ/nss/install.sh" "$ROOT"
 for f in "$BR/package/feeds/nss/qca-ssdk/Makefile" \
-         "$BR/qca/src/nss/base/qca-nss-dp/nss_dp_attach.c"; do
+         "$BR/package/feeds/nss/qca-ssdk-shell/Makefile" \
+         "$BR/qca/src/nss/base/qca-nss-dp/nss_dp_attach.c" \
+         "$BR/qca/src/nss/apps-oss/qca-ssdk-shell/Makefile"; do
 	[ -e "$f" ] || { echo "NSS 装配不完整，缺少 $f" >&2; exit 1; }
+done
+# 端口角色运行期改表（阶段 B）：工具包必须声明对 qca-ssdk 内核模块的依赖，
+# 否则 tier=wired/full 下 /dev/switch_ssdk 不一定在；安装清单必须含
+# ssdk_sh 与 libssdk_us.so，缺一件 sbe-port-roles 就只能 fail closed。
+grep -q 'DEPENDS:=.*kmod-qca-ssdk-nohnat' "$BR/package/feeds/nss/qca-ssdk-shell/Makefile" \
+	|| { echo "qca-ssdk-shell 未依赖 kmod-qca-ssdk-nohnat" >&2; exit 1; }
+for _bin in ssdk_sh libssdk_us.so; do
+	grep -q "$_bin" "$BR/package/feeds/nss/qca-ssdk-shell/Makefile" \
+		|| { echo "qca-ssdk-shell 的安装清单缺少 $_bin" >&2; exit 1; }
 done
 # 两个 QSDK 等待循环的超时必须随包进树：丢了它，模块装载失败时 rcS 会停在
 # S16/S18 永久卡死（v34 的形态）。verify-image.sh 在镜像里还会再断言一次。

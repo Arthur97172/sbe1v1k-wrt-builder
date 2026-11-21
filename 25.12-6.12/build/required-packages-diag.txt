@@ -19,6 +19,8 @@ kmod-qca-nss-ppe-vlan-mgr
 kmod-qca-nss-ppe-ath-clients
 kmod-qca-nss-sfe
 kmod-qca-nss-ecm-standard
+# 阶段 B：端口成员表取证/改表的用户态工具（与生产同款）。
+qca-ssdk-shell
 !kmod-qcom-ppe
 
 # --- 无线（诊断管理面 + 6GHz 取证）---------------------------------------

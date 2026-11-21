@@ -9,6 +9,10 @@
 #   attach   有界重试的一次性挂接（hotplug 钩子与开机时调用）
 #   monitor  netlink 事件循环兜底（procd 常驻；hotplug 漏掉的路径由它补）
 #
+# 角色：sbe_ports.main.wan_port=eth0 时 eth0 是 WAN（归 netifd），本脚本
+# 不再挂桥。角色读 UCI 而不是 /var/run 开关，跨重启有效；该判断必须放在
+# attach() 里，hotplug 与 monitor 三个入口才能全部覆盖。
+#
 # 退出机制：touch /var/run/eth0-lan-attach.disabled 之后 attach 不再动手，
 # 手工接管桥成员（测试、排查）时不会被脚本抢回去；/var 是 tmpfs，重启即失效。
 
@@ -22,6 +26,7 @@ master() {
 
 attach() {
 	[ -e "$DISABLE" ] && return 0
+	[ "$(uci -q get sbe_ports.main.wan_port 2>/dev/null)" = "eth0" ] && return 0
 	[ -e /sys/class/net/eth0 ] || return 1
 	[ -e /sys/class/net/br-lan ] || return 1
 	[ "$(master)" = "br-lan" ] && return 0
