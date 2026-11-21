@@ -3,19 +3,23 @@
 # 端口角色收敛：/etc/config/sbe_ports 的 main.wan_port = eth0 | eth1 | none。
 #
 # 本平台没有 DSA，LAN/WAN 的硬件隔离只有一处：qca-ssdk 的「端口基于 VLAN」
-# 成员表（ssdk_portvlan_init 按 DTS 的 switch_lan_bmp/wan_bmp 每口写一个位图，
-# CPU 口成员恒为两集合的并）。因此角色切换必须同时改三处，缺一处就出现
-# 「软件 WAN 变了、芯片里 WAN 与 LAN 仍 L2 直通、绕过防火墙」的状态：
+# 成员表（每口一个「可转发到」位图；CPU 口除外，它保持驱动默认值）。因此角色
+# 切换必须同时改三处，缺一处就出现「软件 WAN 变了、芯片里 WAN 与 LAN 仍 L2
+# 直通、绕过防火墙」的状态：
 #
 #   1) SSDK 成员表（本脚本先做，回读校验通过才继续）；
 #   2) UCI：br-lan 的 ports 与 wan/wan6 的 device/auto（netifd 按它建接口）；
 #   3) /etc/board.json 的 network 段（只影响 LuCI 端口面板与 config_generate）。
 #
+# 注意：本芯片走 APPE，开机时 qca_hppe_fdb_hw_init 把每口成员表写成全 1
+# （平面表，无隔离）；DTS 的 switch_lan_bmp/wan_bmp 不会落到硬件，必须由
+# 本脚本显式写入。
+#
 # eth0-lan-attach 在 attach() 里读同一个角色；角色为 eth0 时它不再把 eth0
 # 挂进 br-lan（eth0 此时归 netifd，作 WAN）。
 #
 # 角色语义（SSDK 口：3=qca8075 eth2，4=qca8075 eth3，5=QCA8081 eth1，
-# 6=RTL8261N eth0；CPU 口 0 成员恒为 0x78，任何角色都不动）：
+# 6=RTL8261N eth0；CPU 口 0 不写——APPE 默认全 1 已覆盖路由所需）：
 #
 #   eth1（默认）：lan=0x58 wan=0x20 -> p3 0x51 p4 0x49 p5 0x01 p6 0x19
 #                eth1（2.5G）WAN；eth0/eth2/eth3 LAN
@@ -24,9 +28,8 @@
 #   none        ：lan=0x78 wan=0x00 -> p3 0x71 p4 0x69 p5 0x59 p6 0x39
 #                无 WAN；四个口全在 LAN
 #
-# 失败语义（重要）：先写硬件表并回读，成功后才改 UCI。角色不是 eth1 而
-# ssdk_sh 不可用（25.12 目前不带 ssdk_sh，见 docs/WAN_LAN_ROLE_SWITCH）
-# 时直接失败退出，UCI 保持原样——宁可角色不生效，也不要软硬不一致。
+# 失败语义（重要）：先写硬件表并回读，成功后才改 UCI。ssdk_sh 不可用或
+# 回读不符时直接失败退出，UCI 保持原样——宁可角色不生效，也不要软硬不一致。
 #
 # 用法：
 #   sbe-port-roles apply          按 UCI 角色收敛；不重载网络（开机 S19 用）
@@ -92,7 +95,8 @@ ssdk_program() {
 			return 1
 		fi
 		got=$(ssdk_member_get "$port")
-		if [ "$got" != "$want" ]; then
+		# 按数值比较：ssdk_sh 把 1 打成 "0x1"，目标写作 "0x01"，字符串比较会误判。
+		if [ -z "$got" ] || [ "$((got))" -ne "$((want))" ]; then
 			say "端口 $port 成员表回读 ${got:-<读不到>}，期望 $want"
 			return 1
 		fi
@@ -118,13 +122,28 @@ ensure_ssdk_dev() {
 	return 0
 }
 
+# 读回四个物理口并与角色目标值数值比较；任一读不到或不符即返回 1。
+ssdk_table_matches() {
+	local role=$1 spec port got
+
+	command -v ssdk_sh >/dev/null 2>&1 || return 1
+	ensure_ssdk_dev || return 1
+	table_for "$role"
+	for spec in $SSDK_PORTS; do
+		port=${spec%%:*}
+		got=$(ssdk_member_get "$port")
+		[ -n "$got" ] && [ "$((got))" -eq "$(( ${spec#*:} ))" ] || return 1
+	done
+	return 0
+}
+
 ssdk_apply() {
 	local role=$1 force=$2
 
-	# 开机路径下 eth1 就是 DTS 默认表：S15/S16 每次启动都会按 DTS 重写，
-	# 不必（也不该）在这里再写一遍。live 路径必须写，因为硬件可能停在别的角色。
-	if [ "$role" = "$DEFAULT_ROLE" ] && [ "$force" != 1 ]; then
-		log "角色 $role 是 DTS 默认表，跳过 SSDK 写入"
+	# 本芯片开机后成员表是驱动写的全 1 平面表（见文件头），DTS 位图不会
+	# 落到硬件，所以只有读回已是目标表才能跳过写入。
+	if [ "$force" != 1 ] && ssdk_table_matches "$role"; then
+		log "角色 $role 的成员表已是目标值，跳过 SSDK 写入"
 		return 0
 	fi
 	if ! command -v ssdk_sh >/dev/null 2>&1; then
@@ -335,6 +354,10 @@ do_set() {
 		exit 2
 		;;
 	esac
+	# uci set 对该版本 uci 只在配置文件已存在时生效：文件不存在时直接
+	# "Entry not found"（-q 吞掉后只剩 rc=1），必须先建空文件。
+	[ -f "/etc/config/$SBE_CONF" ] || touch "/etc/config/$SBE_CONF" ||
+		die "无法创建 /etc/config/$SBE_CONF"
 	uci -q get "$SBE_CONF.main" >/dev/null 2>&1 || uci -q set "$SBE_CONF.main=$SBE_CONF"
 	uci -q set "$SBE_CONF.main.wan_port=$role" || die "写 $SBE_CONF 失败"
 	uci -q commit "$SBE_CONF" || die "commit $SBE_CONF 失败"

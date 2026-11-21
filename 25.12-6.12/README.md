@@ -739,9 +739,14 @@ eth0/eth1 谁是 WAN（`none` = 四口全 LAN），未设置或非法值保持 e
 `device`，`none` 时置 `auto=0`）、`/etc/board.json`（删后以新角色跑
 `board_detect` 重建）。顺序固定：SSDK 表逐口读回校验通过后才动 UCI，表失败则
 整体放弃，避免软硬不一致；最后清一次 FDB。`etc/init.d/sbe-port-roles`
-（START=19，与 `sbe-lan-mac` 同档）开机执行，角色为 eth1 的启动路径不写 SSDK
-表（DTS 默认即此表，S16/S18 每次开机重写）。运行期：`sbe-port-roles set
-eth0|eth1|none`、`apply`、`status`。`eth0-lan-attach` 在角色为 eth0 时直接返回。
+（START=19，与 `sbe-lan-mac` 同档）开机执行；启动路径先读回四个物理口，只有
+成员表已经是目标值才跳过写入——本芯片走 APPE，`qca_hppe_fdb_hw_init()` 开机
+把每口写成全 1 平面表，DTS 的 `switch_lan_bmp/wan_bmp` 不会落到硬件（真机
+v76 取证：`member get` 全 `0xff`），所以默认角色也必须显式写入。运行期：
+`sbe-port-roles set eth0|eth1|none`、`apply`、`status`。UCI 配置
+`/etc/config/sbe_ports` 不存在时先 `touch` 再 `uci set`（该版本 uci 对不存在
+的配置文件直接报 `Entry not found`）；开机 uci-defaults 同样先建文件。
+`eth0-lan-attach` 在角色为 eth0 时直接返回。
 
 25.12 的工具补齐（阶段 B，2026-11-21）：`nss/packages/qca-ssdk-shell` 把厂商
 `ssdk_sh` 与 `libssdk_us.so` 打进镜像（源码随 nss-src-v1 的 `apps-oss/
@@ -751,8 +756,12 @@ qca-ssdk-shell`，ISC；依赖 `kmod-qca-ssdk-nohnat` 与 `libgcc`——两个�
 断言包进树、二进制进镜像。三种角色由此齐备。脚本仍保留 fail-closed 分支：镜像
 里万一没有 `ssdk_sh`（如模块包被剪裁），角色不是 eth1 就报错退出、UCI 不动。
 `/dev/switch_ssdk` 在内核无 devtmpfs 时按 `/sys/class/misc` 的 major:minor
-兜底 `mknod`。状态：静态检查、桩测试与本地单包编译（15.7 s，apk 307 KB）PASS，
-真机 `NOT TESTED`。
+兜底 `mknod`。状态：静态检查、桩测试与本地单包编译（15.7 s，apk 307 KB）PASS。
+真机（第三台，v76，2026-11-21）：`ssdk_sh` 可用、`portVlan member update`
+写入与回读经 `sbe-port-roles set eth1` 验证（port3/4/5 收敛到目标表，连通性
+无损）；该次运行还暴露了两个已修缺陷（回读按字符串比较误判 `0x1` vs `0x01`；
+`uci set` 对不存在的 `sbe_ports` 报 `Entry not found`），port6 的补写因权限
+拦截未完成，完整三角色收敛仍待重编后的镜像复测。
 
 **LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
 通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3

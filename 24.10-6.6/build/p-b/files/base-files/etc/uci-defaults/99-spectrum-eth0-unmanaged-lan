@@ -41,6 +41,9 @@ rm -f /etc/init.d/lan-apply-watch /usr/sbin/lan-apply-watch
 # 默认 eth1=WAN 就是今天的场景 3；改成 eth0 或 none 后下次开机生效，
 # 运行期切换用 sbe-port-roles set <eth0|eth1|none>。
 if ! uci -q get sbe_ports.main >/dev/null 2>&1; then
+	# 该版本 uci 对不存在的配置文件执行 set 会报 "Entry not found"，
+	# 必须先建空文件。
+	touch /etc/config/sbe_ports || exit 1
 	uci -q set sbe_ports.main=sbe_ports
 	uci -q set sbe_ports.main.wan_port='eth1'
 	uci -q commit sbe_ports
