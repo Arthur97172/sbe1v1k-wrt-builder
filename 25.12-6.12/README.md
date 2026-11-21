@@ -758,10 +758,11 @@ qca-ssdk-shell`，ISC；依赖 `kmod-qca-ssdk-nohnat` 与 `libgcc`——两个�
 `/dev/switch_ssdk` 在内核无 devtmpfs 时按 `/sys/class/misc` 的 major:minor
 兜底 `mknod`。状态：静态检查、桩测试与本地单包编译（15.7 s，apk 307 KB）PASS。
 真机（第三台，v76，2026-11-21）：`ssdk_sh` 可用、`portVlan member update`
-写入与回读经 `sbe-port-roles set eth1` 验证（port3/4/5 收敛到目标表，连通性
-无损）；该次运行还暴露了两个已修缺陷（回读按字符串比较误判 `0x1` vs `0x01`；
-`uci set` 对不存在的 `sbe_ports` 报 `Entry not found`），port6 的补写因权限
-拦截未完成，完整三角色收敛仍待重编后的镜像复测。
+写入与回读经 `sbe-port-roles set eth1` 验证——eth1 角色四口全部收敛到
+`0x51/0x49/0x1/0x19`，上游网关、公网与本机到 LAN 连通性无损。该次运行还暴露了
+两个已修缺陷（回读按字符串比较误判 `0x1` vs `0x01`；`uci set` 对不存在的
+`sbe_ports` 报 `Entry not found`）。开机时的自动收敛（S19 读回后按需写入）与
+eth0/none 两个角色仍待重编镜像复测。
 
 **LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
 通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3

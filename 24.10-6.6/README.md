@@ -155,10 +155,11 @@ sbe-port-roles status               # 打印角色与三处现状
 `verify-image.sh` 断言脚本、S19 链接、helper 角色判断与 uci-defaults 默认值。
 
 真机验证（2026-11-21，第三台刷的是 25.12 树，本树同文脚本）：`ssdk_sh`
-写入与回读链路可用（port3/4/5 收敛到 `0x51/0x49/0x1`，连通性无损）；同批修复
-了两个共有的脚本缺陷——回读原先按字符串比较（`0x1` vs `0x01` 误判失败）、
-`uci set` 对不存在的 `sbe_ports` 配置直接报 `Entry not found`（现在先
-`touch`）。24.10 镜像本轮未重编、未刷机，三角色完整收敛仍为 `NOT TESTED`。
+写入与回读链路可用——eth1 角色四口全部收敛到 `0x51/0x49/0x1/0x19`，连通性
+无损；同批修复了两个共有的脚本缺陷——回读原先按字符串比较（`0x1` vs `0x01`
+误判失败）、`uci set` 对不存在的 `sbe_ports` 配置直接报 `Entry not found`
+（现在先 `touch`）。24.10 镜像本轮未重编、未刷机，开机自动收敛与 eth0/none
+两个角色仍为 `NOT TESTED`。
 
 eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp1 打进 10G
 假环回。所以 board.json 只负责“显示”，首启脚本 `99-spectrum-eth0-unmanaged-lan`
