@@ -104,10 +104,65 @@ v80-1-e0ee12cd 重跑同一套步骤。
    复位路径），此结论作为方案四触发条件 2 的证据。
 3. **回切保命能力有树级差异**：24.10 回切后 2.5G 口立即恢复转发；25.12
    回切后 2.5G 口「link up 但 RX/TX 恒 0、伴随 autoneg timeout」，只能重启。
-   25.12 的 port5/uniphy PCS 在运行期重新配置路径上还有独立的缺陷，需另行
-   排查（是否与 `nsscc port5 PCS 时钟父节点` 相关尚未验证）。
+   25.12 的 port5/uniphy PCS 在运行期重新配置路径上还有独立的缺陷，见下节
+   源码级定性。
 4. LuCI/运维层面：在 25.12 上使用 `sbe-port-roles set` 前应提示「可能需重启
    恢复」。后续若做「不重启切换」功能，必须先完成方案四。
+
+## 补充分析：25.12 回切不转发是软件缺陷（源码级，2026-11-21）
+
+结论：**是软件 bug，不是硬件问题**，原理上可修；但建议暂不修——它只在 live
+切换流程出现，而该流程本身已被 RTL8261N 假 10G 挡住；「改角色 + 重启」路径
+完全不触发。
+
+### 缺陷不在 qca-ssdk 版本
+
+24.10 构建树、25.12 构建树、QSDK 14 厂商源码三份
+`src/adpt/hppe/adpt_hppe_portctrl.c` 逐字节相同（diff 为 0）。因此不是
+「25.12 换了一个 ssdk」，差异在 6.12 内核/DTS 集成层。
+
+### `uniphy autoneg time out!` 是症状，不是原因
+
+- 消息来自 `adpt_hppe_uniphy_usxgmii_autoneg_completed()`：轮询 XPCS 的
+  CL37 自协商完成中断位（`VR_MII_AN_INTR_STS`，寄存器地址 `0x1f8002`），
+  100 次 × 1 ms；超时打印该消息并返回 `SW_TIMEOUT`。
+- 调用它的 `adpt_hppe_uniphy_autoneg_status_check()` 声明为 void，**返回值
+  被丢弃**——超时不会跳过后面的任何步骤，它只是「XPCS 未报告自协商完成」
+  的指纹。
+- 真正可疑的分支：`adpt_hppe_port_phy_status_change()` 只在速率/双工/流控
+  变化时返回 TRUE。回切时 eth1 先 down、再以同样的 2.5G up，速率没变 →
+  返回 FALSE → 整个 `if (status == A_TRUE)` 块被跳过，其中包含
+  `adpt_hppe_uniphy_speed_set()` 与 `adpt_hppe_uniphy_port_adapter_reset()`，
+  最后只重新打开 txmac/rxmac/bridge_txmac。这条「同速率轻量重连」路径在
+  6.6/QSDK 栈上能自愈（24.10 实测），在 6.12 上不能：XPCS 停在不工作状态，
+  PHY 侧照常报 2.5G 链路 up，于是「link up、RX/TX 恒 0」。
+
+### 6.12 侧差异候选（均未验证）
+
+| 候选 | 依据 |
+| --- | --- |
+| 0037 让 mainline PCS 驱动充当 nsscc 的 uniphy 时钟父 | 6.6 栈上无此依赖；port5 时钟父节点本身就是历史根因 |
+| 内核 `qca808x` 驱动跨内核版本大改 | 6.6.147 680 行 vs 6.12.112 1232 行（diff 710 行）；两树都是 `CONFIG_QCA808X_PHY=y` |
+| XPCS resets 由 ssdk 与 PCS 双持有 | 0037 v3 故意保留：v2 删 resets 会让所有 dp 口零帧 |
+
+### 修复路线与代价
+
+1. **只读取证**（不需要新镜像）：受控复现一次后采 `ssdk_sh port link status
+   get 5`、`ssdk_sh debug uniphy get <idx> 0x1f8002 4`、
+   `/sys/kernel/debug/clk/clk_summary` 与完整 dmesg，把故障钉在「XPCS 自协商
+   卡死 / 时钟没恢复 / MAC 未启用」三者之一。
+2. **小补丁**（最可能落在 25.12 树的 qca-ssdk）：同速率 re-link 也做 uniphy
+   adapter reset / 自协商重启，或把自协商超时当作「需要重启 XPCS」的信号。
+3. **验证**：一次 CI 构建 + 一次刷机，用同一套 live 步骤复测。没有串口，
+   每轮只能刷机加事后取证，这是主要成本。
+
+不推荐先动 0037 的 resets 归属（v2 删 resets 导致 eth0 失联）。
+
+### 处置建议
+
+记录为方案四（RTL8261N teardown/复位）的前置依赖：修好这一条也不能单独
+解锁 live 切换。在 25.12 上继续以「改角色 + 重启」为支持路径；脚本/UI 提示
+运行期改角色可能致 2.5G 口失联、需重启。
 
 ## 取证方法备注
 
