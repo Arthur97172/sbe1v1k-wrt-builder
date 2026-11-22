@@ -1,6 +1,7 @@
 # 下一步验证：NSS full 档常开（2026-11-18 立项）
 
-> 状态：**NOT TESTED**。本文是验证计划与判据，设备行为等真机跑完再回填。
+> 状态：**步骤 1–4 PASS**（v59 2026-11-19、v93 2026-11-22 两轮复验）。
+> 2026-11-22 用户批准先行切换生产默认 `tier=full`；长跑复核在新镜像上进行。
 > 关联：`README.md` 的「档位」表、`docs/NSS_AUTOLOAD_OFF.md`（分层装载机制）、
 > `docs/DIAG_RUN_2026-11-16.md` §27–29（register_sysctl 哨兵根因与 v22 修复）、
 > 记忆条目 `nss-ecm-sfe-manual-load-order`（装载顺序约束）。
@@ -194,8 +195,11 @@ NTP 同步后时间才正确——这是已知的启动时间戳现象，不是�
 - **断电冷启**（现场断电重上电）：`boot #1: tier full loaded`，约 300 s 后
   `commit: tier=full survived; boot counter reset (was 1)`；`counter=0`、
   eth0 `an=0x7000`、ecm/vlan/bridge-mgr 模块在列、`ping 8.8.8.8` 0% 丢包。
-- 结论：步骤 1–4 **PASS**（连续重启与冷启均通过）；24 h 复查进行中，
-  生产默认切换（第 5 步）待长跑结果。
+- 结论：步骤 1–4 **PASS**（连续重启与冷启均通过）。
+- 第 5 步（2026-11-22 用户批准先行切换）：`files/etc/nss.conf` 默认改
+  `tier=full`（`fallback=wired`、`budget=3` 不变），`verify-image.sh` 钉
+  生产镜像 `tier=full`（mainline 变体仍钉 `tier=off`），README 档位表同步；
+  重编刷入后出厂层即为 full，长跑复核在该镜像上进行。
 
 ## 4. 判据（PASS / FAIL）
 

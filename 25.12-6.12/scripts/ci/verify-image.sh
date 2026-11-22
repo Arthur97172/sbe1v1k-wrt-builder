@@ -514,7 +514,20 @@ done
 [ -x "$ROOTFS/usr/sbin/nss-load" ] && ok "可执行 /usr/sbin/nss-load" \
 	|| bad "缺少或不可执行 /usr/sbin/nss-load（NSS 无法分层装载）"
 if [ -f "$ROOTFS/etc/nss.conf" ] && grep -q '^tier=' "$ROOTFS/etc/nss.conf"; then
-	ok "/etc/nss.conf 带 tier 档位: $(grep '^tier=' "$ROOTFS/etc/nss.conf")"
+	TIER_LINE=$(grep '^tier=' "$ROOTFS/etc/nss.conf")
+	ok "/etc/nss.conf 带 tier 档位: $TIER_LINE"
+	if [ -f "$ROOTFS/etc/sbe-variant" ]; then
+		# mainline 变体不装载 QSDK NSS，档位必须是 off
+		case $TIER_LINE in
+			tier=off) ok "mainline 变体 tier=off" ;;
+			*) bad "mainline 变体 tier 不是 off（S15 会刷 INCOMPLETE 噪声）: $TIER_LINE" ;;
+		esac
+	else
+		case $TIER_LINE in
+			tier=full) ok "生产镜像出厂默认 tier=full（2026-11-22 起，docs/NEXT_NSS_FULL.md）" ;;
+			*) bad "生产镜像 tier 不是 full: $TIER_LINE" ;;
+		esac
+	fi
 else
 	bad "/etc/nss.conf 缺少 tier= 档位（nss-load boot 会退回 wired）"
 fi

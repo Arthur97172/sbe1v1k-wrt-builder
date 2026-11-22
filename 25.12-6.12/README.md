@@ -41,7 +41,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   └── CONTROL_EXPERIMENT_PLAN-2026-11-16.md  对照实验（diag/mainline 变体）方案与判读表
 ├── files/                    固件 overlay（唯一来源，构建时渲染进装配树）
 │   ├── etc/banner                /etc/banner，`%V`/`%R` 由渲染脚本替换
-│   ├── etc/nss.conf              NSS 档位（tier/fallback/budget，默认 wired）
+│   ├── etc/nss.conf              NSS 档位（tier/fallback/budget，默认 full）
 │   ├── etc/init.d/nss            S15 NSS 档位控制器（调 nss-load boot）
 │   ├── etc/uci-defaults/99-wireless-defaults   首启入口（boot 以 source 执行）
 │   ├── etc/uci-defaults/99-spectrum-eth0-unmanaged-lan  把 eth0 从 netifd 的 br-lan 端口表摘出（与 24.10 同）
@@ -224,14 +224,13 @@ panic=1，约 55–75 秒一次）。为拿到可启动基线与可定位平台�
 | 档位 | 装载内容 | 用途 |
 |------|----------|------|
 | `off` | 无 | 完全不碰 NSS 的基线（没有以太网口） |
-| `wired`（默认） | `qca-ssdk` + `qca-nss-dp`（dp 依赖 ppe，会连带 `qca-nss-ppe.ko`） | 有线管理与网络恢复 |
-| `full` | wired + `qca-nss-ppe` 全家 + `qca-nss-ecm` | 完整加速栈 |
+| `wired` | `qca-ssdk` + `qca-nss-dp`（dp 依赖 ppe，会连带 `qca-nss-ppe.ko`） | 有线管理与网络恢复（fallback 档） |
+| `full`（默认） | wired + `qca-nss-ppe` 全家 + `qca-nss-ecm` | 完整加速栈（生产默认） |
 
-下一步验证：**`tier=full` 常开**（从手工 `nss-load` 过渡到生产默认，含 ECM
-出表判据与连续重启稳定性），2026-11-18 立项，计划与判据见
-`docs/NEXT_NSS_FULL.md`。2026-11-22 v93 复验：full 启动装载、UDP 120 条流
-全部加速、连续 3 次重启 commit 均 PASS；断电冷启与 24 h 复查待做，默认档
-暂仍 `wired`。
+2026-11-22：`tier=full` 已升为生产默认（v93 复验 PASS 后用户批准先行切换）。
+v93 复验：full 启动装载、UDP 120 条流全部加速、连续 3 次重启 commit、现场
+断电冷启均 PASS；出厂默认 full 的新镜像刷入后在其上做长跑复核。计划与全部
+取证见 `docs/NEXT_NSS_FULL.md` §3.4；`fallback=wired`、`budget=3` 保留。
 
 启动流程：S15 `/etc/init.d/nss` → `nss-load boot` 读档位 → 按 `sdk`/`dp`/
 `ppe`/`ecm` 顺序 `modprobe`（sdk 另等 `/sys/ssdk`，dp/ppe/ecm 再执行对应
@@ -1132,7 +1131,7 @@ run 41 的启动循环（3–4 分钟复位，PHY 有载波但主机零帧、WiF
 
 | 变体 | 设备定义 | 数据通路 | overlay / 清单 |
 |---|---|---|---|
-| `production`（默认） | `spectrum_sbe1v1k` | QSDK NSS，`tier=wired` | `files/` + `required-packages.txt` |
+| `production`（默认） | `spectrum_sbe1v1k` | QSDK NSS，`tier=full` | `files/` + `required-packages.txt` |
 | `diag` | `spectrum_sbe1v1k` | **QSDK NSS/SSDK 全装，但 `tier=off`**：启动不装载，靠手工 `nss-load` 逐层排查 | 叠加 `files-diag/` + `required-packages-diag.txt` |
 | `mainline` | `spectrum_sbe1v1k_mainline`（补丁 0012） | 上游 rdp433 设备树 + `kmod-qcom-ppe`，不装任何 `kmod-qca-nss-*` | 叠加 `files-mainline/`（nss.conf 也定 tier=off，带取证公钥）+ `required-packages-mainline.txt` |
 
