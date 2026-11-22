@@ -1,0 +1,41 @@
+--- a/package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc
++++ b/package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc
+@@ -33,6 +33,10 @@
+ let idx = 0;
+ let commit;
+ 
++// 频段固定到固定槽位（2G=radio0、5G=radio1、6G=radio2），射频编号不再随
++// ath12k 探测顺序变化；槽位已被占用（旧配置）时退回原来的「最低空闲号」。
++const band_slots = { "2G": 0, "5G": 1, "6G": 2 };
++
+ let config = uci.cursor().get_all("wireless") ?? {};
+ 
+ function radio_exists(path, macaddr, phy, radio) {
+@@ -59,17 +63,21 @@
+ 
+ 	let radios = length(info.radios) > 0 ? info.radios : [{ bands: info.bands }];
+ 	for (let radio in radios) {
+-		while (config[`radio${idx}`])
+-			idx++;
++		let band_name = filter(bands_order, (b) => radio.bands[b])[0];
++		if (!band_name)
++			continue;
++
++		let slot = band_slots[band_name];
++		if (slot != null && !config[`radio${slot}`])
++			idx = slot;
++		else
++			while (config[`radio${idx}`])
++				idx++;
+ 		let name = "radio" + idx;
+ 
+ 		let s = "wireless." + name;
+ 		let si = "wireless.default_" + name;
+ 
+-		let band_name = filter(bands_order, (b) => radio.bands[b])[0];
+-		if (!band_name)
+-			continue;
+-
+ 		let band = info.bands[band_name];
+ 		let rband = radio.bands[band_name];
+ 		let channel = rband.default_channel ?? "auto";

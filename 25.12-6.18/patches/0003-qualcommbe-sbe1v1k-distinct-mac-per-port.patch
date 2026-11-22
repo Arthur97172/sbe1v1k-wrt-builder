@@ -1,0 +1,20 @@
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
+@@ -450,7 +450,7 @@
+ 			managed = "in-band-status";
+ 			label = "lan2";
+ 
+-			nvmem-cells = <&ethaddr 1>;
++			nvmem-cells = <&ethaddr 2>;
+ 			nvmem-cell-names = "mac-address";
+ 
+ 			clocks = <&nsscc NSS_CC_PORT3_MAC_CLK>,
+@@ -472,7 +472,7 @@
+ 			managed = "in-band-status";
+ 			label = "lan3";
+ 
+-			nvmem-cells = <&ethaddr 1>;
++			nvmem-cells = <&ethaddr 3>;
+ 			nvmem-cell-names = "mac-address";
+ 
+ 			clocks = <&nsscc NSS_CC_PORT4_MAC_CLK>,

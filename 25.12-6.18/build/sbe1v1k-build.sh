@@ -4,9 +4,10 @@
 # 装配树位于 <repo>/sources/buildroot-25.12-6.18（本地与 CI 相同）。ROOT 通过
 # 向上查找该目录自动确定，也可用 SBE_ROOT 显式指定。
 #
-# 与 25.12-6.12 的 build/sbe1v1k-build.sh 的差别：Stage 1 没有 files/ overlay
-# 需要渲染，也没有确定性垫片（deterministic-bin/host-bin）；只负责布置环境后
-# 透传 make。可复现性目前只保证 SOURCE_DATE_EPOCH 固定。
+# 与 25.12-6.12 的 build/sbe1v1k-build.sh 的差别：没有确定性垫片
+# （deterministic-bin/host-bin）。files/ overlay 的渲染与 6.12 相同——先跑
+# scripts/render-overlay.sh（替换 banner 的 %V/%R 并整体同步 overlay），再透传
+# make。可复现性目前只保证 SOURCE_DATE_EPOCH 固定。
 #
 # 用法：
 #   ./25.12-6.18/build/sbe1v1k-build.sh defconfig    # 生成 .config
@@ -64,6 +65,11 @@ case "$SOURCE_DATE_EPOCH" in
 ''|*[!0-9]*) echo "cannot determine SOURCE_DATE_EPOCH" >&2; exit 1 ;;
 esac
 export SOURCE_DATE_EPOCH
+
+# OpenWrt 的 files/ overlay 不经过 include/version.mk 的 VERSION_SED_SCRIPT，
+# banner 的 %V/%R 必须在这里先渲染；同时整体同步 overlay（含 rc.d 符号链接）。
+SBE_ROOT="$ROOT" SBE_BUILDROOT="$BUILDROOT" \
+	"$PROJ/scripts/render-overlay.sh"
 
 cd "$BUILDROOT"
 exec make "$@"

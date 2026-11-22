@@ -47,6 +47,30 @@
   **真机 PASS（2026-11-22，B 机）**：`sysupgrade -n` 后首启生成两段规则，
   从上游网段 `nc`/`ssh`/`curl` 验证 22/80/443 可达、8080 仍拒绝、计数器增长；
   详见 `docs/S2-WAN-RULES-DEVICE-TEST-2026-11-22.md`。
+- S2 第二批（2026-11-22，按用户要求对齐 6.12，**设备 NOT TESTED**）：
+  - 自定义 banner：`files/etc/banner` 由 `scripts/render-overlay.sh` 在构建前
+    替换 `%V/%R`（OpenWrt 的 files overlay 不经过 version.mk 的 sed），版本行
+    形如 `Version: 25.12-SNAPSHOT (sbe1v1k-6.18-…)`；渲染失败即构建失败。
+  - 无线默认值：`files/usr/lib/sbe1v1k/wireless-defaults` + 首启入口
+    `99-wireless-defaults` + `/etc/init.d/wireless-defaults` 与
+    `files/etc/rc.d/S95wireless-defaults`（符号链接随仓库提交；6.12 里这个
+    链接只出现在旧的构建产物目录，属历史遗留）。默认 US、2.4G ch11 EHT20、
+    5G ch40 EHT80、6G ch37 EHT320、SSID `WiFi_2.4G/5G/6G`、SAE 口令
+    `12345678`；板名门控同时接受 `askey,sbe1v1k` 与 `spectrum,sbe1v1k`；
+    基址 MAC 扫描同时覆盖 6.18 的 `lan*/wan` 与 6.12 的 `eth*`。
+    6G 在固件 regdb 无可用信道时由 `repair_6g_availability` 保持禁用。
+  - 时区默认：`files/etc/uci-defaults/99-system-timezone`（Asia/Taipei，
+    仅当当前值为空或 UTC 时写入）。
+  - 补丁 `0002-wifi-scripts-pin-radio-numbering-by-band.patch`：射频号按频段
+    固定（2G=radio0、5G=radio1、6G=radio2），不再随 ath12k 探测顺序变化。
+  - 补丁 `0003-qualcommbe-sbe1v1k-distinct-mac-per-port.patch`：上游 DTS 把
+    lan2/lan3/wan 都设为 `&ethaddr 1`（`mac-base` 的 cell 索引即基址偏移，
+    三口的 MAC 完全相撞），改为 lan2=`&ethaddr 2`、lan3=`&ethaddr 3`，
+    wan 保持 `&ethaddr 1`、lan1 保持 `&ethaddr 0`。
+  - `verify-image.sh` 新增上述 overlay、banner 版本行、无线默认值、自愈函数、
+    板名门控、rc.d 链接、时区脚本断言；本机构建 PASS，**PASS=36 FAIL=0**。
+    镜像哈希与内容级取证见 `docs/S2-BANNER-WIFI-2026-11-22.md`（设备
+    **NOT TESTED**）。
 - CI（S5，2026-11-22）：`.github/workflows/build-25.12-6.18.yml` 与
   `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、configure
   三道包反查、world 构建、`verify-image.sh` 静态校验、发布 3 个资产到
@@ -66,14 +90,22 @@
 ├── docs/
 │   ├── PLAN-2026-11-22.md                       # 阶段计划与判据
 │   └── LESSONS-FROM-6.12.md                     # 6.12 踩坑 → 6.18 检查项
-├── files/etc/uci-defaults/95-ttyd-disable       # 首启关闭 ttyd（同 6.12 默认）
+├── files/                                       # 项目 overlay（渲染进镜像）
+│   ├── etc/banner                               # %V/%R 由 render-overlay.sh 替换
+│   ├── etc/init.d/wireless-defaults             # 开机无线策略
+│   ├── etc/rc.d/S95wireless-defaults            # -> ../init.d/wireless-defaults
+│   ├── etc/uci-defaults/                        # 首启：WAN 放行、ttyd、时区、无线
+│   └── usr/lib/sbe1v1k/wireless-defaults        # 无线策略实现（与 6.12 同源）
 ├── patches/                                     # 装配时按序应用、可重复
-│   └── 0001-qualcommbe-sbe1v1k-swap-port5-port6-labels.patch
+│   ├── 0001-qualcommbe-sbe1v1k-swap-port5-port6-labels.patch
+│   ├── 0002-wifi-scripts-pin-radio-numbering-by-band.patch
+│   └── 0003-qualcommbe-sbe1v1k-distinct-mac-per-port.patch
 └── scripts/
     ├── ci/prepare-tree.sh                       # 克隆 main + 钉 feed + 插件装配
     ├── ci/fetch-plugins.sh                      # 18 插件按最新 tag 安装
     ├── ci/check-packages.sh                     # seed/index/config/db 反查
     ├── ci/verify-image.sh                       # 产物静态校验 + 包反查
+    ├── render-overlay.sh                        # files/ → 装配树 + banner 版本替换
     └── local/build-image.sh                     # 本地构建入口
 ```
 

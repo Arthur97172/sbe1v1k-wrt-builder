@@ -1,0 +1,8 @@
+#!/bin/sh
+# 首启入口。实现放在 /usr/lib/sbe1v1k/wireless-defaults，供本文件与
+# /etc/init.d/wireless-defaults 共用。
+#
+# 注意：/etc/init.d/boot 以 `.`（source）方式执行 /etc/uci-defaults/* 下的文件，
+# 成功后才删除它。因此这里不能使用 exec、exit 或 set -e，只做一次调用；
+# 返回码即被调用脚本的返回码，失败时文件会保留到下次开机重试。
+/usr/lib/sbe1v1k/wireless-defaults

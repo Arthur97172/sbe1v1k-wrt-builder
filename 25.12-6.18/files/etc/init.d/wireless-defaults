@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# 每次开机执行一次无线默认值策略（首启另有 /etc/uci-defaults/99-wireless-defaults）。
+#
+# 实现脚本内部用 UCI marker（system.@system[0].spectrum_wireless_defaults）记录
+# 是否已成功应用，因此成功之后每次开机都会立即返回，不会重复修改配置。
+# START=95：在 boot(10)、network(20)/firewall(19) 之后，等待射频与接口就绪。
+
+START=95
+
+start() {
+	/usr/lib/sbe1v1k/wireless-defaults
+}
