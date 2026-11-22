@@ -44,6 +44,9 @@
   安装（uci-defaults 只 source 不看权限位，断言 755 是为了让权限位丢失时
   静态检查直接失败）。`verify-image.sh` 断言两脚本在镜像中。**注意：root
   空密码时 `Allow-SSH-WAN` 等于把免密登录开给整个上游网段，必须配套设密码。**
+  **真机 PASS（2026-11-22，B 机）**：`sysupgrade -n` 后首启生成两段规则，
+  从上游网段 `nc`/`ssh`/`curl` 验证 22/80/443 可达、8080 仍拒绝、计数器增长；
+  详见 `docs/S2-WAN-RULES-DEVICE-TEST-2026-11-22.md`。
 - CI（S5，2026-11-22）：`.github/workflows/build-25.12-6.18.yml` 与
   `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、configure
   三道包反查、world 构建、`verify-image.sh` 静态校验、发布 3 个资产到
