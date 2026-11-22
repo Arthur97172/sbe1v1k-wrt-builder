@@ -21,6 +21,8 @@ openssh-client-utils
 tmux
 kmod-nft-socket
 kmod-nft-tproxy
+# wifi_qos：给 QSDK hostapd 的 SCS 提供 netdev egress 钩子（CONFIG_NETFILTER_EGRESS）。
+kmod-nft-netdev
 kmod-br-netfilter
 curl
 tar

@@ -150,6 +150,12 @@ CONFIG_PACKAGE_openssh-client-utils=y
 CONFIG_PACKAGE_tmux=y
 CONFIG_PACKAGE_kmod-nft-socket=y
 CONFIG_PACKAGE_kmod-nft-tproxy=y
+# QSDK hostapd 的 SCS 给每个 BSS 建 netdev egress 链（`nft list tables` 里的
+# wifi_qos_table）；generic config-6.12 不开 CONFIG_NETFILTER_EGRESS，钩子注册
+# 返回 -EOPNOTSUPP，链建不出来、表恒空。kmod-nft-netdev 是唯一翻转该符号的包
+# （netfilter.mk 的 KCONFIG 映射）。24.10 已同因接入（2026-11-15），并在
+# v115-2 真机验证（2026-11-22）。
+CONFIG_PACKAGE_kmod-nft-netdev=y
 CONFIG_PACKAGE_kmod-br-netfilter=y
 CONFIG_PACKAGE_curl=y
 CONFIG_PACKAGE_tar=y
