@@ -17,6 +17,8 @@ wireguard-tools
 kmod-wireguard
 
 # --- 工具与内核模块 --------------------------------------------------------
+# 挂载管理（24.10 有、本树原先漏，2026-11-22 补回；LuCI 挂载页在 luci-mod-system）。
+block-mount
 openssh-client-utils
 tmux
 kmod-nft-socket

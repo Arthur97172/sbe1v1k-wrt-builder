@@ -173,6 +173,10 @@ CONFIG_PACKAGE_ca-bundle=y
 CONFIG_PACKAGE_ca-certificates=y
 
 # --- 公共运行时 -----------------------------------------------------------
+# block-mount：挂载管理（/etc/config/fstab、/etc/init.d/fstab）与 LuCI 的
+# 系统 → 挂载点 页面（页面本体在 luci-mod-system 里，已选）。24.10 有它，
+# 本树原先漏了，2026-11-22 按用户要求补回。
+CONFIG_PACKAGE_block-mount=y
 # 基础变体：dnsmasq-full（nftset/conntrack，openclash/passwall 需要）、
 # ip-full（passwall 的 ip 规则）、firewall4。默认变体必须显式关掉，否则
 # 两套实现会同时安装 /usr/sbin/ip、/usr/sbin/dnsmasq 并触发文件冲突。
