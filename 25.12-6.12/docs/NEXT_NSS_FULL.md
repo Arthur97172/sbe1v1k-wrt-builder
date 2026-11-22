@@ -1,7 +1,8 @@
 # 下一步验证：NSS full 档常开（2026-11-18 立项）
 
 > 状态：**步骤 1–4 PASS**（v59 2026-11-19、v93 2026-11-22 两轮复验）。
-> 2026-11-22 用户批准先行切换生产默认 `tier=full`；长跑复核在新镜像上进行。
+> 2026-11-22 用户批准先行切换生产默认 `tier=full`；v94 镜像（`c361f28`）
+> 出厂默认复核 PASS（§3.5），长跑复核在该镜像上重新起算。
 > 关联：`README.md` 的「档位」表、`docs/NSS_AUTOLOAD_OFF.md`（分层装载机制）、
 > `docs/DIAG_RUN_2026-11-16.md` §27–29（register_sysctl 哨兵根因与 v22 修复）、
 > 记忆条目 `nss-ecm-sfe-manual-load-order`（装载顺序约束）。
@@ -200,6 +201,29 @@ NTP 同步后时间才正确——这是已知的启动时间戳现象，不是�
   `tier=full`（`fallback=wired`、`budget=3` 不变），`verify-image.sh` 钉
   生产镜像 `tier=full`（mainline 变体仍钉 `tier=off`），README 档位表同步；
   重编刷入后出厂层即为 full，长跑复核在该镜像上进行。
+
+## 3.5 出厂默认复核（2026-11-22，v94 镜像，本机构建）
+
+第 5 步改默认后重编，v94 镜像出厂层即为 `tier=full`，复核结果：
+
+- 镜像 `sbe1v1k-25.12-c361f288`（commit `c361f28`，sha256 `00d9bea6…`，
+  `sysupgrade -n` 刷入，刷后约 133 s 回 SSH）。
+- **出厂层**：`/rom/etc/nss.conf` = `tier=full` / `fallback=wired` /
+  `budget=3`；`/overlay/upper/etc/nss.conf` 不存在（无覆盖层配置），
+  运行中的 `/etc/nss.conf` 与之逐行一致——生效的确实是固件默认值，
+  不是测试时手工切的档。
+- **首启装载**：`boot #1: tier=full value=full fallback=wired budget=3`
+  → `boot #1: tier full loaded`；ecm 阶段在 uptime 70.70 s 完成
+  （`-n` 后首启比 v93 的 ~22 s 慢，属首启全量 kmodloader 的正常开销）；
+  加速模块 9 个在列（ecm、qca_nss_ppe、ppe_vlan、ppe_bridge_mgr、
+  ppe_ath_clients、qca_nss_sfe 等）。
+- **commit**：uptime 375 s 时 `commit: tier=full survived; boot counter
+  reset (was 1)`，`nss-boots=0`；同期 `oops=0`、eth0 `an=0x7000`、
+  WAN 192.168.10.247、LuCI 200。
+- 从此镜像起，新装/`-n` 刷机即进入 full 档，无需设备侧 `nss-load tier full`；
+  若 full 连续 3 次启动等不到 commit，仍按 `fallback=wired` 自动退档。
+  长跑复核（24 h：`nss-boots` 保持 0、无 oops、ECM 计数正常）在该镜像上
+  重新起算。
 
 ## 4. 判据（PASS / FAIL）
 
