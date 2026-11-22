@@ -222,8 +222,13 @@ NTP 同步后时间才正确——这是已知的启动时间戳现象，不是�
   WAN 192.168.10.247、LuCI 200。
 - 从此镜像起，新装/`-n` 刷机即进入 full 档，无需设备侧 `nss-load tier full`；
   若 full 连续 3 次启动等不到 commit，仍按 `fallback=wired` 自动退档。
-  长跑复核（24 h：`nss-boots` 保持 0、无 oops、ECM 计数正常）在该镜像上
-  重新起算。
+  长跑复核在该镜像上重新起算。2026-11-22 用户决定把观察窗口从 24 h 缩为
+  **8 h**（每 30 min 采样一条）：本项目的已知故障都在启动阶段、full 档已两轮
+  复验，8 h 覆盖运行期风险足够；夜间空闲暴露与低频偶发概率的增量不足以
+  构成准入理由。采样指标相应补强，加记 `MemAvailable` 与 ECM
+  `connection_count`，用于在短窗口内判泄漏——判据：uptime 单调、`counter=0`、
+  oops=0、ecm present、`resetwarn=9`、`memavail` 无单调下滑、空载下
+  `ecmconn=0`。脚本 `logs/nss-full/soak-check.sh`，日志 `logs/nss-full/soak.log`。
 
 ## 4. 判据（PASS / FAIL）
 
