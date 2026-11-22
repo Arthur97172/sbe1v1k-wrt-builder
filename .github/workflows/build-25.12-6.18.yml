@@ -1,0 +1,315 @@
+name: 📦 Build 25.12-6.18
+
+# 在 GitHub Actions 上编译 Spectrum SBE1V1K（IPQ9574）OpenWrt main +
+# Linux 6.18 固件（S1：上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k 基线，
+# mainline PPE 数据通路 + 上游 ath12k 固件），并把三个交付镜像发布到
+# 本次运行专属的 GitHub Release。
+#
+# 与 25.12-6.12 不同，本树完全基于上游公开源码与 feed：
+#   - openwrt/openwrt @ main（固定提交，见 prepare-tree.sh）
+#   - 官方 feeds（固定提交）
+#   - 本项目补丁 25.12-6.18/patches/（目前只有网口角色交换 0001）
+#   - files/ overlay（首启默认：ttyd 关闭、WAN 放行）
+# 无线固件/板级 BDF 来自上游 ath12k-firmware 与 ipq-wifi-askey_sbe1v1k，
+# 不含厂商专有 blob；校准由上游脚本开机时从本机 eMMC 0:ART 提取。
+#
+# 说明：
+#   - 构建不会接触任何设备，仅下载源码与编译依赖；
+#   - 设备行为状态：S1b（2026-11-22，B 机）对同配置镜像做过真机验证
+#     （`25.12-6.18/docs/S1B-DEVICE-TEST-2026-11-22.md`）：6.18.64 启动、
+#     网口角色、LAN→WAN、LuCI、风扇/LED、2.4G/5G 正常；6G 因固件 regdb
+#     未启用信道不可用。CI 本次构建的产物仍记为 UNVERIFIED。
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_mode:
+        description: '第三方插件版本：latest=每次构建解析最新 tag；pinned=按 thirdparty-pins.conf 复现旧镜像'
+        type: choice
+        options:
+          - latest
+          - pinned
+        default: latest
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-25.12-6.18.yml'
+      - '25.12-6.18/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-firmware-25.12-6.18-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      "${AGENT_TOOLSDIRECTORY:-}" || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3-setuptools rsync \
+            unzip zlib1g-dev file wget ca-certificates patch bc \
+            libelf-dev libxml-parser-perl libtool-bin autoconf automake \
+            cmake device-tree-compiler zstd swig python3 python3-dev \
+            cpio time squashfs-tools
+
+      - name: Prepare build tree
+        env:
+          # 18 个插件在 prepare-tree.sh 内部安装：默认每次构建解析各仓库最新
+          # 版本 tag（不改写仓库里的 pin 文件），实际提交写进 .sbe-plugins.tsv。
+          # CI 用严格模式：远端不可达/分叉时直接失败，避免“以为在跟新”。
+          SBE_PLUGIN_MODE: ${{ inputs.plugin_mode || 'latest' }}
+          SBE_PLUGIN_STRICT: '1'
+        run: ./25.12-6.18/scripts/ci/prepare-tree.sh "$GITHUB_WORKSPACE"
+
+      - name: Configure
+        run: |
+          set -eu
+          CFG=sources/buildroot-25.12-6.18/.config
+          cp 25.12-6.18/build/config-seed/ipq95xx-askey-sbe1v1k.seed "$CFG"
+          # 种子必须包含 required-packages.txt 的全部必装项、不含必禁项。
+          ./25.12-6.18/scripts/ci/check-packages.sh seed "$CFG"
+          # 先生成包索引再核对：插件 Makefile 损坏、插件与官方 feed 重名、
+          # 上游改名导致包不存在，都在 defconfig 之前暴露，而不是 3 小时之后。
+          ./25.12-6.18/build/sbe1v1k-build.sh prepare-tmpinfo
+          ./25.12-6.18/scripts/ci/check-packages.sh index sources/buildroot-25.12-6.18
+          ./25.12-6.18/build/sbe1v1k-build.sh defconfig
+          # defconfig 对未知/冲突的包是静默丢弃，这里逐包反查。
+          ./25.12-6.18/scripts/ci/check-packages.sh config "$CFG"
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)=' "$CFG"
+          # 内核版本不是 .config 符号，判定在 target/linux/qualcommbe/Makefile
+          # 的 KERNEL_PATCHVER（上游写法 `KERNEL_PATCHVER:=6.18`，冒号两边无空格）。
+          grep -Eq 'KERNEL_PATCHVER[[:space:]]*:=[[:space:]]*6\.18' \
+            sources/buildroot-25.12-6.18/target/linux/qualcommbe/Makefile \
+            || { echo "装配树 target/linux/qualcommbe 不是 6.18 内核" >&2; exit 1; }
+          # target/linux/generic/kernel-6.18 是单行文本（LINUX_VERSION-6.18 = .64）。
+          cat sources/buildroot-25.12-6.18/target/linux/generic/kernel-6.18
+
+      - name: Build
+        run: |
+          set -o pipefail
+          if ./25.12-6.18/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee build.log; then
+            exit 0
+          fi
+          # 非 verbose 的 world 用 `make -s` 跑每个包，包内部的编译错误被丢弃。
+          # 这里只重编失败的包并开 V=s：错误进 job 日志，完整输出进附件。
+          pkg=$(sed -n 's/.*ERROR: package\/\([^ ]*\) failed to build.*/\1/p' build.log | head -n1)
+          tgt=$(sed -n 's/.*ERROR: \(target\/[^ ]*\) failed to build.*/\1/p' build.log | head -n1)
+          if [ -n "$pkg" ]; then rebuild="package/$pkg/compile"; what="$pkg"
+          elif [ -n "$tgt" ]; then rebuild="$tgt/compile"; what="$tgt"
+          else rebuild=""; what=""; fi
+          {
+            echo "===== 构建失败：${what:-未能从 build.log 识别失败的目标} ====="
+            df -h /
+            free -h
+          } 2>&1 | tee -a build.log
+          if [ -n "$rebuild" ]; then
+            rerun="$RUNNER_TEMP/rerun-${GITHUB_RUN_NUMBER}.log"
+            if ./25.12-6.18/build/sbe1v1k-build.sh "$rebuild" V=s -j1 >"$rerun" 2>&1; then
+              echo "===== $what 以 V=s -j1 重编通过，未复现 ====="
+              sudo dmesg --ctime 2>/dev/null | tail -n 30 || true
+            else
+              cat "$rerun" >> build.log
+              echo "===== error 摘要（前 8 处） ====="
+              grep -n -m 8 -E 'error:|Error [0-9]+$|No such file or directory|undefined reference' "$rerun" \
+                || echo "（未匹配到常见错误模式，见下方尾部）"
+              echo "===== $what 重建日志尾部 200 行 ====="
+              tail -n 200 "$rerun"
+            fi
+          fi
+          exit 1
+
+      - name: Verify image (static)
+        id: verify
+        if: success()
+        run: |
+          set -o pipefail
+          ./25.12-6.18/scripts/ci/verify-image.sh "$GITHUB_WORKSPACE" 2>&1 | tee verify.log
+
+      - name: Diagnose image verification
+        # 步骤日志和 artifact 对匿名访问不可读，把 FAIL 行与末尾内容压成
+        # ::error:: 注解，失败原因不登录也能看到。
+        if: failure() && steps.verify.outcome == 'failure'
+        run: |
+          enc() {
+            awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+                if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 300) }'
+          }
+          if [ -s verify.log ]; then
+            hits=$(grep -aE '^FAIL|^SUMMARY' verify.log | head -n 80 | enc || true)
+            if [ -n "$hits" ]; then
+              echo "::error::verify.log 断言失败：${hits}"
+            else
+              msg=$(tail -n 60 verify.log | enc)
+              echo "::error::verify.log 无 FAIL 行，末尾 60 行：${msg}"
+            fi
+          else
+            echo "::error::verify.log 缺失或为空（脚本可能在输出前就退出了）"
+          fi
+          exit 0
+
+      - name: Collect release assets
+        if: success()
+        run: |
+          set -eu
+          OUT=sources/buildroot-25.12-6.18/bin/targets/qualcommbe/ipq95xx
+          REL="$RUNNER_TEMP/release"
+          PUB=openwrt-qualcommbe-ipq95xx-askey_sbe1v1k
+          mkdir -p "$REL"
+          for n in squashfs-sysupgrade.bin squashfs-factory.bin initramfs-uImage.itb; do
+            src="$OUT/$PUB-$n"
+            test -s "$src" || { echo "缺少或为空：$src" >&2; exit 1; }
+            cp "$src" "$REL/$PUB-$n"
+          done
+          ( cd "$REL" && sha256sum "$PUB"-* )
+          ls -lh "$REL"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-25.12-6.18-${{ github.run_number }}
+          path: |
+            build.log
+            verify.log
+            sources/buildroot-25.12-6.18/.sbe-plugins.tsv
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload firmware artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbe1v1k-25.12-6.18-firmware-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-sysupgrade.bin
+            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-factory.bin
+            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-initramfs-uImage.itb
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION_TAG="v${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA:0:8}"
+          TAG="25.12-6.18-${VERSION_TAG}"
+          REL="$RUNNER_TEMP/release"
+          PUB=openwrt-qualcommbe-ipq95xx-askey_sbe1v1k
+          VLINE=$(cat sources/buildroot-25.12-6.18/bin/targets/qualcommbe/ipq95xx/version.buildinfo 2>/dev/null || echo unknown)
+
+          cat > "$REL/notes.md" <<EOF
+          Spectrum SBE1V1K (IPQ9574) firmware — OpenWrt main + 主线 Linux 6.18（S1 基线）
+
+          - 版本：${VLINE}
+          - 提交：\`${GITHUB_SHA}\`
+          - 运行：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - 基线：上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k，mainline PPE 数据通路
+          - 无线：上游 ath12k 驱动与固件 + ipq-wifi-askey_sbe1v1k BDF（无厂商 blob）
+          - 网口角色：wan = 2.5G（QCA8081），lan1 = 10G（RTL8261N），lan2/lan3 = 1G（QCA8075）
+          - 未接入：QSDK NSS（ssdk/dp/ppe/ecm/sfe）与 Wi-Fi offload（S3）
+
+          资产（恰好 3 个）：
+          - \`${PUB}-squashfs-sysupgrade.bin\`
+          - \`${PUB}-squashfs-factory.bin\`
+          - \`${PUB}-initramfs-uImage.itb\`
+
+          SHA-256：
+          \`\`\`
+          $(cd "$REL" && sha256sum ${PUB}-*)
+          \`\`\`
+
+          设备状态：同配置镜像已在 B 机做过 S1b 真机验证（2026-11-22）：
+          6.18.64 启动、网口角色、LAN→WAN、LuCI、风扇/LED、2.4G/5G 正常；
+          **6G 因固件 regdb 未启用信道不可用**。本次构建产物本身记为
+          UNVERIFIED，刷写前先读 25.12-6.18/README.md 与
+          docs/S1B-DEVICE-TEST-2026-11-22.md。
+          EOF
+
+          PLUG=sources/buildroot-25.12-6.18/.sbe-plugins.tsv
+          {
+            echo ""
+            echo "第三方插件（本次实际使用的提交）："
+            echo ""
+            if [ -s "$PLUG" ]; then
+              echo "| 仓库 | tag | commit | 动作 |"
+              echo "|---|---|---|---|"
+              tail -n +2 "$PLUG" | \
+                awk -F'\t' '{printf "| %s | %s | `%s` | %s |\n", $1, $3, substr($4,1,12), $6}'
+            else
+              echo "（没有生成 $PLUG）"
+            fi
+          } >> "$REL/notes.md"
+
+          NAME="SBE1V1K 25.12-6.18 ${VERSION_TAG}"
+          enc() {
+            awk 'BEGIN { ORS="" } { gsub(/%/, "%25"); gsub(/\r/, "%0D");
+              if (NR > 1) printf "%%0A"; printf "%s", substr($0, 1, 300) }'
+          }
+          # 构建要 1.5-3 小时，不能因一次瞬时 403 丢掉整轮产物：最多 5 次、
+          # 间隔 60 秒重试；422（tag/release 已存在、校验失败）不重试。
+          create_attempt=1
+          while :; do
+            if out=$(gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$NAME" \
+              --notes-file "$REL/notes.md" \
+              "$REL/${PUB}-squashfs-sysupgrade.bin" \
+              "$REL/${PUB}-squashfs-factory.bin" \
+              "$REL/${PUB}-initramfs-uImage.itb" 2>&1); then
+              break
+            fi
+            printf '%s\n' "$out"
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "release $TAG 已存在（上一次请求可能已成功），转入资产校验"
+              break
+            fi
+            case "$out" in
+              *422*|*already_exists*|*"Validation Failed"*)
+                echo "::error::gh release create ${TAG} 失败（不可重试）：$(printf '%s' "$out" | enc)"
+                gh api rate_limit --jq '.resources.core' || true
+                exit 1
+                ;;
+            esac
+            if [ "$create_attempt" -ge 5 ]; then
+              echo "::error::gh release create ${TAG} 连续 5 次失败：$(printf '%s' "$out" | enc)"
+              gh api rate_limit --jq '.resources.core' || true
+              exit 1
+            fi
+            echo "gh release create ${TAG} 第 ${create_attempt} 次失败，60 秒后重试"
+            create_attempt=$((create_attempt + 1))
+            sleep 60
+          done
+
+          n=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
+          echo "release $TAG assets=$n"
+          test "$n" = "3" || { echo "Release 资产数不是 3" >&2; exit 1; }
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.size)"'

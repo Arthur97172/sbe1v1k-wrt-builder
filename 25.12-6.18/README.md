@@ -38,6 +38,17 @@
   `fetch-plugins.sh --dry-run` 18 个仓库全部 same、`check-packages.sh seed`
   107 项 PASS。与 6.12 的差异只在不存在的 QSDK 组件（qca-ssdk-shell、
   sbe-wifi-firmware、NSS 包）。
+- 首启默认（S2 先行移植，2026-11-22 按用户要求）：`files/etc/uci-defaults/`
+  里的 `99-allow-luci-wan`（WAN tcp 80/443 ACCEPT）与 `99-allow-ssh-wan`
+  （WAN tcp 22 ACCEPT），语义与 6.12 的 `sbe1v1k-defaults` 相同；脚本按 755
+  安装（uci-defaults 只 source 不看权限位，断言 755 是为了让权限位丢失时
+  静态检查直接失败）。`verify-image.sh` 断言两脚本在镜像中。**注意：root
+  空密码时 `Allow-SSH-WAN` 等于把免密登录开给整个上游网段，必须配套设密码。**
+- CI（S5，2026-11-22）：`.github/workflows/build-25.12-6.18.yml` 与
+  `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、configure
+  三道包反查、world 构建、`verify-image.sh` 静态校验、发布 3 个资产到
+  本次运行专属 Release；`plugin_mode` 可选手动触发时用 `pinned` 复现旧镜像。
+  首次运行结果以 Actions 页为准。
 - 任何刷机、重启、连接路由器或远程验证都需要用户单独批准。
 
 ## 目录

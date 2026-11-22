@@ -85,6 +85,19 @@ if command -v unsquashfs >/dev/null 2>&1; then
 			&& ok "openwrt_release 目标 = qualcommbe/ipq95xx" \
 			|| bad "openwrt_release 目标不是 qualcommbe/ipq95xx"
 
+		# --- 5b. WAN 放行首启脚本（S2 首批移植，与 6.12 同源）--------------
+		# uci-defaults 由 /etc/init.d/boot 用 sh source 执行，权限位不影响运行；
+		# 这里仍要求 755：6.12 同源脚本是 755，模式位丢失会把「没生效」伪装成
+		# 「文件在」，而 664 恰好就是首次移植时踩到的样子。
+		for pair in '99-allow-luci-wan:firewall.allow_luci_wan' \
+		            '99-allow-ssh-wan:firewall.allow_ssh_wan'; do
+			f=${pair%%:*}; sec=${pair#*:}
+			[ -x "$TMP/rootfs/etc/uci-defaults/$f" ] \
+				&& grep -q "set $sec=rule" "$TMP/rootfs/etc/uci-defaults/$f" \
+				&& ok "首启脚本 $f（$sec）在镜像中" \
+				|| bad "首启脚本 $f 缺失或内容不对"
+		done
+
 		# --- 6. 包集合反查（与 seed/defconfig 检查同一份清单）--------------
 		"$SELF/check-packages.sh" db "$TMP/rootfs"
 		case $? in

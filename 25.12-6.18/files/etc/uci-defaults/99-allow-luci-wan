@@ -1,0 +1,31 @@
+#!/bin/sh
+# SBE1V1K local default: allow LuCI from the WAN side.
+#
+# The device is managed over the provider uplink, so tcp 80/443 on the wan
+# zone is accepted by default.  Everything else on wan keeps the stock
+# policy (zone input REJECT, established/related already allowed by fw4).
+#
+# Equivalent to the rule created by hand during bring-up:
+#   firewall.allow_luci_wan: name='Allow-LuCI-WAN'  src='wan'  proto='tcp'
+#                            dest_port='80 443'     target='ACCEPT'
+# fw4 emits user rules ahead of the zone's default REJECT in input_wan, so
+# this ACCEPT wins regardless of where in /etc/config/firewall it lands.
+#
+# The section name is fixed and the guard keeps an existing one untouched:
+# an operator edit (or deletion) made after first boot is never undone, and
+# the section is not duplicated on later runs of this script.
+#
+# /etc/init.d/boot sources this file in a subshell and deletes it only on
+# success; a non-zero exit keeps it for the next boot to retry.
+[ -f /etc/config/firewall ] || exit 0
+[ -n "$(uci -q get firewall.allow_luci_wan)" ] && exit 0
+
+uci -q batch <<EOF && uci -q commit firewall || exit 1
+set firewall.allow_luci_wan=rule
+set firewall.allow_luci_wan.name='Allow-LuCI-WAN'
+set firewall.allow_luci_wan.src='wan'
+set firewall.allow_luci_wan.proto='tcp'
+set firewall.allow_luci_wan.dest_port='80 443'
+set firewall.allow_luci_wan.target='ACCEPT'
+EOF
+exit 0
