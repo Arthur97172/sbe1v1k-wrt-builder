@@ -975,26 +975,31 @@ uci 规则，fw4 语义一致）：`99-allow-luci-wan` 放行 tcp 80/443、`99-a
 ——这正是 25.12 锁定的 luci（75a306df）「系统 → 时间同步」页的「时间格式 = 24
 小时制」选项（24.10 锁定的 luci d0400718c5 没有该选项、固定 24h 显示）。
 
-无线、WAN 规则与时区的设备行为均为 `NOT TESTED`；静态部分由 `sh -n`、补丁 dry-run
-与 `verify-image.sh` 的新断言覆盖。
+无线（三频 SSID/信道）与时区（`Asia/Taipei` + `h23`）已在真机验证；WAN 侧
+放行规则（从 WAN 侧访问 LuCI/SSH）仍未直接测试。静态部分由 `sh -n`、补丁
+dry-run 与 `verify-image.sh` 的断言覆盖。
 
-## Stage 1 已知限制（未在真机验证，状态 `UNVERIFIED`）
+## Stage 1 已知限制（历史记录，2026-11-22 更新）
 
-- 设备树沿用 RDP433（NOR+NAND 布局）；真实板使用 eMMC。升级已改成 tar 容器 +
-  按当前槽位写 `0:HLOS` / `rootfs`（`patches/0022`，见“升级与 A/B 槽位”），
-  但分区名、分区大小与槽位映射都来自厂商镜像的静态审计，真机 `NOT TESTED`。
-- 以太网已由 Stage 2.1–2.4 换成 QSDK NSS-dp（主线 PPE 节点被删除），但
-  端口/PHY 行为尚无真机观测。
-- 无线为 ath12k 上游驱动（Stage 2.5 起带厂商固件与板级 BDF），无 QSDK NSS
-  Wi-Fi 插件；每台设备的校准数据来自 eMMC `0:ART`，镜像内没有，首次上机前
-  仍需补一个 ART 提取脚本（见 Stage 2.5）。
-- 板级细节中只有 LAN/WAN 端口映射在 Stage 2.4 补上（依据厂商 QSDK 14 DTB）；
-  PWM 风扇与 RGB 引脚复用由 `patches/0025`/`0026` 补上，启动阻塞（CPU OPP /
-  sleep_clk / NSS 保留区）由 `patches/0027` 补上（均静态验证，`NOT TESTED`）；
-  板级 MAC、LED/按键仍沿用 RDP433。
+> 本段记录立项时 Stage 1 的未验证项。它们多已在 Stage 2/3 与真机上解决：
+> 设备自 2026-11-13 起在 eMMC 上运行本树（24.10），25.12 自 v35 起同样
+> eMMC 启动，有线/无线/风扇均已在 B 机长期使用。下面逐条标注现状，
+> 保留原文是为了记住当初哪些结论只是静态审计。
 
-因此 Stage 1 产物只用于确认“25.12 + 6.12 能为本板编译出正确命名的镜像”，
-**在 Stage 2/3 完成前不要刷入设备**。
+- 设备树沿用 RDP433（NOR+NAND 布局）、真实板用 eMMC：升级 tar 容器 +
+  按当前槽位写 `0:HLOS` / `rootfs`（`patches/0022`）已经过多轮真机刷写验证。
+- 以太网由 Stage 2.1–2.4 换成 QSDK NSS-dp 后的端口/PHY 行为：已大量真机
+  观测（端口角色、eth1 2.5G 修复、STP 入口过滤修复 0009，见对应文档）。
+- 无线为 ath12k 上游驱动 + 厂商固件/板级 BDF：三频已在真机工作，不需要
+  额外的 `0:ART` 提取脚本；QSDK NSS Wi-Fi offload 仍未接入（见
+  `docs/NSS_WIFI_OFFLOAD_QSDK_TRACKING.md`）。
+- 板级细节：LAN/WAN 端口映射（Stage 2.4）、PWM 风扇与 RGB 引脚复用
+  （`patches/0025`/`0026`）、启动阻塞（CPU OPP / sleep_clk / NSS 保留区，
+  `patches/0027`）均已在真机验证；LAN 侧 MAC 由 S19 固定（eth2/eth3 从
+  eth0 派生），LED/按键仍沿用 RDP433 默认值，未做板级定制。
+
+原文的「Stage 1 产物只用于确认镜像能编译、**在 Stage 2/3 完成前不要刷入
+设备**」仅适用于立项时；当前生产镜像正是本树的产物，已不再适用。
 
 ## 本机构建
 

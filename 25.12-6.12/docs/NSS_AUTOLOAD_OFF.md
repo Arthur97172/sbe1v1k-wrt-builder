@@ -1,5 +1,16 @@
 # NSS 禁自动加载与分层装载（25.12-6.12，2026-11-16）
 
+> **2026-11-17 状态更新**：本文成立时的「启动约 55–75 秒复位」根因已定案，
+> 不是时钟/PPE 路径，而是 6.11+ `register_sysctl()` 宏把 QSDK ctl_table 的
+> `{}` 哨兵计入条目数，导致 `modprobe qca-nss-ppe` 在注册失败后的拆除路径
+> PAN oops（详见 `DIAG_RUN_2026-11-16.md` §27–28，补丁
+> `nss/patches/qca-nss-ppe/0025-*`、`qca-nss-dp/0008-*`）。修复后 diag v22
+> `tier=wired` 真机 PASS（§29）。**生产默认档 2026-11-22 起为 `tier=full`**
+> （v93 复验 PASS、v94 出厂复核，见 `NEXT_NSS_FULL.md` §3.4–3.5），
+> `fallback=wired` 保留为降档兜底。分层装载机制
+> （`nss.conf` 档位、`nss-load`）仍然保留，作为诊断与降档工具，但已不再是
+> 绕过崩溃的必要手段。
+
 本文记录 25.12 上 QSDK NSS 栈从「随启动自动装载」改成「按档位显式装载」的
 机制、改动面、设备上的定位流程与判据。设备行为一律 `NOT TESTED`，本批只做到
 本地构建输入与镜像断言。
@@ -93,8 +104,8 @@ S15 的位置：在 `/etc/init.d/boot`（S10，加载 PHY 等基础模块）之�
 | 档位 | 装载 | 说明 |
 |------|------|------|
 | `off` | 无 | 纯基线。没有以太网口，改回只能恢复模式/离线挂 overlay |
-| `wired` | `sdk` + `dp` | 默认。恢复有线管理与 SSH |
-| `full` | `wired` + `ppe` + `ecm` | 完整加速栈 |
+| `wired` | `sdk` + `dp` | fallback 档。恢复有线管理与 SSH |
+| `full` | `wired` + `ppe` + `ecm` | 完整加速栈；生产默认（2026-11-22 起） |
 
 单层命令：`load sdk|dp|ppe|ecm|sfe`。
 

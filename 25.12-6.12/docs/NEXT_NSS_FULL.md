@@ -18,8 +18,9 @@ CPU 占用下降），而不是只在特例下手工挂。
 
 ## 2. 现状与已知约束
 
-- 当前生产镜像默认 `tier=wired`：只装 `qca-ssdk` + `qca-nss-dp`（dp 连带
-  `qca-nss-ppe`），`ecm` 与 `qca-nss-sfe` 不装。B 机现网即此形态。
+- 立项时生产镜像默认 `tier=wired`：只装 `qca-ssdk` + `qca-nss-dp`（dp 连带
+  `qca-nss-ppe`），`ecm` 与 `qca-nss-sfe` 不装。**2026-11-22 起生产默认已改为
+  `tier=full`（第 5 步，见 §3.5），本段保留立项时现状。**
 - `full` 在 25.12 上曾因 6.11+ `register_sysctl()` 哨兵问题在
   `modprobe qca-nss-ppe` 的拆除路径 oops（`CONFIG_PANIC_ON_OOPS` 下一秒复位）。
   该根因已由 `nss/patches/qca-nss-ppe/0025-*`、`qca-nss-dp/0008-*` 修复，
