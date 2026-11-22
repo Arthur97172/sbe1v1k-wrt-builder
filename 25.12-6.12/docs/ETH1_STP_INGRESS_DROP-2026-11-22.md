@@ -2,7 +2,7 @@
 
 状态：根因已定性并经真机因果验证（手工置回 forwarding 即恢复）；
 修复补丁 `nss/patches/qca-nss-dp/0009-nss-dp-stp-forward-on-bridge-detach.patch`
-本地装配/编译 PASS；CI 与真机复测 **NOT TESTED**（待下一轮构建）。
+本地装配/编译 PASS；CI run 88 PASS；**真机复测 PASS（2026-11-22，v88-1）**。
 
 相关文档：`RX_DIAG_BUILD-2026-11-21.md`（EDMA 埋点，确认帧到不了 EDMA）、
 `SGMII_RELINK_FIX-2026-11-21.md`（0014 adapter re-init，已证伪）。
@@ -115,8 +115,35 @@ ssdk_sh debug reg get 0x60114 4        # 回读 [Data]:0x3（forwarding）
 |---|---|
 | 0009 对「pristine + 0001–0008」`patch -p1 --fuzz=0` 应用通过，结果与修改树 `diff -r` 逐字节一致 | PASS |
 | 装配树 `make package/qca-nss-dp/clean compile`（GCC 14.3，6.12.112） | PASS（rc=0，无 warning/error；`nss_dp_switchdev.o` 含 `nss_dp_netdev_event`/`nss_dp_netdev_notifier` 符号） |
-| CI 构建 | NOT TESTED |
-| 真机复测 | NOT TESTED |
+| CI 构建（run 88，Release `25.12-6.12-v88-1-17884656`） | PASS（产物 3 个，sysupgrade sha256 `b5a2c361d6ae78e90bf19fd97efc88c29d992fd7b5fe509c9c08ec301ea17f78`） |
+| 真机复测（v88-1，`sysupgrade -n`） | PASS（详见下节） |
+
+### 真机复测结果（2026-11-22，v88-1 = sbe1v1k-25.12-17884656）
+
+刷机后首启 `wan_port=eth1`，eth1 获 DHCP `192.168.10.238`、网关
+192.168.10.1 ping 2/2。每次操作前 `echo 1 > /sys/ssdk/packet_counter`，
+主机 eno0 发 300 个 UDP 广播到 192.168.10.255。
+
+| 步骤 | port5 PORT_RX | DROP_CPU[5][0] | STG(115) | 结论 |
+|---|---|---|---|---|
+| 健康基线（首启） | +342 | +342 | 0 | 对账一致 |
+| `set eth0` → `set eth1`（原故障路径） | +320 | +320 | **0** | **修复生效** |
+| `set eth0` 回归（eth1 回 LAN） | — | — | — | 主机经 eno0 ping br-lan 6/6，L2 转发正常 |
+
+原故障路径的其它判据全部 PASS：
+
+- `ssdk_sh debug reg get 0x60114 4` 回读 `0x3`（forwarding，不用再手工设置）；
+- eth1 立即恢复地址与默认路由，网关 192.168.10.1 ping 2/2（udhcpc 4 秒
+  内拿到原租约；角色切换瞬间 `ip -br addr` 短暂显示 DOWN 属 live reload
+  的过渡态）；
+- 全程 `STG ingress filtering drop` 为 0，`DROP_CPU[5][0]` 与 `PORT_RX`
+  逐帧对账。
+
+对照修复前（dpdiag 镜像 29c8398e）同一步骤为 `PORT_RX +426 / DROP_CPU +0 /
+STG +426`，本镜像三态判据已全部翻转。证据存档
+`logs/v88-2026-11-22/`（gitignore：healthy/fault 前后快照与 fw88.bin）。
+测试结束已 `set eth1` 恢复默认角色（WAN=eth1，地址 .238），设备运行生产
+镜像 v88-1。
 
 真机复测步骤（下一版镜像）：
 
@@ -131,8 +158,9 @@ ssdk_sh debug reg get 0x60114 4        # 回读 [Data]:0x3（forwarding）
 
 ## 后续
 
-- 0009 真机 PASS 后，考虑移除 0014（adapter re-init）：它已被证伪、每次
-  角色切换/重链多一次约 20 ms 端口停顿；移除是独立的小改动。
+- 0009 真机已 PASS（v88-1），建议移除 0014（adapter re-init）：它已被
+  证伪、每次角色切换/重链多一次约 20 ms 端口停顿。按独立小改动处理，
+  尚未执行；移除后需再验证一次角色切换。
 - 原 `SBE_SSDK_DIAG` 构建计划取消（本问已被 `/sys/ssdk/packet_counter`
   回答）；已实现的 `SBE_DP_DIAG` 诊断构建（workflow `dp_diag` 输入、
   `patches-diag/`、`files-rxdiag/`）同日整体移除，`docs/RX_DIAG_BUILD-2026-
