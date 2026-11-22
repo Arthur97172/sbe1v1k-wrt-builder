@@ -3,6 +3,8 @@
 状态：根因已定性并经真机因果验证（手工置回 forwarding 即恢复）；
 修复补丁 `nss/patches/qca-nss-dp/0009-nss-dp-stp-forward-on-bridge-detach.patch`
 本地装配/编译 PASS；CI run 88 PASS；**真机复测 PASS（2026-11-22，v88-1）**。
+0014（qca-ssdk adapter re-init）同日晚移除：CI run 89 PASS，v89-1 角色切换
+复测 PASS（见「0014 移除后的复测」）。
 
 相关文档：`RX_DIAG_BUILD-2026-11-21.md`（EDMA 埋点，确认帧到不了 EDMA）、
 `SGMII_RELINK_FIX-2026-11-21.md`（0014 adapter re-init，已证伪并已移除）。
@@ -145,6 +147,26 @@ STG +426`，本镜像三态判据已全部翻转。证据存档
 测试结束已 `set eth1` 恢复默认角色（WAN=eth1，地址 .238），设备运行生产
 镜像 v88-1。
 
+### 0014 移除后的复测（2026-11-22，v89-1 = sbe1v1k-25.12-ca795749）
+
+CI run 89（`44983898543`，commit `ca79574`）PASS，Release
+`25.12-6.12-v89-1-ca795749`；sysupgrade sha256
+`612d442327025278b07a388cd04d7f0665585d0e071e1e2fe67d761474ef5d9f`。
+`sysupgrade -n` 刷入后按 v88 同一流程复测：
+
+| 步骤 | port5 PORT_RX | DROP_CPU[5][0] | STG(115) | 结论 |
+|---|---|---|---|---|
+| 健康基线（首启，eth1=WAN） | +342 | +342 | 0 | 与 v88 一致 |
+| `set eth0` → `set eth1`（原故障路径） | +303 | +303 | **0** | 修复不依赖 0014 |
+| `set eth0` 回归（eth1 回 LAN） | — | — | — | 主机经 eno0 ping br-lan 6/6 |
+
+- `ssdk_sh debug reg get 0x60114 4` 回读 `0x3`（forwarding）；
+- eth1 约 3 秒内重新拿到 DHCP `192.168.10.241`，网关 192.168.10.1
+  ping 2/2；
+- `dmesg | grep -c "re-init SGMII adapter"` = 0，确认 0014 已不在镜像中；
+- 测试后 `set eth1` 恢复默认角色，设备运行 v89-1（WAN=eth1，.241）。
+证据存档 `logs/v89-2026-11-22/`（gitignore：healthy/fault 前后快照）。
+
 真机复测步骤（下一版镜像）：
 
 1. 刷 `sysupgrade -n` 后确认健康基线：`echo 1 > /sys/ssdk/packet_counter`，
@@ -163,8 +185,8 @@ STG +426`，本镜像三态判据已全部翻转。证据存档
   已删除，`nss/install.sh` 按 glob 应用补丁，装配树恢复到 pristine +
   0001–0013；`make package/qca-ssdk/clean compile` PASS（rc=0，对象中无
   `re-init SGMII adapter` 日志串）。0014 已被证伪，移除同时消掉每次角色
-  切换/重链多一次约 20 ms 的端口停顿。CI 构建与移除后的角色切换复测随后
-  进行（本文件届时补记）。
+  切换/重链多一次约 20 ms 的端口停顿。CI run 89 PASS，v89-1 角色切换
+  复测 PASS（见上节）。
 - 原 `SBE_SSDK_DIAG` 构建计划取消（本问已被 `/sys/ssdk/packet_counter`
   回答）；已实现的 `SBE_DP_DIAG` 诊断构建（workflow `dp_diag` 输入、
   `patches-diag/`、`files-rxdiag/`）同日整体移除，`docs/RX_DIAG_BUILD-2026-

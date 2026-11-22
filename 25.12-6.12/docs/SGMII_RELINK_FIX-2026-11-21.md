@@ -10,7 +10,9 @@ adapter 无关。修复为 qca-nss-dp 0009（已真机 PASS，v88-1），见
 `ETH1_STP_INGRESS_DROP-2026-11-22.md`。0014 **已于 2026-11-22 移除**
 （`nss/install.sh` 按 glob 应用补丁，删除文件即完成移除；装配树回到
 pristine + 0001–0013，`make package/qca-ssdk/clean compile` PASS）。
-本文保留为历史记录，文中的补丁内容与复测步骤只适用于 v82-1。
+移除后 CI run 89 PASS，v89-1 角色切换复测 PASS（计数判据与 v88 一致，
+dmesg 无 re-init 行）。本文保留为历史记录，文中的补丁内容与复测步骤只
+适用于 v82-1。
 
 ## 问题回顾
 

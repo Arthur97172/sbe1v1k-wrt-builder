@@ -1225,6 +1225,7 @@ ERROR: package/feeds/nss/qca-ssdk failed to build (build variant: nohnat).
 
 **2026-11-22 已移除**：0014 真机 FAIL，真实根因是摘桥时 STP DISABLED 留下的
 入口 STG 过滤（修复为 qca-nss-dp 0009，v88-1 真机 PASS）。补丁文件已删除，
+移除后 CI run 89 PASS、v89-1 角色切换复测 PASS（dmesg 无 re-init 行）。
 本节保留为历史记录，详见 `docs/ETH1_STP_INGRESS_DROP-2026-11-22.md`。
 
 25.12 上 live 改端口角色（`sbe-port-roles set eth0` → `set eth1`）后，eth1
