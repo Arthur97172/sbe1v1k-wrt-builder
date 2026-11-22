@@ -3,7 +3,8 @@
 诊断补丁：`nss/patches-diag/qca-nss-dp/0001-sbe-rx-diag-counters.patch`
 构建开关：`SBE_DP_DIAG=1`（CI 为 `workflow_dispatch` 输入 `dp_diag`）
 读取工具：`/usr/sbin/sbe-rx-diag` → `/proc/edma_ring_util_stats/edma_rx_diag`
-状态：本地装配/补丁/编译验证见文末；真机 `NOT TESTED`。
+状态：本地装配/补丁/编译验证见文末；真机 PASS（2026-11-22），判读结果见文末
+「真机结果」。
 
 ## 背景
 
@@ -155,5 +156,32 @@ ring20 srcport 0:12 1:1390 2:0 3:0 4:0 5:0 6:0 7:0
 | 装配树内 `make package/qca-nss-dp/clean compile`（GCC 14.3，6.12.112）| PASS（rc=0；`.ko` 含 `edma_rx_diag` 与计数器格式串） |
 | `bash -n` / `sh -n` 四个脚本与读取器、workflow YAML 解析 | PASS |
 | 装配期断言（补丁标记 grep）与 verify-image 双向断言 | 已接入，CI 时生效 |
-| CI 出 `-dpdiag` 产物 | 待触发（需批准提交/派发） |
-| 真机 | `NOT TESTED` |
+| CI 出 `-dpdiag` 产物 | PASS（run 85，Release `25.12-6.12-v85-1-29c8398e-dpdiag`，sha256 `fd9a96bf…5cabfb`） |
+| 真机 | PASS（2026-11-22，见下节） |
+
+## 真机结果（2026-11-22，v85 dpdiag 镜像）
+
+刷机：`sysupgrade -n`，首启全新配置；管理走本机 AP → `192.168.1.1`。
+取证存档：`logs/rxdiag-2026-11-21/`（gitignore），摘要
+`SUMMARY-2026-11-22.md`。
+
+三态矩阵（reset 后发 300 个 UDP 广播）：
+
+| 状态 | PHY RxGoodFrame | EDMA prod/reap | handoff_gro | DHCP |
+|---|---|---|---|---|
+| 健康（eth1=WAN，切换前） | 增 | 350 | 350（srcport 5:350） | 有租约 |
+| 故障（`set eth0`→`set eth1` 后） | 412 | 0（prod==cons 静止） | 0 | 无租约 |
+| 恢复（`set eth0`，eth1 回 LAN） | 增 | 55（ping 6/6） | 55 | — |
+
+**决策树第 1 支命中**：故障态帧进不了 EDMA——断点在交换机/NSS 入口，
+qca-nss-dp 驱动与协议栈排除。dmesg 里 `re-init SGMII adapter` 共 3 条
+（启动 1 + 回切 2），0014 的两条触发路径都执行但无效，与 v82-1 一致。
+
+判据修正：诊断构建上 `Ip: InReceives` 对 300 广播只 +45（GRO 合并后
+一次计数），精确判读用 `handoff_gro`；`ip -s link` 的 netdev 计数在
+NSS offload 下恒 0，两态不可用。
+
+下一步：在 qca-ssdk 加同层埋点（port 5 MAC 收包计数 / CPU code 路径），
+区分「MAC 收到没送 CPU」与「MAC 没收到（SGMII RX FIFO）」。另记录一个新
+独立问题：eth0（10G，RTL8261N）挂回 br-lan 后 RX 恒 0（已知假链路复发），
+与本次缺陷无关，按方案四暂不修。
