@@ -1,0 +1,12 @@
+# diag: preinit 结束标记（2026-11-17）
+#
+# RAM 启动时 INITRAMFS=1，70_initramfs_test 会 boot_run_hook initramfs 后
+# break，跳过 preinit_main 余下钩子。这里挂在 initramfs 钩子链最末
+# （99_99 最后被 source），能跑到说明整个 preinit 的 initramfs 分支持续到
+# 末尾；之后的 rcS 由 procd 调度。写 PREINIT-DONE 到 0x505012。
+
+sbe_pi_hook_done() {
+	sbe_pi_mark PREINIT-DONE $((0x505012))
+}
+
+boot_hook_add initramfs sbe_pi_hook_done

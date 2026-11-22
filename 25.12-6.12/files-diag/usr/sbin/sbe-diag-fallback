@@ -1,0 +1,162 @@
+#!/bin/sh
+# sbe-diag-fallback — diag RAM 镜像的兜底定时器（chroot 到新根后运行）。
+#
+# 为什么不在 /init 里直接 fork：v9 实测（2026-11-17）开关到 switch_root 后，
+# 留在旧 initramfs 根里的子进程既 exec 不了 busybox（旧根被 switch_root 清空）
+# 也打不开 /dev/mmcblk0，定时器静默失效、设备只能人工断电。本脚本在
+# switch_root 之前由 /init 以 `chroot $NEW_ROOT` 启动，根指向新根（tmpfs），
+# switch_root 移动挂载点后依然有效，可覆盖用户态早期（preinit 内）的挂死。
+#
+# 行为：
+#   启动即写 FB-ARMED   到 0x505101
+#   每 10 s 写心跳计数  到 0x505100（心跳停止的位置≈内核冻结时刻）
+#   每 10 s 内分 5 次把 dmesg 尾巴（含 P1/cmdline/Cma）落到 0x505200，
+#     覆盖前 60 s 用 2 s 粒度——v13 实测内核在用户态起来 ~10 s 内就重启，
+#     只看心跳分不清"谁死在哪一行"，尾巴扇区给出最后的内核消息
+#   第 EARLY_S 秒（默认 330）若管理面（hostapd+dropbear+br-lan/wlan）还没起来，
+#     立即落快照、写 FB-EARLY 到 0x505104 并 reboot -f——失败轮不必等满
+#   第 480 s 先落一次日志快照（早于 S05 看门狗的 600 s 超时重启）
+#   到点（默认 900 s）：
+#     再落一次快照到 eMMC 0x5052C0（≤1.65 MiB）
+#     写 FB-REBOOT     到 0x505102
+#     sync; reboot -f
+#
+
+# 布局（均在 p40 rsvd_2 内，0x506021 之前）：
+#   0x505100-0x505104 FB 标记   0x505200-0x5052BF 尾巴 dmesg（192 扇区）
+#   0x5052C0-0x506000 日志 blob（3386 扇区）
+# FIT 载体从 0x4f8022 起，v14 实测已长到 0x5041de——旧 blob 位置 0x504200
+# 只剩 34 个扇区余量，2026-11-17 被新 FIT 尾部覆盖过，故整体后移。
+
+T=${1:-300}
+DEV=/dev/mmcblk0
+LOG_SECTOR=$((0x5052C0))
+TAIL_SECTOR=$((0x505200))
+HB_SECTOR=$((0x505100))
+MID_S=${MID_S:-480}
+EARLY_S=${EARLY_S:-330}
+
+ready() {
+	pidof hostapd >/dev/null 2>&1 || return 1
+	pidof dropbear >/dev/null 2>&1 || return 1
+	ip -4 addr show dev br-lan 2>/dev/null | grep -q '192\.168\.1\.1' && return 0
+	# 有线 NSS 通路如果不起来，br-lan 就没有成员、拿不到地址；
+	# 这时只要有 hostapd 拉起过的 AP 无线接口，管理面（WiFi SSH）也算通了。
+	ls /sys/class/net 2>/dev/null | grep -q '^wlan' && return 0
+	return 1
+}
+
+[ -b "$DEV" ] || mknod "$DEV" b 179 0 2>/dev/null
+
+# 每条心跳都往内核 ring 里写一条带内核时间戳的标记：即使本进程随后被
+# 静默硬复位/挂死带走，最后存活的那条标记就是死亡时刻的内核时间。
+kmsg() {
+	[ -e /dev/kmsg ] || mknod /dev/kmsg c 1 11 2>/dev/null
+	printf '%s\n' "$*" > /dev/kmsg 2>/dev/null || true
+}
+
+mark() {
+	printf '%-16s %s\n' "$1" "$2" |
+		dd of="$DEV" bs=512 seek="$3" conv=fsync >/dev/null 2>&1 || true
+}
+
+# 内核最后的现场：dmesg 用 klogctl，不需要 /proc 挂载。
+# 头部带 tick 序号——兜底进程死在第几个 2 s 周期一眼可见。
+# 前 5 次落全量 dmesg（boot log 完整，含 CMA 预留行），之后只落尾巴。
+# 每次从扇区头覆写，尾部接 "== cut =="，其后若出现旧行说明是上一轮残留。
+dump_tail() {
+	kmsg "SBE-FB tick=$1 up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)"
+	{
+		echo "== tail tick=$1 up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null) pid1=$(tr '\0' ' ' < /proc/1/cmdline 2>/dev/null)"
+		grep -E 'MemAvailable|CmaTotal|CmaFree' /proc/meminfo 2>/dev/null
+		if [ "$1" -lt 5 ]; then
+			dmesg 2>/dev/null
+			echo "== ps =="
+			ps w 2>/dev/null | head -20
+		else
+			dmesg 2>/dev/null | tail -n 120
+		fi
+		echo "== cut =="
+	} | head -c 98304 |
+		dd of="$DEV" bs=512 seek=$TAIL_SECTOR conv=fsync >/dev/null 2>&1 || true
+}
+
+dump_state() {
+	{
+		echo "=== dmesg ==="
+		dmesg 2>/dev/null
+		echo "=== logread ==="
+		logread 2>/dev/null | tail -n 500
+		echo "=== ps ==="
+		ps w 2>/dev/null
+		echo "=== ip link ==="
+		ip -br link 2>/dev/null
+		echo "=== ip addr ==="
+		ip -4 addr 2>/dev/null
+		echo "=== /dev ==="
+		ls -la /dev 2>/dev/null
+		echo "=== rc.d run state ==="
+		ls -la /etc/rc.d 2>/dev/null
+		echo "=== nss.conf ==="
+		cat /etc/nss.conf 2>/dev/null
+		echo "=== wifi status ==="
+		ubus call network.wireless status 2>/dev/null | head -120
+		echo "=== iw dev ==="
+		iw dev 2>/dev/null
+		echo "=== modules ==="
+		cat /proc/modules 2>/dev/null | head -100
+		echo "=== procd state ==="
+		cat /proc/1/status 2>/dev/null
+		echo "=== wchan/cmdline of procs in D state ==="
+		for p in /proc/[0-9]*; do
+			st=$(sed -n 's/^State:[[:space:]]*//p' "$p/status" 2>/dev/null)
+			case "$st" in
+			D*)
+				echo "${p#/proc/} D: $(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) wchan=$(cat "$p/wchan" 2>/dev/null)"
+				;;
+			esac
+		done
+	} > /tmp/sbe-fallback-dump 2>&1
+	tar -C /tmp -cf - sbe-fallback-dump sbe-diag-status 2>/dev/null |
+		head -c 1733632 |
+		dd of="$DEV" bs=512 seek=$LOG_SECTOR conv=fsync >/dev/null 2>&1 || true
+}
+
+# v10 教训：mark 需要三个参数（text value sector），漏了 value 时 dd seek 为空、
+# 静默失败，标记永远是 0。值统一用 uptime，便于和心跳对齐判断时刻。
+mark FB-ARMED "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" $((0x505101))
+kmsg "SBE-FB START (T=$T EARLY=$EARLY_S)"
+
+i=0
+while [ "$i" -lt $((T / 10)) ]; do
+	mark HB "$i" $HB_SECTOR
+	if [ "$i" -eq $((EARLY_S / 10)) ] && ! ready; then
+		dump_state
+		mark FB-EARLY "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" $((0x505104))
+		sync
+		reboot -f
+	fi
+	if [ "$i" -eq $((MID_S / 10)) ]; then
+		dump_state
+		mark FB-MIDDUMP "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" $((0x505103))
+	fi
+	# 前 60 s 用 2 s 粒度抓尾巴，之后退回 10 s 一次，控制 eMMC 写入量
+	if [ "$i" -lt 6 ]; then
+		k=0
+		while [ "$k" -lt 5 ]; do
+			dump_tail $i
+			k=$((k + 1))
+			sleep 2
+		done
+	else
+		dump_tail $i
+		sleep 10
+	fi
+	i=$((i + 1))
+done
+
+dump_state
+
+mark FB-REBOOT "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" $((0x505102))
+sync
+reboot -f

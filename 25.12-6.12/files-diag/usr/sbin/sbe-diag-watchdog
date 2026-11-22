@@ -1,0 +1,73 @@
+#!/bin/sh
+# sbe-diag-watchdog — diag RAM 镜像的 eMMC 阶段标记与自救看门狗。
+#
+# 背景（2026-11-16 首轮真机）：diag 镜像启动后有线无 NSS、WiFi 也一直没广播
+# SSID，管理面全无，只能物理断电。RAM 镜像重启后证据全丢，所以这里把启动阶段
+# 写进 eMMC 头部之后的自由原区（不与任何分区重叠），下次从 24.10 启动后用 dd
+# 读回即可知道 diag 系统走到了哪一步：
+#
+#   0x504000  U-Boot 写的分支标记（0xD1 = 进了 diag 分支）
+#   0x504001  U-Boot 写的回退标记（0xFA = bootm 返回失败，走了原启动流程）
+#   0x505000  本脚本：BOOT-USER（用户态 rcS 已开始）
+#   0x505000  就绪：WIFI-READY（hostapd + br-lan 192.168.1.1 + dropbear）
+#   0x505000  超时：NO-WIFI-REBOOT（随后 reboot -f）
+#
+# 看门狗：600 s 内没等到管理面就 reboot -f。bootcmd 在 bootm 前已把 diag
+# 标志清零并 saveenv，所以复位后 U-Boot 走原来的 24.10 启动流程——机器能自己
+# 回到可管理状态，不再依赖人肉断电。
+#
+# 放在 S05（比 S10boot 的模块加载还早）：即使模块加载卡死在内核里，这个独立
+# 进程仍会因为 600 s 超时把机器拉回来。
+
+MARK_BLK=0x505000
+MARK_DEV=/dev/mmcblk0
+TIMEOUT=600
+
+say() {
+	echo "sbe-diag-watchdog: $*"
+	echo "sbe-diag-watchdog: $*" > /dev/kmsg 2>/dev/null
+	return 0
+}
+
+mark() {
+	[ -b "$MARK_DEV" ] || return 0
+	printf '%-16s %s\n' "$1" "$(date '+%s')" |
+		dd of="$MARK_DEV" bs=512 seek=$((MARK_BLK)) conv=fsync \
+			>/dev/null 2>&1 || true
+}
+
+# /dev 是 procd 之后才有的 makedev 节点；太早的话自己补一个。
+if [ ! -b "$MARK_DEV" ]; then
+	mknod "$MARK_DEV" b 179 0 2>/dev/null || true
+fi
+# 节点刚建出来时 eMMC 驱动可能还没探测完，等最多 30 s 再写第一个标记。
+i=0
+while [ ! -b "$MARK_DEV" ] && [ $i -lt 15 ]; do
+	sleep 2
+	i=$((i+1))
+done
+
+mark BOOT-USER
+
+ready() {
+	pidof hostapd >/dev/null 2>&1 || return 1
+	pidof dropbear >/dev/null 2>&1 || return 1
+	ip -4 addr show dev br-lan 2>/dev/null | grep -q '192\.168\.1\.1' || return 1
+	return 0
+}
+
+i=0
+while [ $i -lt $((TIMEOUT / 10)) ]; do
+	if ready; then
+		mark WIFI-READY
+		say "WiFi 管理面就绪（${i}0 s）"
+		exit 0
+	fi
+	sleep 10
+	i=$((i+1))
+done
+
+mark NO-WIFI-REBOOT
+say "${TIMEOUT} s 内未见 WiFi 管理面，reboot -f 回退到 24.10"
+sync
+reboot -f

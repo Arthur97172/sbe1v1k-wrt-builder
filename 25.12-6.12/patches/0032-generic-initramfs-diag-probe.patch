@@ -1,0 +1,54 @@
+--- a/target/linux/generic/other-files/init
++++ b/target/linux/generic/other-files/init
+@@ -2,6 +2,36 @@
+ # Copyright (C) 2006 OpenWrt.org
+ export INITRAMFS=1
+ 
++# diag 变体早期探针（2026-11-16）：内核接管之后到用户态之间没有可观测手段时，
++# 用 eMMC 自由区的标记块判断 /init 是否执行、执行到哪一步；并 fork 一个 150 s
++# 兜底定时器，到点 reboot -f 回 24.10，实验不需要人工断电。
++# 只有 /etc/sbe-variant 含 variant=diag 行的镜像才会执行这段，生产/主线镜像不变。
++# 注意：该文件是 key=value 格式（variant=diag + purpose=...），不能整文件比较。
++if grep -qs '^variant=diag' /etc/sbe-variant; then
++	mkdir -p /dev
++	[ -e /dev/mmcblk0 ] || mknod /dev/mmcblk0 b 179 0 2>/dev/null
++	sbe_mark() {
++		printf '%-16s %s\n' "$1" "$$" | \
++			dd of=/dev/mmcblk0 bs=512 seek="$2" conv=fsync 2>/dev/null || true
++	}
++	# 兜底定时器先启动：它是否触发本身就是「/init 已执行」的带外信号，
++	# 即使 eMMC 全程不可写也能从重启时序判断。
++	(
++		sleep 150
++		sbe_mark REBOOT-TIMEOUT 5267460
++		sync
++		reboot -f
++	) &
++	# eMMC 可能要等 OpenWrt 用户态加载模块后才出现；这里等 30 s 尽力而为
++	i=0
++	while [ ! -e /sys/block/mmcblk0 ] && [ "$i" -lt 30 ]; do
++		sleep 1
++		i=$((i+1))
++	done
++	sbe_mark INIT-START 5267457
++	sbe_mark COPY-START 5267458
++fi
++
+ # switch to tmpfs to allow run daemons in jail on initramfs boot
+ DIRS=$(echo *)
+ NEW_ROOT=/new_root
+@@ -11,4 +41,14 @@
+ 
+ cp -pr $DIRS $NEW_ROOT
+ 
++if grep -qs '^variant=diag' /etc/sbe-variant; then
++	sbe_mark COPY-DONE 5267459
++	# v9 教训：switch_root 会清空旧根，留在旧根里的子进程之后既 exec 不了
++	# busybox 也打不开 /dev/mmcblk0。兜底定时器必须 chroot 到新根再启动：
++	# 它随 switch_root 的挂载点移动继续有效，覆盖用户态早期（preinit）挂死。
++	if [ -x "$NEW_ROOT/usr/sbin/sbe-diag-fallback" ]; then
++		chroot $NEW_ROOT /usr/sbin/sbe-diag-fallback 240 &
++	fi
++fi
++
+ exec switch_root $NEW_ROOT /sbin/init

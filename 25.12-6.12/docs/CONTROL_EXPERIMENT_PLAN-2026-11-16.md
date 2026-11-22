@@ -287,3 +287,19 @@ production 不叠变体、diag 正确叠加（tier=off、公钥 600、S99 相对
 未验：整树编译、defconfig（本地装配树是旧的，见 memory
 `stale-2512-buildtree-context`）、真机行为（`NOT TESTED`）。
 下一步：用户批准后首次跑 `build-25.12-diag.yml`（需仓库 token 或手动触发）。
+
+## 11. 实验结论（2026-11-17，真机完成）
+
+矩阵按 §3 跑完，结论按变体归档（细节与证据见 `DIAG_RUN_2026-11-16.md`）：
+
+| 实验 | 结论 |
+|---|---|
+| v8–v18 起机链（gzip/全量树/ath12k DMA 池） | PASS：120 MiB/卡改 128 MiB/卡预留池后三卡三 AP，管理面可达 |
+| v19（tier=wired） | FAIL：S15 装载 NSS 即硬复位——当时尚未定位 |
+| v20/v21（分层 + panic_on_oops=0） | 定位：`modprobe qca-nss-ppe` 在 sysctl 注册失败后的拆除路径 oops |
+| 根因 | 6.11+ `register_sysctl()` 计入 `{}` 哨兵 → 注册返回 NULL → 错误路径崩溃 |
+| v22（tier=wired + 0025/0008 补丁） | **PASS**：sdk/ppe/dp 全装载、0 oops、eth0..3、br-lan、有线管理面、WiFi 共存 |
+| M 变体（mainline 对照） | 未跑；v22 已直接回答「NSS 有线通路能否在 6.12 上工作」，对照价值降低 |
+
+该结论同时关闭 `V41_BOOT_LOOP_2026-11-16.md` 的启动循环归因：生产镜像
+run 41 的死因即同一处 panic。生产镜像随后带补丁重建并做真机验证。

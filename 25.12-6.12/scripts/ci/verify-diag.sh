@@ -135,12 +135,16 @@ else
 fi
 
 # ---- 5. DTB：eMMC 启用、QPIC NAND 关闭、FIT 内确实带它 ----------------------
-DTB=$(ls "$BR"/build_dir/target-*/linux-qualcommbe_ipq95xx/image-ipq9574-*.dtb \
-         2>/dev/null | head -n1 || true)
+# 必须按变体点名取 DTB，不能 glob image-ipq9574-*.dtb 再 head -1：那会按字母序
+# 先命中 rdp433（run 43888422375 就是这样拿 rdp433 去断言 sbe1v1k 补丁的）。
+# OpenWrt 内核构建只保证 $(KDIR)/image-<dts>.dtb 存在；linux-*/arch/... 下的
+# 同名文件只是部分构建方式会留下的兜底。
 case "$VARIANT" in
 diag)     DTBNAME=ipq9574-sbe1v1k.dtb ;;
 mainline) DTBNAME=ipq9574-rdp433.dtb ;;
 esac
+DTB=$(ls "$BR"/build_dir/target-*/linux-qualcommbe_ipq95xx/image-"$DTBNAME" \
+         2>/dev/null | head -n1 || true)
 DTB2=$(ls "$BR"/build_dir/target-*/linux-qualcommbe_ipq95xx/linux-*/arch/arm64/boot/dts/qcom/"$DTBNAME" \
           2>/dev/null | head -n1 || true)
 [ -n "$DTB2" ] && DTB=$DTB2
@@ -228,6 +232,28 @@ if [ "$VARIANT" = diag ]; then
 	else
 		bad "rootfs 缺少 rc.d/S99sbe-diag-beacon（信标不会启动）"
 	fi
+	if [ -x "$TARGET_DIR/usr/sbin/sbe-diag-watchdog" ]; then
+		ok "rootfs 有可执行的自救看门狗 /usr/sbin/sbe-diag-watchdog"
+	else
+		bad "rootfs 缺少 /usr/sbin/sbe-diag-watchdog（管理面起不来时不会自动回退）"
+	fi
+	if [ -L "$TARGET_DIR/etc/rc.d/S05sbe-diag-watchdog" ]; then
+		ok "rootfs 有 rc.d/S05sbe-diag-watchdog 链接（早于 S10boot 启动）"
+	else
+		bad "rootfs 缺少 rc.d/S05sbe-diag-watchdog（看门狗不会启动）"
+	fi
+	# rc.common 的 [ -n "$USE_PROCD" ] 把 "0" 也当开，会覆盖 start()——
+	# 后台 worker 式脚本必须整行省略 USE_PROCD，否则开机不运行。
+	for s in sbe-diag-watchdog sbe-diag-beacon; do
+		I="$TARGET_DIR/etc/init.d/$s"
+		if grep -q '^[[:space:]]*USE_PROCD=' "$I" 2>/dev/null; then
+			bad "/etc/init.d/$s 定义了 USE_PROCD（rc.common 会吞掉 start()，开机不运行）"
+		elif grep -q '^start()' "$I" 2>/dev/null; then
+			ok "/etc/init.d/$s 不定义 USE_PROCD 且有 start()"
+		else
+			bad "/etc/init.d/$s 缺少 start()"
+		fi
+	done
 fi
 
 AK="$TARGET_DIR/etc/dropbear/authorized_keys"

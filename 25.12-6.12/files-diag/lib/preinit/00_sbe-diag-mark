@@ -1,0 +1,14 @@
+# diag: preinit 阶段标记（2026-11-17）
+#
+# v9 实测全量 RAM 镜像：/init 完整执行、switch_root 成功，但 S05 用户态
+# 看门狗（0x505000）从未运行 —— 挂死在 preinit 阶段。本文件被 /etc/preinit
+# 在 source 阶段加载（排在 00_preinit.conf 之后），立即写 PREINIT-SRC，
+# 证明 procd 已进入 /etc/preinit。
+
+sbe_pi_mark() {
+	[ -b /dev/mmcblk0 ] || mknod /dev/mmcblk0 b 179 0 2>/dev/null
+	printf '%-16s %s\n' "$1" "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" |
+		dd of=/dev/mmcblk0 bs=512 seek="$2" conv=fsync >/dev/null 2>&1 || true
+}
+
+sbe_pi_mark PREINIT-SRC $((0x505010))
