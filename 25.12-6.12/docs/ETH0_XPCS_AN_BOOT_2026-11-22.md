@@ -92,7 +92,7 @@ WiFi；eth0 接主机 USB 2.5G 网卡 `enxc84d4424a1b5`（静态 192.168.1.240/2
 
 ## 修复：boot 后看门狗（方案一，2026-11-22 实施）
 
-用户批准的方案一已落地（设备行为待刷机验证，`NOT TESTED`）：
+用户批准的方案一已落地（v92-1 刷机后修复了启动入口 bug，见下）：
 
 - `files/usr/sbin/sbe-eth0-an-watchdog`：等 eth0 出载波（没插线不判死）后读
   uniphy2 `VR_MII_AN_INTR_STS`（0x1f8002），`usxg_an_sts`（bit8-14）两次
@@ -103,9 +103,54 @@ WiFi；eth0 接主机 USB 2.5G 网卡 `enxc84d4424a1b5`（静态 192.168.1.240/2
 - `files/etc/config/sbe_eth0_watchdog`：`enabled`/`max_reboots` 两个开关。
 - ssdk_sh 不可用（diag/mainline 变体）或读不到寄存器时不判死。
 
+### 启动入口 bug：`USE_PROCD=0` 反而吞掉 start()（v92-1 真机取证）
+
+v92-1（d444559）首次刷机恰逢坏启动，看门狗却毫无反应。排查确认 worker
+在开机时根本没有被拉起，根因在 `/etc/rc.common` 的分支判定：
+
+```sh
+[ -n "$USE_PROCD" ] && {
+	...
+	start() { rc_procd start_service "$@"; }
+}
+```
+
+`-n` 只判非空，`USE_PROCD=0` 也是非空字符串，于是进入 procd 分支，把脚本
+自己定义的 `start()` **覆盖**成空的默认 `start_service()`——不报错、什么都不跑。
+正确写法是后台 worker 式脚本**整行省略 `USE_PROCD`**。受影响的还有
+`files/etc/init.d/sbe-boot-trace`（S01 启动取证，自 v35 上线以来同样从未
+运行过，此前"启动取证没数据"的部分现象可由此解释）。
+
+修复：两个 init 脚本删除该行并加注释说明；`scripts/ci/verify-image.sh`
+新增断言——这两个脚本不得出现 `^[[:space:]]*USE_PROCD=` 且必须有 `start()`，
+防止回归。真机验证：手动 `boot` 动作能拉起 worker（好启动写 count=0 后退出），
+受控坏启动（`max_reboots=0`）下 S95 在开机后作出判定并记日志。
+
 预期效果：坏启动在开机 ~30–45 s 被识别、再重启一次，绝大概率落在好启动；
 代价是约一半的启动多花一次重启时间。根因修复（把 XPCS AN 启动与 RTL8261N
 复位/补丁加载的时序竞争消除，或做带完整时钟序列的联合重初始化）单独立项。
+
+### 真机验证（2026-11-22，状态：PASS）
+
+设备：v92-1 镜像（`sbe1v1k-25.12-3fdd9fb2`）+ overlay 中修复了 USE_PROCD 的
+两个 init 脚本（待下一版镜像固化）。主机侧 watcher 每 10 s 记录
+`count`/SSH/eth0 ping 时间线（`logs/watchdog-verify/watcher.log`，gitignore）。
+
+1. **受控坏启动**（`max_reboots=0`，日志不被重启冲掉）：第 2 次重启即抓到坏
+   启动，日志留下「eth0 USXGMII AN 未完成，已自动重启 0 次，放弃本轮（端口
+   保持假链路）」——S95 在开机时确实运行并正确判定。
+2. **自动重启恢复**（`max_reboots=1`，12 轮 + 8 轮循环）：watcher 时间线共记录
+   9 次坏启动，其中 8 次为 `count` 0→1 → SSH 断开（自动重启）→ 回来后
+   `count=0`、`an=0x7000`、eth0 ping 通的健康启动；签名稳定：坏启动 SSH
+   ~40 s 就绪，eth0 ping 要到 ~120–130 s（第二次启动）才通，健康启动 ~67 s
+   全程就绪。
+3. **放弃路径**：一次连续两次坏启动（上一轮自动重启后的启动仍是坏启动），
+   第二次判定时 `count=1` 已达上限，日志「已自动重启 1 次，放弃本轮」，设备
+   保持在线、无重启循环；下一轮手动重启即恢复。与设计一致。
+4. 健康启动下 worker 写 `count=0` 后自行退出，无日志噪声。
+
+已知局限：计数只防「同一次上电内」的循环；若设备被反复手动重启，每次坏启动
+仍会各自动重启一次（设计如此）。
 
 ## 证据文件
 

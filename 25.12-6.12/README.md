@@ -742,7 +742,10 @@ PHY 复位+补丁重载、固定速率都不能恢复，只有重启有效）。
 两次采样该寄存器，`usxg_an_sts` 为 0 即判死并自动重启，最多
 `/etc/config/sbe_eth0_watchdog` 的 `max_reboots`（默认 1）次，正常启动清零
 计数；没插线不判死，ssdk_sh 不可用（diag/mainline 变体）不判死。状态：静态
-检查 PASS，真机 `NOT TESTED`。
+检查 PASS；2026-11-22 真机 PASS（v92-1 + overlay 修复：受控坏启动判定、
+9 次坏启动中 8 次自动重启恢复、1 次连续坏启动走放弃路径，见该文档）。注意
+init 脚本**不能**写 `USE_PROCD=0`——rc.common 的 `[ -n ]` 把 `0` 也当开，
+会覆盖 `start()` 导致开机不运行；`verify-image.sh` 已加断言。
 
 **端口角色可配（2026-11-21，阶段 A）。** `sbe_ports.main.wan_port` 决定
 eth0/eth1 谁是 WAN（`none` = 四口全 LAN），未设置或非法值保持 eth1=WAN。

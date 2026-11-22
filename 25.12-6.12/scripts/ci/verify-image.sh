@@ -466,6 +466,19 @@ for pat in '0x1f8002' '0x7f00' 'max_reboots' 'reboot'; do
 		bad "sbe-eth0-an-watchdog 缺少 $pat"
 	fi
 done
+# 后台 worker 式 init 脚本必须整行省略 USE_PROCD。rc.common 用
+# [ -n "$USE_PROCD" ] 判分支，"USE_PROCD=0" 非空，会进入 procd 路径并把
+# start() 覆盖成空的 start_service——v92-1 真机上两个脚本因此开机从未运行。
+for s in sbe-eth0-an-watchdog sbe-boot-trace; do
+	I="$ROOTFS/etc/init.d/$s"
+	if grep -q '^[[:space:]]*USE_PROCD=' "$I" 2>/dev/null; then
+		bad "/etc/init.d/$s 定义了 USE_PROCD（rc.common 会吞掉 start()，开机不运行）"
+	elif grep -q '^start()' "$I" 2>/dev/null; then
+		ok "/etc/init.d/$s 不定义 USE_PROCD 且有 start()"
+	else
+		bad "/etc/init.d/$s 缺少 start()"
+	fi
+done
 
 # ---- 启动取证（v35 起）：S01 采样器 + 两个 QSDK 等待循环的超时 --------------
 # v34 在 S10boot 之后卡死时拿不到任何日志；采样器从 S01 起把启动现场写进

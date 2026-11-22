@@ -6,7 +6,10 @@
 
 START=01
 STOP=99
-USE_PROCD=0
+# 不要写 USE_PROCD=0：rc.common 用 [ -n "$USE_PROCD" ] 判分支，"0" 也是
+# 非空，会进入 procd 路径并把下面的 start() 覆盖成空的 start_service，
+# 开机时采样器根本不会被拉起（2026-11-22 真机取证确认自上线起未运行过）。
+# 非 procd 脚本唯一的正确写法是整行省略。
 
 PROG=/usr/sbin/sbe-boot-trace
 DISABLE=/var/run/sbe-boot-trace.disabled
