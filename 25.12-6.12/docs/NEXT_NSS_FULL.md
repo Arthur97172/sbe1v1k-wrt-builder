@@ -164,6 +164,39 @@ NTP 同步后时间才正确——这是已知的启动时间戳现象，不是�
 **PASS**，只剩 24 h 复查（`nss-boots` 保持 0、uptime 连续、无后台复位）。
 在生产默认切换（第 5 步）前保持 `fallback=wired` 不变。
 
+## 3.4 真机复验（2026-11-22，v93 镜像，本机构建）
+
+树在 v59 之后有变更（qca-ssdk 0009 的 eth1 2.5G 修复、kmod-nft-netdev 配置、
+看门狗 init 脚本），按新流程（本机编 → 刷机测）用 v93 镜像复验：
+
+- 镜像 `sbe1v1k-25.12-11744a97`（commit `11744a9`，本机
+  `build-wifi-image.sh` 构建，sha256 `780dcdb0…`，`sysupgrade -n` 刷入）；
+  出厂 `/etc/nss.conf` 仍是 `tier=wired`，设备侧 `nss-load tier full` 切档，
+  `fallback=wired`、`budget=3` 保持不变。
+- 摸底注意：设备此前看门狗循环测试连续快重启、每次都没等满 300 s 的 commit，
+  `nss-boots` 已累计到 8，第一次切 full 启动会因超预算直接走 fallback；手工
+  清零计数器后按正常流程重来。这只影响测试态，正常使用每次都会 commit。
+- **启动装载**：`boot #1: tier=full` → sdk → dp → ppe 全家（ds / vp / rule /
+  vlan / bridge-mgr / ath-clients 全部 loaded）→ ecm，约 22 s 完成
+  （uptime 实测 21.45 s 进 ppe、22.02 s 进 ecm）；`qca-nss-sfe` 也 loaded
+  （ecm 依赖）。dmesg 只有已知两类 WARN：3 条
+  `__reset_control_get_internal`（`ssdk_gcc_clock_init`，与 wired 档相同）、
+  1 条 `nf_conntrack_register_notifier`（`WARN_ON_ONCE` 后照常注册）。
+- **UDP 加速（120 条流）**：主机经 WiFi 向 8.8.8.8:53 开 120 条 UDP DNS 流
+  （保持 90 s），中途采样：`connection_count=120`、`iface_count=3`、
+  `host_count=3`、`mapping_count=241`、`accelerated_count=120`、
+  `udp_accelerated_count=120`、`pending_accel_count=0`；应答 120/120。
+  与 v59 §3.3 的判据逐项一致。
+- **连续 3 次重启**：每次 `boot #N: tier full loaded`，约 330 s 后
+  `commit: tier=full survived; boot counter reset (was 2 / 1 / 1)`；
+  `nss-boots=0`、eth0 `an=0x7000`、7 个加速模块（ecm + ppe 全家相关）在列，
+  期间无复位、无 oops。
+- **断电冷启**（现场断电重上电）：`boot #1: tier full loaded`，约 300 s 后
+  `commit: tier=full survived; boot counter reset (was 1)`；`counter=0`、
+  eth0 `an=0x7000`、ecm/vlan/bridge-mgr 模块在列、`ping 8.8.8.8` 0% 丢包。
+- 结论：步骤 1–4 **PASS**（连续重启与冷启均通过）；24 h 复查进行中，
+  生产默认切换（第 5 步）待长跑结果。
+
 ## 4. 判据（PASS / FAIL）
 
 - **PASS**：full 档自动装载成功；ECM 表有计数且 CPU 占用下降；有线/无线全部

@@ -229,7 +229,9 @@ panic=1，约 55–75 秒一次）。为拿到可启动基线与可定位平台�
 
 下一步验证：**`tier=full` 常开**（从手工 `nss-load` 过渡到生产默认，含 ECM
 出表判据与连续重启稳定性），2026-11-18 立项，计划与判据见
-`docs/NEXT_NSS_FULL.md`（真机 `NOT TESTED`）。
+`docs/NEXT_NSS_FULL.md`。2026-11-22 v93 复验：full 启动装载、UDP 120 条流
+全部加速、连续 3 次重启 commit 均 PASS；断电冷启与 24 h 复查待做，默认档
+暂仍 `wired`。
 
 启动流程：S15 `/etc/init.d/nss` → `nss-load boot` 读档位 → 按 `sdk`/`dp`/
 `ppe`/`ecm` 顺序 `modprobe`（sdk 另等 `/sys/ssdk`，dp/ppe/ecm 再执行对应
