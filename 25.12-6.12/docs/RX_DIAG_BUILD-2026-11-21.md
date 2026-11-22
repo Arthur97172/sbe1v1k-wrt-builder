@@ -185,3 +185,9 @@ NSS offload 下恒 0，两态不可用。
 区分「MAC 收到没送 CPU」与「MAC 没收到（SGMII RX FIFO）」。另记录一个新
 独立问题：eth0（10G，RTL8261N）挂回 br-lan 后 RX 恒 0（已知假链路复发），
 与本次缺陷无关，按方案四暂不修。
+
+**2026-11-22 更新（已定案）**：同层埋点不需要新构建——现镜像的
+`/sys/ssdk/packet_counter` 就是答案：故障态 port5 入口收到 426 帧、全部记
+`STG ingress filtering drop`（dropcode 115），送 CPU 计数零增长。根因是
+摘桥时的 STP DISABLED 属性把 pp5 的 `CST_STATE` 写成 0 且无人恢复；修复
+补丁 `qca-nss-dp 0009` 与完整证据见 `ETH1_STP_INGRESS_DROP-2026-11-22.md`。

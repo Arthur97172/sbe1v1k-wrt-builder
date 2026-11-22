@@ -3,6 +3,11 @@
 补丁：`nss/patches/qca-ssdk/0014-sgmii-adapter-reinit-on-relink.patch`
 状态：本地编译 PASS；CI PASS；**真机复测 FAIL（未修复，2026-11-21 晚）**。
 埋点证明两条触发路径都生效，但故障签名不变——见文末「真机结果」。
+**2026-11-22 后续**：真正的根因是摘桥时桥核心下发的 STP DISABLED 把 pp5
+的 `CST_STATE` 留在 0，PPE 入口做 STG 过滤整口丢帧——与本补丁的 SGMII
+adapter 无关。修复为 qca-nss-dp 0009，见
+`ETH1_STP_INGRESS_DROP-2026-11-22.md`；0014 目前保留（真机复测 0009 时不要
+同时改动变量），通过后可考虑移除。
 
 ## 问题回顾
 
