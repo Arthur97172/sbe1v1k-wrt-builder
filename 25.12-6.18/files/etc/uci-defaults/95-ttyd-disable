@@ -1,0 +1,9 @@
+#!/bin/sh
+# SBE1V1K 默认值：ttyd web 终端保持关闭，直到操作员在
+# LuCI → 服务 → 终端 里显式开启。
+# 上游 ttyd.init 的 enable 默认为 1，即装包后就在 7681 端口监听、以
+# /bin/login 为入口；与 6.12 的 sbe1v1k-defaults 行为一致。
+[ -f /etc/config/ttyd ] || exit 0
+uci -q set ttyd.ttyd.enable='0'
+uci -q commit ttyd
+exit 0

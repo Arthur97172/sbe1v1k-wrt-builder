@@ -1,0 +1,26 @@
+# 2026-11-22 用户要求：2.5G 口（QCA8081）做 WAN，其余口做 LAN，与
+# 25.12-6.12 的 eth1=WAN / 其余=LAN 一致。
+#
+# 上游把 port@5（QCA8081，2.5G）标成 lan1、port@6（RTL8261N，10G）标成 wan，
+# 与本板接线相反。本补丁只交换这两个 label；lan2/lan3（QCA8075）不变，
+# 上游 02_network 的 "lan1 lan2 lan3"/"wan" 分组继续成立。
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
+@@ -492,7 +492,7 @@
+ 			phy-handle = <&qca8081_28>;
+ 			pcs-handle = <&pcs1_ch0>;
+ 			managed = "in-band-status";
+-			label = "lan1";
++			label = "wan";
+ 
+ 			nvmem-cells = <&ethaddr 1>;
+ 			nvmem-cell-names = "mac-address";
+@@ -514,7 +514,7 @@
+ 			phy-handle = <&rtl8261be_0>;
+ 			pcs-handle = <&pcs2_ch0>;
+ 			managed = "in-band-status";
+-			label = "wan";
++			label = "lan1";
+ 
+ 			nvmem-cells = <&ethaddr 0>;
+ 			nvmem-cell-names = "mac-address";
