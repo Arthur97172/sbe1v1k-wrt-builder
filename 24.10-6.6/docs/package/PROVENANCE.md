@@ -341,6 +341,10 @@ release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户�
 `ledfancontrol`（`1.1.1-r2` → `1.1.3-r1`）、`smartnetpilot`（`1.1.8-r1` →
 `1.1.9-r1`）、`turboacc`（`1.3.0-r1` → `1.3.2-r1`）与 `passwall-packages` 分支头
 前进；`nikki` 因分支头已过最新 tag `v1.26.2` 保持不动，其余 pin 不变。
+2026-11-22 用户要求再查一轮：`smartnetpilot`（`1.1.9-r1` → `1.2.7-r1`，
+新增无线覆盖校验与 select 箭头修复）与 `passwall-packages` 分支头再次前进
+（只动了 `smartdns`、`v2ray-geodata` 两个本项目未启用的包）；`nikki` 仍保持不动，
+其余 pin 不变。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
@@ -350,7 +354,7 @@ release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户�
 | `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `1f032f39bb41e81f53389eb493711eecd3429834` | 2026-11-18T23:05:05Z | `daemon: 自动档改由用户态曲线驱动，内核 cooling map 只作兜底`（tag `1.1.3-r1`） | GPL-3.0-only（`LICENSE`） | 230 KB |
 | `luci-app-nssecm` | `luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 2026-11-13T03:48:43Z | `nssecm: add bottom padding for Argon section card, bump to 1.0.1-r1`（tag `1.0.1-r1`） | GPL-3.0-only（`LICENSE`） | 100 KB |
 | `luci-app-tasks` | `luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 2026-11-13T02:53:33Z | `Bump version to 1.1.2-r1`（tag `1.1.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 344 KB |
-| `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `28b3be9553f6b17c6d00d8320242d25406498fcb` | 2026-11-19T11:54:41Z | `fix: show the management address on the chooser`（tag `1.1.9-r1`） | GPL-3.0-only（`LICENSE`） | 710 KB |
+| `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `14b42cc05d81a72e15dba461880b0a851175a219` | 2026-11-22T00:26:49Z | `fix: keep the theme's chevron on select fields`（tag `1.2.7-r1`） | GPL-3.0-only（`LICENSE`） | 860 KB |
 | `luci-app-corestatus` | `luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | 2026-11-14T03:04:06Z | `Merge branch 'release-1.0.4'`（tag `v1.0.4`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 388 KB |
 | `luci-app-oxidns` | `luci-app-oxidns` | `2ab3ffe5927b295931cf41e4d83d6c71321c511f` | 2026-11-16T06:33:11Z | `refactor(overview): fold the dnsmasq upstream hint into the value`（tag `v1.5.5`，`PKG_VERSION 1.5.5`） | GPL-3.0-or-later（`LICENSE`） | 1.2 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `88f1056e7bdb0c712757fb9feecce3d7499186f7` | 2026-11-16T09:11:27Z | `Hide the per-band thresholds behind a checkbox`（tag `2.8.4-r1`） | GPL-3.0-only（`LICENSE`） | 944 KB |
@@ -561,7 +565,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 1.0.1-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
 | `apps/luci-app-oxidns` | `2ab3ffe5927b295931cf41e4d83d6c71321c511f` | v1.5.5（tag；PKG_VERSION 1.5.5；overview 的 dnsmasq 上游改为显示实际生效值） |
-| `apps/luci-app-smartnetpilot` | `28b3be9553f6b17c6d00d8320242d25406498fcb` | 1.1.9-r1（tag；2026-11-19 刷新） |
+| `apps/luci-app-smartnetpilot` | `14b42cc05d81a72e15dba461880b0a851175a219` | 1.2.7-r1（tag；2026-11-22 刷新） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 1.1.2-r1（tag） |
 | `apps/luci-app-turboacc` | `d10cc9337a2a04dcdadd42ceac04aa272c780454` | 1.3.2-r1（tag；PKG_VERSION 1.3.2；GPL-3.0-only；po/zh_Hans；2026-11-19 刷新） |
@@ -570,7 +574,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
 | `repo passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `8147e8bf8abc62b5357f76defa37f380e35f6e0a` | thirdparty/openwrt-passwall-packages |
+| `repo passwall-packages` | `65ae3f5ec70c9613ae3ec41ee6e9baecb1828ff9` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
