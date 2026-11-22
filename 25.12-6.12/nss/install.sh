@@ -17,8 +17,6 @@
 #                    nss-src-v1 解出来的目录。
 #     SBE_NSS_SRC_APPS  apps-oss 目录（默认 <SBE_NSS_SRC>/qca/src/nss/apps-oss）；
 #                    只用来找 qca-ssdk-shell。
-#     SBE_DP_DIAG=1  在 patches/ 之后追加 patches-diag/<pkg>/ 下的诊断补丁
-#                    （qca-nss-dp 的 Rx 埋点），产物是非生产诊断镜像。
 
 set -euo pipefail
 
@@ -50,10 +48,6 @@ BASE2=${SBE_NSS_BASE2:-$SRC/qca/src/nss/clients}
 APPS=${SBE_NSS_SRC_APPS:-$SRC/qca/src/nss/apps-oss}
 [ -d "$BR" ] || { echo "缺少装配树：$BR" >&2; exit 1; }
 [ -d "$BASE" ] || { echo "缺少 NSS 源码目录：$BASE" >&2; exit 1; }
-if [ "${SBE_DP_DIAG:-0}" = 1 ] && [ ! -d "$NSS/patches-diag" ]; then
-	echo "SBE_DP_DIAG=1 但缺少 $NSS/patches-diag" >&2
-	exit 1
-fi
 
 say() { printf '[nss] %s\n' "$*"; }
 
@@ -107,14 +101,6 @@ for d in "$NSS"/packages/*/; do
 			|| { echo "补丁应用失败：$p" >&2; exit 1; }
 		say "    patch $(basename "$p")"
 	done
-	if [ "${SBE_DP_DIAG:-0}" = 1 ]; then
-		for p in "$NSS"/patches-diag/"$name"/*.patch; do
-			[ -f "$p" ] || continue
-			patch -d "$dst" -p1 --forward --batch < "$p" >/dev/null \
-				|| { echo "诊断补丁应用失败：$p" >&2; exit 1; }
-			say "    diag patch $(basename "$p")"
-		done
-	fi
 done
 
 say "完成。编译示例：build/sbe1v1k-build.sh package/qca-ssdk/compile V=s -j1"

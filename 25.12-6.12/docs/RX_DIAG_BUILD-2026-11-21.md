@@ -6,6 +6,11 @@
 状态：本地装配/补丁/编译验证见文末；真机 PASS（2026-11-22），判读结果见文末
 「真机结果」。
 
+**2026-11-22：该诊断构建已整体移除**（workflow 输入、`nss/patches-diag/`、
+`files-rxdiag/` 与脚本分支均已删除，见 `ETH1_STP_INGRESS_DROP-2026-11-22.md`）。
+本文保留为取证记录；新镜像里对应的检查改用生产镜像自带的
+`/sys/ssdk/packet_counter`。下面命令中的开关已不再存在。
+
 ## 背景
 
 25.12（6.12.112）live 改端口角色（`sbe-port-roles set eth0` → `set eth1`）后，

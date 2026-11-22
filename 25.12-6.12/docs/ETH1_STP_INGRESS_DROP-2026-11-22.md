@@ -134,6 +134,8 @@ ssdk_sh debug reg get 0x60114 4        # 回读 [Data]:0x3（forwarding）
 - 0009 真机 PASS 后，考虑移除 0014（adapter re-init）：它已被证伪、每次
   角色切换/重链多一次约 20 ms 端口停顿；移除是独立的小改动。
 - 原 `SBE_SSDK_DIAG` 构建计划取消（本问已被 `/sys/ssdk/packet_counter`
-  回答）。
+  回答）；已实现的 `SBE_DP_DIAG` 诊断构建（workflow `dp_diag` 输入、
+  `patches-diag/`、`files-rxdiag/`）同日整体移除，`docs/RX_DIAG_BUILD-2026-
+  11-21.md` 保留为历史取证记录。
 - 24.10 为何不受影响可另立项；6.6 内核源码与 6.12 相同，差异应在桥/端口
   状态路径，不在 nss-dp。

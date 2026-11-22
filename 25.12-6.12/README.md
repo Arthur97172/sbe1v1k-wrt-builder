@@ -1035,30 +1035,11 @@ tag 为 `25.12-6.12-v<run>-<attempt>-<sha8>`，Release 显示名为
 `SBE1V1K 25.12-6.12 v<run>-<attempt>-<sha8>`，资产恰好三个固件文件，
 release notes 附插件提交表与内核检测结论。
 
-`workflow_dispatch` 有三个相关输入：`plugin_mode`（`latest` 默认 /
-`pinned` 复现旧镜像）与 `dp_diag`（默认关，Rx 埋点诊断构建，见下）。CI 固定
+`workflow_dispatch` 只有一个构建输入：`plugin_mode`（`latest` 默认 /
+`pinned` 复现旧镜像）。CI 固定
 `SBE_PLUGIN_STRICT=1`：插件仓库解析失败（远端不可达、分叉、无法判定祖先关系）
 会让 Prepare 步骤直接失败，避免产出「以为在跟新」的镜像。内核检测步骤
 `continue-on-error`，永远不阻塞构建。
-
-### Rx 埋点诊断构建（`SBE_DP_DIAG=1`，2026-11-21）
-
-针对 eth1 live 升 WAN 后零收包缺陷（0014 已 FAIL）加的非生产诊断构建：
-在 qca-nss-dp 的 Rx 路径（IRQ / NAPI / reap / 源端口分桶 / 线性和 scatter
-分支 / GRO 与 netif 交付）上加 atomic 计数器，并在
-`/proc/edma_ring_util_stats/edma_rx_diag` 同时读 `prod` 硬件寄存器，用来
-区分「帧没到 EDMA」「到了但中断没来」「驱动内丢弃」「交付后被栈丢弃」。
-
-- CI：Run workflow 勾选 `dp_diag`；Release tag 带 `-dpdiag`，版本行为
-  `sbe1v1k-25.12-dpdiag-<sha8>`；其余与生产构建相同（同种子、同插件、
-  同 0014），便于与 v82-1 对照。
-- 本地：`SBE_DP_DIAG=1` 传给 `prepare-tree.sh` 与 `build/sbe1v1k-build.sh`
-  （与 `SBE_VARIANT` 正交，生产默认 0）。
-- 设备侧读取器 `/usr/sbin/sbe-rx-diag [show|reset]`；字段含义、测试步骤
-  与判读决策树见
-  [`docs/RX_DIAG_BUILD-2026-11-21.md`](docs/RX_DIAG_BUILD-2026-11-21.md)。
-- 生产构建不受影响：`verify-image.sh` 双向断言（诊断镜像必须带读取器与
-  `dpdiag` 版本段；生产镜像两者都不得出现）。
 
 ### 第三方插件与构建时自动跟新
 
