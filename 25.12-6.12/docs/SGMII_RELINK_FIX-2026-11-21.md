@@ -3,11 +3,14 @@
 补丁：`nss/patches/qca-ssdk/0014-sgmii-adapter-reinit-on-relink.patch`
 状态：本地编译 PASS；CI PASS；**真机复测 FAIL（未修复，2026-11-21 晚）**。
 埋点证明两条触发路径都生效，但故障签名不变——见文末「真机结果」。
-**2026-11-22 后续**：真正的根因是摘桥时桥核心下发的 STP DISABLED 把 pp5
-的 `CST_STATE` 留在 0，PPE 入口做 STG 过滤整口丢帧——与本补丁的 SGMII
-adapter 无关。修复为 qca-nss-dp 0009，见
-`ETH1_STP_INGRESS_DROP-2026-11-22.md`；0014 目前保留（真机复测 0009 时不要
-同时改动变量），通过后可考虑移除。
+
+**2026-11-22 定案与移除**：真正的根因是摘桥时桥核心下发的 STP DISABLED 把
+pp5 的 `CST_STATE` 留在 0，PPE 入口做 STG 过滤整口丢帧——与本补丁的 SGMII
+adapter 无关。修复为 qca-nss-dp 0009（已真机 PASS，v88-1），见
+`ETH1_STP_INGRESS_DROP-2026-11-22.md`。0014 **已于 2026-11-22 移除**
+（`nss/install.sh` 按 glob 应用补丁，删除文件即完成移除；装配树回到
+pristine + 0001–0013，`make package/qca-ssdk/clean compile` PASS）。
+本文保留为历史记录，文中的补丁内容与复测步骤只适用于 v82-1。
 
 ## 问题回顾
 
@@ -104,7 +107,8 @@ same-speed re-link")`，便于真机 dmesg 取证。
 EDMA 环 prod/reap 全 0 —— 帧进不了 EDMA，断点在交换机/NSS 入口，
 驱动与协议栈排除（详见 `RX_DIAG_BUILD-2026-11-21.md`「真机结果」）。
 
-真机复测步骤（保留供下一版复用）：
+真机复测步骤（v82-1 当时用；0014 已移除，`re-init SGMII adapter` 日志
+在新镜像中不会再出现）：
 
 - `sbe-port-roles set eth0` → `set eth1`；
 - `dmesg | grep "re-init SGMII adapter"` 应出现 port 5（如角色切换

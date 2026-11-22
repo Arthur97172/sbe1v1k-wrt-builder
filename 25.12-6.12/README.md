@@ -1221,7 +1221,11 @@ ERROR: package/feeds/nss/qca-ssdk failed to build (build variant: nohnat).
 注意：只跑 `package/qca-ssdk/compile` 而不先 `clean`，会复用 `build_dir` 里的旧
 `ssdk_plat.o`，看起来“编译通过”其实没编到新代码——本地验证必须先 `clean`。
 
-### 2026-11-21：live 回切后 2.5G 口收不到包——SGMII adapter re-init（0014）
+### 2026-11-21：live 回切后 2.5G 口收不到包——SGMII adapter re-init（0014，已移除）
+
+**2026-11-22 已移除**：0014 真机 FAIL，真实根因是摘桥时 STP DISABLED 留下的
+入口 STG 过滤（修复为 qca-nss-dp 0009，v88-1 真机 PASS）。补丁文件已删除，
+本节保留为历史记录，详见 `docs/ETH1_STP_INGRESS_DROP-2026-11-22.md`。
 
 25.12 上 live 改端口角色（`sbe-port-roles set eth0` → `set eth1`）后，eth1
 （QCA8081，SGMII PLUS，ssdk 口 5）链路 up、发包上铜线，但收不到任何应答；

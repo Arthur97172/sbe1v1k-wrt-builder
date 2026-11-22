@@ -5,7 +5,7 @@
 本地装配/编译 PASS；CI run 88 PASS；**真机复测 PASS（2026-11-22，v88-1）**。
 
 相关文档：`RX_DIAG_BUILD-2026-11-21.md`（EDMA 埋点，确认帧到不了 EDMA）、
-`SGMII_RELINK_FIX-2026-11-21.md`（0014 adapter re-init，已证伪）。
+`SGMII_RELINK_FIX-2026-11-21.md`（0014 adapter re-init，已证伪并已移除）。
 
 ## 结论
 
@@ -158,9 +158,13 @@ STG +426`，本镜像三态判据已全部翻转。证据存档
 
 ## 后续
 
-- 0009 真机已 PASS（v88-1），建议移除 0014（adapter re-init）：它已被
-  证伪、每次角色切换/重链多一次约 20 ms 端口停顿。按独立小改动处理，
-  尚未执行；移除后需再验证一次角色切换。
+- 0014（adapter re-init）已于 2026-11-22 移除（0009 真机 PASS 后按独立
+  小改动处理）：`nss/patches/qca-ssdk/0014-sgmii-adapter-reinit-on-relink.patch`
+  已删除，`nss/install.sh` 按 glob 应用补丁，装配树恢复到 pristine +
+  0001–0013；`make package/qca-ssdk/clean compile` PASS（rc=0，对象中无
+  `re-init SGMII adapter` 日志串）。0014 已被证伪，移除同时消掉每次角色
+  切换/重链多一次约 20 ms 的端口停顿。CI 构建与移除后的角色切换复测随后
+  进行（本文件届时补记）。
 - 原 `SBE_SSDK_DIAG` 构建计划取消（本问已被 `/sys/ssdk/packet_counter`
   回答）；已实现的 `SBE_DP_DIAG` 诊断构建（workflow `dp_diag` 输入、
   `patches-diag/`、`files-rxdiag/`）同日整体移除，`docs/RX_DIAG_BUILD-2026-
