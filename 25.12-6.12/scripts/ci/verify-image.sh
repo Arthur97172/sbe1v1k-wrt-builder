@@ -441,6 +441,32 @@ else
 	bad "缺少 /etc/rc.d/S19sbe-lan-mac（S19 不会执行，br-lan MAC 随机）"
 fi
 
+# eth0 开机 USXGMII AN 死锁看门狗（2026-11-22）：约一半的重启里 XPCS 与
+# RTL8261N 的 AN 不完成，eth0 挂着假链路（VR_MII_AN_INTR_STS=0x0）。
+# S95 后台检测并最多自动重启一次，详见 docs/ETH0_XPCS_AN_BOOT_2026-11-22.md。
+for f in usr/sbin/sbe-eth0-an-watchdog \
+         etc/init.d/sbe-eth0-an-watchdog \
+         etc/config/sbe_eth0_watchdog; do
+	check_overlay "$f"
+done
+[ -x "$ROOTFS/usr/sbin/sbe-eth0-an-watchdog" ] \
+	&& ok "可执行 /usr/sbin/sbe-eth0-an-watchdog" \
+	|| bad "缺少或不可执行 /usr/sbin/sbe-eth0-an-watchdog"
+RCT="$ROOTFS/etc/rc.d/S95sbe-eth0-an-watchdog"
+if [ -L "$RCT" ] && [ "$(readlink "$RCT")" = "../init.d/sbe-eth0-an-watchdog" ]; then
+	ok "/etc/rc.d/S95sbe-eth0-an-watchdog -> ../init.d/sbe-eth0-an-watchdog"
+else
+	bad "缺少 /etc/rc.d/S95sbe-eth0-an-watchdog（看门狗不会随开机运行）"
+fi
+WD="$ROOTFS/usr/sbin/sbe-eth0-an-watchdog"
+for pat in '0x1f8002' '0x7f00' 'max_reboots' 'reboot'; do
+	if grep -qF "$pat" "$WD" 2>/dev/null; then
+		ok "sbe-eth0-an-watchdog 含 $pat"
+	else
+		bad "sbe-eth0-an-watchdog 缺少 $pat"
+	fi
+done
+
 # ---- 启动取证（v35 起）：S01 采样器 + 两个 QSDK 等待循环的超时 --------------
 # v34 在 S10boot 之后卡死时拿不到任何日志；采样器从 S01 起把启动现场写进
 # overlay（/sbe-boot-trace/），断电重启后仍可读，所以它必须真的进镜像并在

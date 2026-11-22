@@ -1,0 +1,3 @@
+config sbe_eth0_watchdog 'main'
+	option enabled '1'
+	option max_reboots '1'

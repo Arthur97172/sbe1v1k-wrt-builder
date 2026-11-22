@@ -1,0 +1,20 @@
+#!/bin/sh /etc/rc.common
+# eth0 USXGMII AN 死锁看门狗启动入口。
+# 检测与自愈逻辑、以及为什么只能靠"重启一次"来恢复，
+# 见 /usr/sbin/sbe-eth0-an-watchdog 顶部说明与
+# docs/ETH0_XPCS_AN_BOOT_2026-11-22.md。
+#
+# S95：晚于 network(20) 与 eth0-lan-attach(23)；脚本自身会在后台等 eth0
+# 出载波（正常 ~29 s）后再判定，不阻塞 rcS。
+
+START=95
+STOP=05
+USE_PROCD=0
+
+start() {
+	/usr/sbin/sbe-eth0-an-watchdog >/dev/null 2>&1 &
+}
+
+stop() {
+	killall sbe-eth0-an-watchdog 2>/dev/null
+}

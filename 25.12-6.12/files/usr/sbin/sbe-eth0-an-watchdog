@@ -1,0 +1,97 @@
+#!/bin/sh
+# eth0（uniphy2 / port6，RTL8261N C45 PHY）开机 USXGMII AN 死锁看门狗。
+#
+# 背景（2026-11-22 取证，docs/ETH0_XPCS_AN_BOOT_2026-11-22.md）：约一半的
+# 重启里，SoC XPCS 与 RTL8261N 之间的 USXGMII 自动协商不会完成，但 PHY 铜缆
+# 侧照样把链路报成 UP——eth0 看起来"2.5Gbps/Full、carrier=1"，实际零流量
+# （dmesg 里只有一行 "uniphy autoneg time out!"）。判定特征：uniphy2 的
+# VR_MII_AN_INTR_STS（0x1f8002）在成功启动读回 0x7000（usxg_an_sts=0x70），
+# 死锁启动整寄存器为 0x0。
+#
+# 实测（同类寄存器写、XPCS 软复位、PHY 复位+补丁重载 unbind/bind、铜缆侧
+# 重协商、固定速率 0x120）都无法在死锁启动上把链路救回来，只有再次重启
+# （约一半概率成功）有效。因此这里做有界自愈：检测到死锁就自动重启一次，
+# 并用 /etc 下的计数器防止重启循环；正常启动时计数器清零，让每次坏启动
+# 都有一次重试机会。
+#
+# 配置：/etc/config/sbe_eth0_watchdog
+#   option enabled '1'        # 0 关闭
+#   option max_reboots '1'    # 每次启动最多自动重启几次
+#
+# 判定只在 eth0 有载波时进行：没插线（carrier=0）不能当作 AN 失败。
+# ssdk_sh 不可用（如 diag/mainline 变体）或读不到寄存器时不做判定。
+
+. /lib/functions.sh
+
+CONF=sbe_eth0_watchdog
+COUNT=/etc/sbe-eth0-an-watchdog.count
+
+log() {
+	logger -t sbe-eth0-an-watchdog "$*"
+}
+
+[ "$(board_name 2>/dev/null)" = "spectrum,sbe1v1k" ] || exit 0
+
+enabled=$(uci -q get $CONF.main.enabled)
+[ -n "$enabled" ] || enabled=1
+[ "$enabled" = 1 ] || exit 0
+
+max=$(uci -q get $CONF.main.max_reboots)
+case "$max" in
+''|*[!0-9]*) max=1 ;;
+esac
+
+carrier() {
+	cat /sys/class/net/eth0/carrier 2>/dev/null
+}
+
+# 等 eth0 出载波：正常启动在 ~29 s 由 dp 报 link up。最多等 120 s，
+# 没载波说明没插线（或该变体没有 eth0），直接结束，不判死。
+i=0
+while [ "$i" -lt 24 ]; do
+	[ "$(carrier)" = 1 ] && break
+	sleep 5
+	i=$((i+1))
+done
+if [ "$(carrier)" != 1 ]; then
+	log "eth0 无载波，跳过检测"
+	echo 0 > "$COUNT"
+	exit 0
+fi
+
+# 读 uniphy2 VR_MII_AN_INTR_STS（0x1f8002）并判断 USXGMII AN 是否完成：
+# usxg_an_sts 是 bit8-14，成功启动恒为非 0（0x70），死锁启动为 0。
+an_ok() {
+	st=$(ssdk_sh debug uniphy get 2 0x1f8002 4 </dev/null 2>/dev/null |
+		sed -n 's/.*\[Data\]:0x\([0-9a-fA-F]\{1,\}\).*/0x\1/p' | head -n1)
+	[ -n "$st" ] || return 0	# 读不到就不判死
+	[ $((st & 0x7f00)) -ne 0 ]
+}
+
+# dp 报 link up 后至少等一个 100 ms 等待周期再采样；
+# 两次采样间隔 8 s，排除 AN 在边沿之后才完成的正常竞态。
+sleep 3
+if an_ok; then
+	echo 0 > "$COUNT"
+	exit 0
+fi
+sleep 8
+if an_ok; then
+	echo 0 > "$COUNT"
+	exit 0
+fi
+
+n=$(cat "$COUNT" 2>/dev/null)
+case "$n" in
+''|*[!0-9]*) n=0 ;;
+esac
+if [ "$n" -ge "$max" ]; then
+	log "eth0 USXGMII AN 未完成，已自动重启 $n 次，放弃本轮（端口保持假链路）"
+	exit 0
+fi
+
+echo $((n+1)) > "$COUNT"
+sync
+log "eth0 USXGMII AN 未完成（VR_MII_AN_INTR_STS=0x0），自动重启 $((n+1))/$max"
+sleep 2
+reboot

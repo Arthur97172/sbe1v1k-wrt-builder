@@ -731,6 +731,19 @@ LAN/WAN（空格分隔的 LAN 列表会变成 board.json 的 `ports` 数组）�
 状态；`touch /var/run/eth0-lan-attach.disabled` 可临时交回手工管理（tmpfs，重启
 失效）。`verify-image.sh` 断言这五个文件都在且可执行。
 
+**eth0 开机 USXGMII AN 死锁看门狗（2026-11-22）。** 约一半的重启里，SoC XPCS
+与 RTL8261N 的 USXGMII 自动协商不完成，而 PHY 铜缆侧照样报链路 UP——eth0
+处于"假链路"（carrier=1、2.5G、零流量），dmesg 只有一行
+`uniphy autoneg time out!`。取证与全部恢复手段实验见
+`docs/ETH0_XPCS_AN_BOOT_2026-11-22.md`（寄存器判据：uniphy2
+`VR_MII_AN_INTR_STS` 成功启动 0x7000、死锁启动 0x0；单独重启 AN、XPCS 软复位、
+PHY 复位+补丁重载、固定速率都不能恢复，只有重启有效）。`files/` overlay 因此
+带 `usr/sbin/sbe-eth0-an-watchdog`（`etc/init.d` S95 后台运行）：eth0 有载波时
+两次采样该寄存器，`usxg_an_sts` 为 0 即判死并自动重启，最多
+`/etc/config/sbe_eth0_watchdog` 的 `max_reboots`（默认 1）次，正常启动清零
+计数；没插线不判死，ssdk_sh 不可用（diag/mainline 变体）不判死。状态：静态
+检查 PASS，真机 `NOT TESTED`。
+
 **端口角色可配（2026-11-21，阶段 A）。** `sbe_ports.main.wan_port` 决定
 eth0/eth1 谁是 WAN（`none` = 四口全 LAN），未设置或非法值保持 eth1=WAN。
 `usr/sbin/sbe-port-roles` 收敛三处：SSDK 端口成员表（port3/4/5/6 分别为
