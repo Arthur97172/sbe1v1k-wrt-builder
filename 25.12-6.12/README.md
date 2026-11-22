@@ -1016,6 +1016,18 @@ cp 25.12-6.12/build/config-seed/ipq95xx-spectrum-sbe1v1k.seed \
 脚本装配过，插件已经装好，可只在需要跟新时重跑。实际安装的提交在
 `<装配树>/.sbe-plugins.tsv`，与 `thirdparty-pins.conf` 的 pin 对照即可。
 
+装配树是增量复用的：第一次搭好后，只改 `files/`（overlay）时直接跑下面的构建
+命令即可，几分钟出图。若改了补丁/seed/`patches/` 或需要与最新提交重新对齐，
+先把装配树重置再重跑 `prepare-tree.sh`，否则 `feeds` 停在旧 pin 上会
+让 `feeds update -a` 报 `Not possible to fast-forward` 直接退出：
+
+```sh
+git -C sources/buildroot-25.12-6.12 checkout -- .
+git -C sources/buildroot-25.12-6.12 clean -fd      # 不加 -x：保留 dl/build_dir/feeds
+rm -rf sources/buildroot-25.12-6.12/feeds/*        # 必须清空，CI 每次全新克隆所以无此问题
+SBE_CI=1 ./25.12-6.12/scripts/ci/prepare-tree.sh
+```
+
 本地构建（与 CI 相同判据）用下面这条（固件已在种子里打开；脚本会先校验
 6 个 blob，再构建并跑 verify，末尾打印三个产物的 sha256）：
 
