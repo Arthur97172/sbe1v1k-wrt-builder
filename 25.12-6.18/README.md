@@ -27,8 +27,12 @@
 - 网口角色与 6.12 一致：**2.5G（QCA8081）= WAN**，10G 与两个 1G = LAN。
   上游 DTS 默认相反，本树用 `patches/0001-...swap-port5-port6-labels` 修正。
 - Stage 1（上游基线）：2026-11-22 本机构建 world PASS，`verify-image.sh`
-  12 项 PASS（含镜像 apk 数据库按 required 清单反查 107/0/0）；设备行为
-  **NOT TESTED**。
+  12 项 PASS（含镜像 apk 数据库按 required 清单反查 107/0/0）。
+- **S1b 真机（2026-11-22，B 机）PASS**：`sysupgrade -F -n` 刷入后 6.18.64
+  正常启动（root=p27，overlay=独立 p29），网口角色与 6.12 一致（2.5G=WAN、
+  10G/1G=LAN）、LAN→WAN NAT 通、LuCI 200、风扇/LED 正常；2.4G/5G AP 正常，
+  **6G 因固件 regdb 未启用信道暂不可用**（S2/S3 处理）。详见
+  `docs/S1B-DEVICE-TEST-2026-11-22.md`；重启复验待批准。
 - 插件栈（2026-11-22 按用户要求对齐 25.12-6.12）：18 个插件、官方 LuCI
   页/WireGuard、工具与运行时全部写入种子与 `build/thirdparty-pins.conf`；
   `fetch-plugins.sh --dry-run` 18 个仓库全部 same、`check-packages.sh seed`
@@ -116,8 +120,9 @@ GOPROXY='https://goproxy.cn,https://mirrors.aliyun.com/goproxy,direct' \
 `Askey SBE1V1K` / `askey,sbe1v1k` / `config@rtq7300t-rev0`；root 是
 squashfs；`openwrt_release` 目标为 `qualcommbe/ipq95xx`；解包后的 apk
 数据库按 `build/required-packages.txt` 逐包反查（插件、工具、必禁项）。
-设备侧的启动、网口、无线、风扇与加速全部 **NOT TESTED**，不得据静态校验
-声称可用。
+设备侧：启动、网口角色、LAN→WAN 转发、LuCI、风扇/LED、2.4G/5G 已在 B 机
+S1b 验证（`docs/S1B-DEVICE-TEST-2026-11-22.md`）；6G 信道未启用、NSS 加速
+尚未移植，均不得据静态校验声称可用。重启复验与 WiFi 客户端关联未做。
 
 ## 规则
 
