@@ -1,0 +1,19 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-ppe: use timer_container_of() instead of from_timer()
+
+6.16 removed from_timer(); timer.h now provides timer_container_of()
+with the same argument order. ppe_qdisc_stats.c is the only user in
+qca-nss-ppe.
+
+Classification: portability (kernel API, no behaviour change).
+--- a/drv/ppe_qdisc/ppe_qdisc_stats.c
++++ b/drv/ppe_qdisc/ppe_qdisc_stats.c
+@@ -79,7 +79,7 @@
+ 	/*
+ 	 * Invoked by timer to begin a new stats fetch
+ 	 */
+-	struct ppe_qdisc_stats_wq *pqsw = from_timer(pqsw, tm, stats_get_timer);
++	struct ppe_qdisc_stats_wq *pqsw = timer_container_of(pqsw, tm, stats_get_timer);
+ 	struct ppe_qdisc *pq = pqsw->pq;
+ 
+ 	ppe_qdisc_stats_queue_delayed_work(pq);

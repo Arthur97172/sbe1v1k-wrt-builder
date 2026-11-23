@@ -1,0 +1,229 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 为 qca-ssdk 增加 swconfig switch_ext 支持
+
+qca-ssdk 的 src/ref/ref_uci.c 依赖厂商内核在 include/linux/switch.h
+里追加的 struct switch_ext 与 val->value.ext_val，以及 uapi 里的
+SWITCH_TYPE_EXT / SWITCH_ATTR_OP_VALUE_EXT。主线 6.12（含 OpenWrt 25.12
+内核）没有这些定义，SSDK 无法编译。
+
+本补丁把 QSDK 14.x 的
+target/linux/feeds/patches-6.6/0139-net-phy-swconfig-support-swconfig_ext-on-kernel-v6.1.patch
+原样放进本目标的 patches-6.18/，由 OpenWrt 的 target 补丁机制在
+prepare 阶段应用。该补丁已按 6.18.64 主线内核重新生成，--fuzz=0
+干跑与应用均通过。
+
+分类：必须 shim（厂商内核 ABI，主线无替代）。
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0500-net-phy-swconfig-support-swconfig_ext.patch b/target/linux/qualcommbe/patches-6.18/0500-net-phy-swconfig-support-swconfig_ext.patch
+--- a/target/linux/qualcommbe/patches-6.18/0500-net-phy-swconfig-support-swconfig_ext.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0500-net-phy-swconfig-support-swconfig_ext.patch	2026-11-22 23:23:06.840411270 +0000
+@@ -0,0 +1,210 @@
++From 7a35f48600bb76cc8666705fb45acc5579ba5f8e Mon Sep 17 00:00:00 2001
++From: qiangqiang cheng <quic_qiangqia@quicinc.com>
++Date: Tue, 28 Mar 2023 14:42:55 +0800
++Subject: [PATCH 087/500] net: phy: swconfig: support swconfig_ext on kernel
++ v6.1
++
++This is a copy change from linux-5.4 on fig branch, with removing
++nonexistent author information.
++change-id on fig - I79223fdd68b2346949d5329549f0419a5450aa03
++
++Change-Id: Ie81cb78d7650fd66e8f184fea248b9be9b79b75c
++Signed-off-by: qiangqiang cheng <quic_qiangqia@quicinc.com>
++---
++ drivers/net/phy/swconfig.c  | 71 +++++++++++++++++++++++++++++++++++++
++ include/linux/switch.h      | 10 ++++++
++ include/uapi/linux/switch.h | 12 +++++++
++ 3 files changed, 93 insertions(+)
++ mode change 100644 => 100755 drivers/net/phy/swconfig.c
++ mode change 100644 => 100755 include/linux/switch.h
++ mode change 100644 => 100755 include/uapi/linux/switch.h
++
++diff --git a/drivers/net/phy/swconfig.c b/drivers/net/phy/swconfig.c
++old mode 100644
++new mode 100755
++index a734e576080a..0fa3dd736162
++--- a/drivers/net/phy/swconfig.c
+++++ b/drivers/net/phy/swconfig.c
++@@ -278,6 +278,7 @@
++ 	[SWITCH_ATTR_OP_VALUE_INT] = { .type = NLA_U32 },
++ 	[SWITCH_ATTR_OP_VALUE_STR] = { .type = NLA_NUL_STRING },
++ 	[SWITCH_ATTR_OP_VALUE_PORTS] = { .type = NLA_NESTED },
+++	[SWITCH_ATTR_OP_VALUE_EXT] = { .type = NLA_NESTED },
++ 	[SWITCH_ATTR_TYPE] = { .type = NLA_U32 },
++ };
++ 
++@@ -292,6 +293,11 @@
++ 	[SWITCH_LINK_SPEED] = { .type = NLA_U32 },
++ };
++ 
+++static const struct nla_policy ext_policy[SWITCH_EXT_ATTR_MAX+1] = {
+++	[SWITCH_EXT_NAME] = { .type = NLA_NUL_STRING },
+++	[SWITCH_EXT_VALUE] = { .type = NLA_NUL_STRING },
+++};
+++
++ static inline void
++ swconfig_lock(void)
++ {
++@@ -607,6 +613,47 @@
++ }
++ 
++ static int
+++swconfig_parse_ext(struct sk_buff *msg, struct nlattr *head,
+++		struct switch_val *val, int max)
+++{
+++	struct nlattr *nla;
+++	struct switch_ext *switch_ext_p, *switch_ext_tmp;
+++	int rem;
+++
+++	val->len = 0;
+++	switch_ext_p = val->value.ext_val;
+++	nla_for_each_nested(nla, head, rem) {
+++		struct nlattr *tb[SWITCH_EXT_ATTR_MAX+1];
+++
+++		switch_ext_tmp = kzalloc(sizeof(struct switch_ext), GFP_KERNEL);
+++		if (!switch_ext_tmp)
+++			return -ENOMEM;
+++
+++		if (nla_parse_nested_deprecated(tb, SWITCH_EXT_ATTR_MAX, nla,
+++				ext_policy, NULL))
+++			return -EINVAL;
+++
+++		if (!tb[SWITCH_EXT_NAME])
+++			return -EINVAL;
+++		switch_ext_tmp->option_name = nla_data(tb[SWITCH_EXT_NAME]);
+++
+++		if (!tb[SWITCH_EXT_VALUE])
+++			return -EINVAL;
+++		switch_ext_tmp->option_value = nla_data(tb[SWITCH_EXT_VALUE]);
+++
+++		if(!switch_ext_p)
+++			val->value.ext_val = switch_ext_tmp;
+++		else
+++			switch_ext_p->next = switch_ext_tmp;
+++		switch_ext_p=switch_ext_tmp;
+++
+++		val->len++;
+++	}
+++
+++	return 0;
+++}
+++
+++static int
++ swconfig_parse_link(struct sk_buff *msg, struct nlattr *nla,
++ 		    struct switch_port_link *link)
++ {
++@@ -628,6 +675,7 @@
++ 	const struct switch_attr *attr;
++ 	struct switch_dev *dev;
++ 	struct switch_val val;
+++	struct switch_ext *switch_ext_p;
++ 	int err = -EINVAL;
++ 
++ 	if (!capable(CAP_NET_ADMIN))
++@@ -690,12 +738,35 @@
++ 			err = 0;
++ 		}
++ 		break;
+++	case SWITCH_TYPE_EXT:
+++		if (info->attrs[SWITCH_ATTR_OP_VALUE_EXT]) {
+++			err = swconfig_parse_ext(skb,
+++				info->attrs[SWITCH_ATTR_OP_VALUE_EXT], &val, dev->ports);
+++			if (err < 0)
+++				goto error;
+++		} else {
+++			val.len = 0;
+++			err = 0;
+++		}
+++		break;
++ 	default:
++ 		goto error;
++ 	}
++ 
++ 	err = attr->set(dev, attr, &val);
++ error:
+++	/* free memory if necessary */
+++	if(attr) {
+++		switch(attr->type) {
+++		case SWITCH_TYPE_EXT:
+++			switch_ext_p = val.value.ext_val;
+++			while(switch_ext_p) {
+++				struct switch_ext *ext_value_p = switch_ext_p;
+++				switch_ext_p = switch_ext_p->next;
+++				kfree(ext_value_p);
+++			}
+++		}
+++	}
++ 	swconfig_put_dev(dev);
++ 	return err;
++ }
++--- a/include/linux/switch.h
+++++ b/include/linux/switch.h
++@@ -45,6 +45,9 @@
++ 	SWITCH_PORT_SPEED_10 = 10,
++ 	SWITCH_PORT_SPEED_100 = 100,
++ 	SWITCH_PORT_SPEED_1000 = 1000,
+++	SWITCH_PORT_SPEED_2500 = 2500,
+++	SWITCH_PORT_SPEED_5000 = 5000,
+++	SWITCH_PORT_SPEED_10000 = 10000
++ };
++ 
++ struct switch_port_link {
++@@ -146,6 +149,12 @@
++ 	const char *s;
++ };
++ 
+++struct switch_ext {
+++	const char *option_name;
+++	const char *option_value;
+++	struct switch_ext *next;
+++};
+++
++ struct switch_val {
++ 	const struct switch_attr *attr;
++ 	unsigned int port_vlan;
++@@ -155,6 +164,7 @@
++ 		u32 i;
++ 		struct switch_port *ports;
++ 		struct switch_port_link *link;
+++		struct switch_ext *ext_val;
++ 	} value;
++ };
++ 
++--- a/include/uapi/linux/switch.h
+++++ b/include/uapi/linux/switch.h
++@@ -51,9 +51,12 @@
++ 	SWITCH_ATTR_OP_VALUE_STR,
++ 	SWITCH_ATTR_OP_VALUE_PORTS,
++ 	SWITCH_ATTR_OP_VALUE_LINK,
+++	SWITCH_ATTR_OP_VALUE_EXT,
++ 	SWITCH_ATTR_OP_DESCRIPTION,
++ 	/* port lists */
++ 	SWITCH_ATTR_PORT,
+++	/* switch_ext attribute */
+++	SWITCH_ATTR_EXT,
++ 	SWITCH_ATTR_MAX
++ };
++ 
++@@ -88,6 +91,7 @@
++ 	SWITCH_TYPE_STRING,
++ 	SWITCH_TYPE_PORTS,
++ 	SWITCH_TYPE_LINK,
+++	SWITCH_TYPE_EXT,
++ 	SWITCH_TYPE_NOVAL,
++ };
++ 
++@@ -113,6 +117,14 @@
++ 	SWITCH_LINK_ATTR_MAX,
++ };
++ 
+++/* switch_ext nested attributes */
+++enum {
+++	SWITCH_EXT_UNSPEC,
+++	SWITCH_EXT_NAME,
+++	SWITCH_EXT_VALUE,
+++	SWITCH_EXT_ATTR_MAX
+++};
+++
++ #define SWITCH_ATTR_DEFAULTS_OFFSET	0x1000
++ 
++ 

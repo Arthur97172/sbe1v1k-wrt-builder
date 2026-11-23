@@ -1,0 +1,77 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ssdk: include the header that declares each definition
+
+-Wmissing-prototypes (on by default since 6.10) plus -Werror turns every
+defined-but-undeclared function into a build failure.  Five translation
+units define functions that their own headers declare but never include
+that header; one more defines a file-local helper without a prototype.
+
+  src/hsl/hppe/hppe_reg_access.c   -> hppe_reg_access.h
+  src/hsl/sfp/sfp_access.c         -> sfp_access.h
+  src/hsl/sfp/sfp.c                -> sfp.h
+  src/init/ssdk_interrupt.c        -> ssdk_interrupt.h
+  src/shell_lib/shell_sw.c         -> shell_sw.h
+  src/init/ssdk_mht_pinctrl.c      -> mht_pinctrl_clk_gate_set() static,
+                                      only used in its own file.
+
+--- a/src/hsl/hppe/hppe_reg_access.c	2026-10-23 23:39:59.438636015 +0000
++++ b/src/hsl/hppe/hppe_reg_access.c	2026-10-23 23:39:59.455156937 +0000
+@@ -31,6 +31,7 @@
+ #include <linux/phy.h>
+ #include <linux/netdevice.h>
+ #include "ssdk_plat.h"
++#include "hppe_reg_access.h"
+ #include <linux/string.h>
+ 
+ sw_error_t hppe_reg_get(a_uint32_t dev_id, a_uint32_t reg_addr, a_uint32_t *val)
+--- a/src/hsl/sfp/sfp_access.c	2026-10-23 23:39:59.440769924 +0000
++++ b/src/hsl/sfp/sfp_access.c	2026-10-23 23:39:59.457864769 +0000
+@@ -21,6 +21,7 @@
+ #include "sw.h"
+ #include "ssdk_init.h"
+ #include "ssdk_phy_i2c.h"
++#include "sfp_access.h"
+ 
+ sw_error_t
+ sfp_data_tbl_get(a_uint32_t dev_id, a_uint32_t index, a_uint32_t i2c_slave,
+--- a/src/hsl/sfp/sfp.c	2026-10-23 23:39:59.443157492 +0000
++++ b/src/hsl/sfp/sfp.c	2026-10-23 23:39:59.460788468 +0000
+@@ -22,6 +22,7 @@
+ #include "sw.h"
+ #include "hsl.h"
+ #include "sfp_access.h"
++#include "sfp.h"
+ #include "sfp_reg.h"
+ 
+ sw_error_t
+--- a/src/init/ssdk_interrupt.c	2026-10-23 23:39:59.445585618 +0000
++++ b/src/init/ssdk_interrupt.c	2026-10-23 23:39:59.464368866 +0000
+@@ -8,6 +8,7 @@
+ #include "fal_reg_access.h"
+ #include "sw.h"
+ #include "ssdk_init.h"
++#include "ssdk_interrupt.h"
+ #include "fal_init.h"
+ #include <linux/phy.h>
+ #include <linux/kernel.h>
+--- a/src/init/ssdk_mht_pinctrl.c	2026-10-23 23:39:59.451180566 +0000
++++ b/src/init/ssdk_mht_pinctrl.c	2026-10-23 23:39:59.472405690 +0000
+@@ -315,7 +315,7 @@
+  * 3) PINs Init
+  *
+  ****************************************************************************/
+-sw_error_t mht_pinctrl_clk_gate_set(a_uint32_t dev_id, a_bool_t gate_en)
++static sw_error_t mht_pinctrl_clk_gate_set(a_uint32_t dev_id, a_bool_t gate_en)
+ {
+     sw_error_t rv = SW_OK;
+ 
+--- a/src/shell_lib/shell_sw.c	2026-10-23 23:39:59.448370594 +0000
++++ b/src/shell_lib/shell_sw.c	2026-10-23 23:39:59.468215938 +0000
+@@ -17,6 +17,7 @@
+ #include "sw.h"
+ #include "sw_error.h"
+ #include "shell.h"
++#include "shell_sw.h"
+ 
+ static int sw_devid = 0;
+ 

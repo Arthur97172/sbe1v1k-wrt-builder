@@ -1,0 +1,30 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-sfe: use timer_container_of() instead of from_timer()
+
+6.16 removed the from_timer() helper (timer.h now provides
+timer_container_of() with the same argument order). Both fragment
+callbacks still use it:
+
+  sfe_ipv6_frag.c:57:48: error: implicit declaration of function 'from_timer'; did you mean 'mod_timer'?
+
+Classification: portability (kernel API removal, same semantics).
+--- a/sfe_ipv6_frag.c
++++ b/sfe_ipv6_frag.c
+@@ -54,7 +54,7 @@
+  */
+ static void sfe_ipv6_frag_process_exception_queue(struct timer_list *t)
+ {
+-	struct sfe_ipv6_frag_exception *pcpu = from_timer(pcpu, t, timer);
++	struct sfe_ipv6_frag_exception *pcpu = timer_container_of(pcpu, t, timer);
+ 	struct sk_buff_head *skbh = &pcpu->exception_queue;
+ 	struct sk_buff *skb;
+ 
+@@ -141,7 +141,7 @@
+  */
+ static void sfe_ipv6_frag_timer_cb(struct timer_list *t)
+ {
+-	struct sfe_ipv6_frag *sif = from_timer(sif, t, timer);
++	struct sfe_ipv6_frag *sif = timer_container_of(sif, t, timer);
+ 	unsigned long curr_time = jiffies;
+ 	struct sfe_ipv6_frag_id_entity *fie, *fie_tmp;
+ 	spin_lock(&sif->lock);

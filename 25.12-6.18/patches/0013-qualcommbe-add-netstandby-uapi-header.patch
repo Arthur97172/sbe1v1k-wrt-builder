@@ -1,0 +1,188 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 加入 QSDK 的 uapi linux/netstandby.h
+
+qca-nss-dp 的 include/nss_dp_dev.h 与 nss_dp_netstandby.c 都包含
+<linux/netstandby.h>；该头文件是 QSDK 作为 uapi 提供的
+(include/uapi/linux/netstandby.h)，通过内核模块编译的
+-I$(srctree)/include/uapi 搜索路径可见。主线 6.12 没有它：
+
+  include/nss_dp_dev.h:25: fatal error: linux/netstandby.h: No such file or directory
+
+本补丁原样放入 QSDK 14.x 的该头文件。nss-dp 只需要其中的数据结构与
+回调类型；真正的 netstandby 状态机在厂商驱动
+drivers/soc/qcom/netstandby.c，本项目尚未引入，因此
+nss_dp_get_and_register_cb() 无人调用，功能处于惰性状态。
+
+分类：必须 shim（厂商内核 ABI，主线无替代）。
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0502-net-uapi-add-netstandby-header.patch b/target/linux/qualcommbe/patches-6.18/0502-net-uapi-add-netstandby-header.patch
+--- a/target/linux/qualcommbe/patches-6.18/0502-net-uapi-add-netstandby-header.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0502-net-uapi-add-netstandby-header.patch	2026-11-22 23:23:06.869220154 +0000
+@@ -0,0 +1,168 @@
++net: uapi: add linux/netstandby.h from QSDK
++
++qca-nss-dp includes <linux/netstandby.h> from its device header and its
++netstandby glue file:
++
++  include/nss_dp_dev.h:25: #include <linux/netstandby.h>
++  nss_dp_netstandby.c:23:  #include <linux/netstandby.h>
++
++The header is a QSDK addition shipped as a uapi file
++(include/uapi/linux/netstandby.h) and reaches out-of-tree modules through
++the kernel's -I$(srctree)/include/uapi search path, so mainline 6.12
++builds fail with:
++
++  fatal error: linux/netstandby.h: No such file or directory
++
++The file is carried verbatim from QSDK 14.x.  Only the data structures and
++callback types are needed by qca-nss-dp; the actual netstandby state
++machine lives in the vendor driver drivers/soc/qcom/netstandby.c, which
++this project does not carry yet, so nss_dp_get_and_register_cb() stays
++unreferenced and the feature is inert at runtime.
++
++Classification: must-shim (vendor kernel ABI, no mainline equivalent).
++
++diff -ruN a/include/uapi/linux/netstandby.h b/include/uapi/linux/netstandby.h
++--- /dev/null
+++++ b/include/uapi/linux/netstandby.h
++@@ -0,0 +1,141 @@
+++/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
+++/*
+++ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+++ */
+++#ifndef _LINUX_NETSTANDBY_H
+++#define _LINUX_NETSTANDBY_H
+++
+++#include <linux/netdevice.h>
+++
+++#define MAX_INTERFACE 16
+++
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_SRC_IP_VALID 0x00000001	/**< Indicate if trigger rule uses source ip address */
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_DES_IP_VALID 0x00000002	/**< Indicate if trigger rule uses destination ip address */
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_SRC_MAC_VALID 0x00000004	/**< Indicate if trigger rule uses source mac address */
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_DEST_MAC_VALID 0x00000008	/**< Indicate if trigger rule uses destination mac address */
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_PROTOCOL_VALID 0x00000010	/**< Indicate if trigger rule uses L4 protocol */
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_IPV4 0x00000020		/**< Indicate if trigger rule used IP address is IPv4 */
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_IPV6 0x00000040		/**< Indicate if trigger rule used IP address is IPv6 */
+++#define NETSTANDBY_EXIT_TRIGGER_RULE_WIFI_PROTOCOL_VALID 0x00000080	/**< Indicate if trigger rule uses Wi-Fi protocol bitmap */
+++
+++#define NETSTANDBY_ENTER_NSS_FLAG_VALID_PORT_NONE 0x00000001	/**< Indicate ALL MHT port to be shut down */
+++#define NETSTANDBY_ENTER_NSS_FLAG_VALID_PORT_ALL 0x00000002	/**< Indicate ALL  MHT port be awake */
+++#define NETSTANDBY_ENTER_NSS_FLAG_VALID_PORT_IDX 0x00000004	/**< Indicate a particular port need to be in UP state */
+++
+++/*
+++ * netstandby_subsystem_type
+++ */
+++enum netstandby_subsystem_type {
+++	NETSTANDBY_SUBSYSTEM_TYPE_NSS = 0,	/**< Platform type is NSS */
+++	NETSTANDBY_SUBSYSTEM_TYPE_WIFI = 1,	/**< Platform type is WI-FI */
+++	NETSTANDBY_SUBSYSTEM_TYPE_PLATFORM = 2,	/**< Platform type is BSP */
+++	NETSTANDBY_SUBSYSTEM_TYPE_MAX,
+++};
+++
+++/*
+++ * netstandby_notification
+++ */
+++enum netstandby_notif_type {
+++	NETSTANDBY_NOTIF_ENTER_COMPLETE = 0,	/**< Enter complete notification */
+++	NETSTANDBY_NOTIF_EXIT_COMPLETE,		/**< Exit complete notification */
+++	NETSTANDBY_NOTIF_TRIGGER,		/**< Trigger wakeup trigger */
+++	NETSTANDBY_NOTIF_ENTER_FAILED,          /**< Enter failed notification */
+++	NETSTANDBY_NOTIF_EXIT_FAILED,           /**< Exit failed notification */
+++};
+++
+++/*
+++ * netstandby_exit_trigger_rule
+++ *	Trigger rule
+++ */
+++struct netstandby_exit_trigger_rule {
+++	uint32_t valid_flags;			/**< Indicates which field to consider for trigger rule */
+++	uint32_t src_ip[4];			/**< Source IP address */
+++	uint8_t smac[6];			/**< Source MAC address */
+++	uint32_t dest_ip[4];			/**< Destination IP address */
+++	uint8_t dmac[6];			/**< Destination MAC address */
+++	int protocol;				/**< Protocol */
+++};
+++
+++/*
+++ * netstandby_nss_priv_info
+++ *	NSS private information
+++ */
+++struct netstandby_nss_priv_info {
+++	uint8_t port_id;			/**< Manhattan port-id */
+++	uint16_t flags;				/**< NSS valid flags */
+++};
+++
+++/*
+++ * netstandby_wifi_priv_info
+++ *	WiFi private information
+++ */
+++struct netstandby_wifi_priv_info {
+++	int link_id[MAX_INTERFACE]; 		/**< Link ids of wakeup interfaces */
+++	int link_id_cnt;			/**< Link ids of wakeup interfaces */
+++};
+++
+++/*
+++ * netstandby_event_compl_info
+++ */
+++struct netstandby_event_compl_info {
+++	enum netstandby_notif_type event_type;		/**< Event type */
+++	enum netstandby_subsystem_type system_type;	/**< Subsystem type */
+++};
+++
+++/*
+++ * netstandby_trigger_info
+++ */
+++struct netstandby_trigger_info {
+++	struct net_device *dev;				/**< Device which receives notification */
+++	enum netstandby_subsystem_type system_type;	/**< Subsystem which receives this notification */
+++	enum netstandby_notif_type event_type;		/**< Event type */
+++};
+++
+++/*
+++ * netstandby_exit_info
+++ */
+++struct netstandby_exit_info {
+++	uint32_t reserved;		/**< Reserved */
+++};
+++
+++/*
+++ * netstandby_entry_info
+++ */
+++struct netstandby_entry_info {
+++	struct net_device *dev[MAX_INTERFACE]; 		/**< List of designated interfaces to exit network standby mode */
+++	struct netstandby_exit_trigger_rule tuple;	/**< Trigger rule informataion */
+++	struct netstandby_nss_priv_info nss_info;	/**< NSS specific entry information */
+++	struct netstandby_wifi_priv_info wifi_info;	/**< WiFi specific entry information */
+++	int iface_cnt;					/**< Number of designated wakeup interface */
+++};
+++
+++/*
+++ * Callbacks type
+++ */
+++typedef int (*netstandby_exit_cb_t) (void *app_data, struct netstandby_exit_info *exit_info);
+++typedef int (*netstandby_enter_cb_t) (void *app_data, struct netstandby_entry_info *enter_info);
+++typedef void (*netstandby_event_compl_cb_t) (void *app_data, struct netstandby_event_compl_info *event_info);
+++typedef void (*netstandby_trigger_notif_cb_t) (void *app_data, struct netstandby_trigger_info *trigger_info);
+++
+++/*
+++ * struct netstandby_reg_info
+++ * 	registration structure
+++ */
+++struct netstandby_reg_info {
+++	netstandby_enter_cb_t enter_cb;	/**< Callback to enter network standby mode */
+++	netstandby_exit_cb_t exit_cb;		/**< Callback to exit network standby mode */
+++	netstandby_event_compl_cb_t enter_cmp_cb;	/**< Callback enter completion event */
+++	netstandby_event_compl_cb_t exit_cmp_cb;	/**< Callback exit completion event */
+++	netstandby_trigger_notif_cb_t trigger_cb;	/** < Callback when wakeup trigger is received */
+++	void *app_data;				/** < Application data to filled by NSS/WI-FI/BSP and passed by Standby module */
+++};
+++
+++/*
+++ * Registration API for various subsystems (NSS, Wi-Fi, Platform)
+++ *	API(s) to be implemented and exposed by different subsystem
+++ *	and called by standby module.
+++ */
+++int nss_dp_get_and_register_cb(struct netstandby_reg_info *info);
+++int netstandby_wifi_get_and_register_cb(struct netstandby_reg_info *info);
+++int netstandby_platform_get_and_register_cb(struct netstandby_reg_info *info);
+++#endif

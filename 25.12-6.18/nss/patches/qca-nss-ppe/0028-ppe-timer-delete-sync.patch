@@ -1,0 +1,41 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-ppe: use timer_delete_sync() for 6.18
+
+6.18 removed del_timer() and del_timer_sync() with no compatibility
+aliases; include/linux/timer.h now declares timer_delete() and
+timer_delete_sync() with the same semantics. The PPE-VP module exit and
+the PPE qdisc stats cleanup still call the old names:
+
+  drv/ppe_vp/ppe_vp_base.c:345:9: error: implicit declaration of function 'del_timer_sync'; did you mean 'dev_mc_sync'?
+
+Rename both call sites (and the comment quoting the old names) so the
+timers are stopped exactly as before.
+
+Classification: portability (kernel API rename, same semantics).
+--- a/drv/ppe_vp/ppe_vp_base.c
++++ b/drv/ppe_vp/ppe_vp_base.c
+@@ -342,7 +342,7 @@
+ 	struct ppe_vp_base *pvb = &vp_base;
+ 
+ 	nss_dp_vp_rx_unregister_cb();
+-	del_timer_sync(&pvb->hw_port_stats_timer);
++	timer_delete_sync(&pvb->hw_port_stats_timer);
+ 
+ 	if (pvb->vp_hdr) {
+ 		unregister_sysctl_table(pvb->vp_hdr);
+--- a/drv/ppe_qdisc/ppe_qdisc_stats.c
++++ b/drv/ppe_qdisc/ppe_qdisc_stats.c
+@@ -338,11 +338,11 @@
+ 
+ cleanup:
+ 	/*
+-	 * Use del_timer_sync (not del_timer) to wait for any currently executing
++	 * Use timer_delete_sync (not timer_delete) to wait for any currently executing
+ 	 * timer callback (ppe_qdisc_stats_sync_restart) to complete before freeing
+ 	 * pqsw. The timer callback accesses pqsw fields and must not run after free.
+ 	 */
+-	del_timer_sync(&pqsw->stats_get_timer);
++	timer_delete_sync(&pqsw->stats_get_timer);
+ 
+ 	/*
+ 	 * The work function (ppe_qdisc_stats_sync_process_work) dequeues pqsw from

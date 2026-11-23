@@ -1,0 +1,67 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ssdk_dts: include platform_device.h; ssdk_plat: prototypes
+
+ssdk_dts.c dereferences struct platform_device (of_find_device_by_node()
+returns it and the code uses &pdev->dev).  Mainline 6.12's
+of_platform.h only forward-declares the type, so the full definition from
+<linux/platform_device.h> is required:
+
+  src/init/ssdk_dts.c:1641:78: error: invalid use of undefined type
+    'struct platform_device'
+
+The vendor kernel's of_platform.h pulled the definition in transitively.
+
+Also clear the remaining missing-prototype warnings in ssdk_plat.c: the
+three bitbang raw-access helpers are file-local, and the two psgmii
+accessors have no callers in this tree, so keep them external but give
+them a local prototype rather than making them unused static functions.
+
+--- a/src/init/ssdk_dts.c
++++ b/src/init/ssdk_dts.c
+@@ -26,6 +26,7 @@
+ #include <linux/of.h>
+ #include <linux/of_mdio.h>
+ #include <linux/of_platform.h>
++#include <linux/platform_device.h>
+ #if defined(IN_SFP_PHY)
+ #include "sfp_phy.h"
+ #endif
+--- a/src/init/ssdk_plat.c
++++ b/src/init/ssdk_plat.c
+@@ -279,7 +279,7 @@
+ }
+ 
+ #if IS_ENABLED(CONFIG_MDIO_BITBANG)
+-sw_error_t qca_bitbang_mii_raw_read_try(struct mii_bus *bus,
++static sw_error_t qca_bitbang_mii_raw_read_try(struct mii_bus *bus,
+ 				     a_uint32_t reg, a_uint32_t *val)
+ {
+ 	struct mdiobb_ctrl *gpio_priv = bus->priv;
+@@ -295,7 +295,7 @@
+ 	return SW_FAIL;
+ }
+ 
+-sw_error_t qca_bitbang_mii_raw_write_try(struct mii_bus *bus,
++static sw_error_t qca_bitbang_mii_raw_write_try(struct mii_bus *bus,
+ 					a_uint32_t reg, a_uint32_t val)
+ {
+ 	struct mdiobb_ctrl *gpio_priv = bus->priv;
+@@ -311,7 +311,7 @@
+ 	return SW_FAIL;
+ }
+ 
+-sw_error_t qca_bitbang_mii_raw_update_try(struct mii_bus *bus, a_uint32_t reg,
++static sw_error_t qca_bitbang_mii_raw_update_try(struct mii_bus *bus, a_uint32_t reg,
+ 					  a_uint32_t clear, a_uint32_t set)
+ {
+ 	struct mdiobb_ctrl *gpio_priv = bus->priv;
+@@ -732,6 +732,9 @@
+ 	return __qca_switch_reg_raw_read(dev_id, reg_addr, reg_data, len, A_FALSE);
+ }
+ 
++sw_error_t qca_psgmii_reg_read(a_uint32_t dev_id, a_uint32_t reg_addr, a_uint8_t *reg_data, a_uint32_t len);
++sw_error_t qca_psgmii_reg_write(a_uint32_t dev_id, a_uint32_t reg_addr, a_uint8_t *reg_data, a_uint32_t len);
++
+ sw_error_t
+ qca_psgmii_reg_read(a_uint32_t dev_id, a_uint32_t reg_addr, a_uint8_t * reg_data, a_uint32_t len)
+ {

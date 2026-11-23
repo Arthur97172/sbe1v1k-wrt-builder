@@ -1,0 +1,70 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: make if map helpers file-local
+
+  Five helpers are used only inside ppe_drv_if_map.c, are not exported and
+  are defined before first use -> static.  ppe_drv_if_map_prefix_add() has
+  no caller at all in this build profile (the flow dump path uses its own
+  copy in ppe_drv_flow_dump.c), so it stays static and is marked
+  __maybe_unused rather than deleted.
+
+diff -ruN a/drv/ppe_drv/ppe_drv_if_map.c b/drv/ppe_drv/ppe_drv_if_map.c
+--- a/drv/ppe_drv/ppe_drv_if_map.c
++++ b/drv/ppe_drv/ppe_drv_if_map.c
+@@ -53,7 +53,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_if_map_write_reset(struct ppe_drv_if_map_instance *mfi, char *prefix)
++static int ppe_drv_if_map_write_reset(struct ppe_drv_if_map_instance *mfi, char *prefix)
+ {
+ 	int result;
+ 
+@@ -76,8 +76,11 @@
+  *	Add another level to the prefix
+  *
+  * Returns 0 on success
++ *
++ * No caller in this build profile: the flow dump path uses the separate
++ * helpers in ppe_drv_flow_dump.c.  Kept for the vendor API.
+  */
+-int ppe_drv_if_map_prefix_add(struct ppe_drv_if_map_instance *mfi, char *prefix)
++static int __maybe_unused ppe_drv_if_map_prefix_add(struct ppe_drv_if_map_instance *mfi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -104,7 +107,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_if_map_prefix_index_add(struct ppe_drv_if_map_instance *mfi, uint32_t index)
++static int ppe_drv_if_map_prefix_index_add(struct ppe_drv_if_map_instance *mfi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -130,7 +133,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_if_map_prefix_remove(struct ppe_drv_if_map_instance *mfi)
++static int ppe_drv_if_map_prefix_remove(struct ppe_drv_if_map_instance *mfi)
+ {
+ 	int pxsz;
+ 
+@@ -148,7 +151,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_if_map_write(struct ppe_drv_if_map_instance *mfi, char *name, char *fmt, ...)
++static int ppe_drv_if_map_write(struct ppe_drv_if_map_instance *mfi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -190,7 +193,7 @@
+  * ppe_drv_if_map_dump_get()
+  *	Prepare a connection message for ipv4
+  */
+-int ppe_drv_if_map_dump_get(struct ppe_drv_if_map_instance *mfi)
++static int ppe_drv_if_map_dump_get(struct ppe_drv_if_map_instance *mfi)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 	struct ppe_drv_iface *iface;

@@ -1,0 +1,37 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 导出 udp_table 供 qca-nss-sfe 使用
+
+sfe.ko 在处理分片流量的建立与解封装时，需要用 __udp4_lib_lookup() /
+__udp6_lib_lookup()（sfe_ipv4.c、sfe_ipv6.c 传入 &udp_table）找到流对应
+的 UDP socket。QSDK 内核导出了 udp_table，主线 6.18 仍有这张表但没有
+EXPORT_SYMBOL，于是 modpost 报 "udp_table undefined"。
+
+本补丁只在定义之后加一行 EXPORT_SYMBOL(udp_table)，使用的仍是主线
+自己的表，行为不变。
+
+分类：必须 shim（厂商内核 ABI）；导出主线既有实现。
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0514-net-ipv4-export-udp-table.patch b/target/linux/qualcommbe/patches-6.18/0514-net-ipv4-export-udp-table.patch
+--- a/target/linux/qualcommbe/patches-6.18/0514-net-ipv4-export-udp-table.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0514-net-ipv4-export-udp-table.patch	2026-11-23 01:10:00.000000000 +0000
+@@ -0,0 +1,21 @@
++net: ipv4: export udp_table
++
++QSDK's kernel exports udp_table so that qca-nss-sfe can resolve the UDP
++socket behind a decapsulated flow through __udp4_lib_lookup() and
++__udp6_lib_lookup() (sfe_ipv4.c, sfe_ipv6.c pass &udp_table).  Mainline
++6.18 defines the table but no longer exports it, so qca-nss-sfe.ko
++fails at modpost with "udp_table undefined".
++
++Classification: must-shim (vendor kernel ABI); the exported symbol is
++mainline's own table, unchanged.
++
++--- a/net/ipv4/udp.c
+++++ b/net/ipv4/udp.c
++@@ -123,6 +123,7 @@
++ #include <net/rps.h>
++ 
++ struct udp_table udp_table __read_mostly;
+++EXPORT_SYMBOL(udp_table);
++ 
++ long sysctl_udp_mem[3] __read_mostly;
++ EXPORT_IPV6_MOD(sysctl_udp_mem);

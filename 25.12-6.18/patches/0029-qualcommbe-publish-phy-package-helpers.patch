@@ -1,0 +1,85 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 为树外 PHY 驱动发布 phy_package 辅助接口
+
+6.18 把 struct phy_package_shared 收进 drivers/net/phy/phy_package.c
+变成私有类型，join 类函数的声明也搬到了私有的 drivers/net/phy/phylib.h。
+qca-nss-phy（qca8084 / qce1204 / qca81xx）是树外模块，include 不到这个
+头，于是编译立刻丢掉了全部声明：
+
+  error: implicit declaration of function 'devm_of_phy_package_join'
+  error: invalid use of undefined type 'struct phy_package_shared'
+
+本补丁把这些原型放回 include/linux/phy.h，并新增
+phy_package_get_base_addr()——base_addr 是厂商代码仍在读、而 6.18 唯一
+没给访问器的成员。原有辅助函数上游都已 EXPORT_SYMBOL_GPL 导出，新增访问器
+同样导出；没有监听者时行为不变。
+
+分类：必须 shim（厂商内核 ABI）；只加声明和一个只读访问器。
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0513-net-phy-publish-phy-package-helpers.patch b/target/linux/qualcommbe/patches-6.18/0513-net-phy-publish-phy-package-helpers.patch
+--- a/target/linux/qualcommbe/patches-6.18/0513-net-phy-publish-phy-package-helpers.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0513-net-phy-publish-phy-package-helpers.patch	2026-11-22 23:31:26.873253952 +0000
+@@ -0,0 +1,64 @@
++net: phy: publish PHY package helpers for out-of-tree PHY drivers
++
++Mainline 6.18 moved struct phy_package_shared into drivers/net/phy/
++phy_package.c as a private type and kept the package-join helper
++declarations in the private drivers/net/phy/phylib.h header.  PHY drivers
++built outside the kernel tree (the QSDK qca-nss-phy package drives
++qca8084, qce1204 and qca81xx this way) cannot include that header, so
++they lost every declaration at once:
++
++  error: implicit declaration of function 'devm_of_phy_package_join'
++  error: invalid use of undefined type 'struct phy_package_shared'
++
++Publish the prototypes those drivers use in include/linux/phy.h, and add
++phy_package_get_base_addr(): base_addr is the only member they still
++read and the only one 6.18 left without an accessor.  All of the helpers
++are already EXPORT_SYMBOL_GPL()ed upstream; the new accessor is exported
++the same way.
++
++Classification: must-shim (vendor kernel ABI); declarations plus one
++read-only accessor next to the existing ones.
++--- a/include/linux/phy.h
+++++ b/include/linux/phy.h
++@@ -1903,6 +1903,26 @@
++ int phy_restart_aneg(struct phy_device *phydev);
++ int phy_reset_after_clk_enable(struct phy_device *phydev);
++ 
+++/*
+++ * PHY package support, for PHY drivers built outside the kernel tree: 6.18
+++ * keeps these declarations in the private drivers/net/phy/phylib.h header,
+++ * which external modules cannot include.
+++ */
+++struct device_node;
+++struct device_node *phy_package_get_node(struct phy_device *phydev);
+++void *phy_package_get_priv(struct phy_device *phydev);
+++int phy_package_get_base_addr(struct phy_device *phydev);
+++int phy_package_join(struct phy_device *phydev, int base_addr, size_t priv_size);
+++int of_phy_package_join(struct phy_device *phydev, size_t priv_size);
+++void phy_package_leave(struct phy_device *phydev);
+++int devm_phy_package_join(struct device *dev, struct phy_device *phydev,
+++			  int base_addr, size_t priv_size);
+++int devm_of_phy_package_join(struct device *dev, struct phy_device *phydev,
+++			     size_t priv_size);
+++bool phy_package_init_once(struct phy_device *phydev);
+++bool phy_package_probe_once(struct phy_device *phydev);
+++bool phy_package_remove_once(struct phy_device *phydev);
+++
++ #if IS_ENABLED(CONFIG_PHYLIB)
++ int phy_start_cable_test(struct phy_device *phydev,
++ 			 struct netlink_ext_ack *extack);
++--- a/drivers/net/phy/phy_package.c
+++++ b/drivers/net/phy/phy_package.c
++@@ -52,6 +52,12 @@
++ }
++ EXPORT_SYMBOL_GPL(phy_package_get_priv);
++ 
+++int phy_package_get_base_addr(struct phy_device *phydev)
+++{
+++	return phydev->shared->base_addr;
+++}
+++EXPORT_SYMBOL_GPL(phy_package_get_base_addr);
+++
++ static int phy_package_address(struct phy_device *phydev,
++ 			       unsigned int addr_offset)
++ {

@@ -1,0 +1,19 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: include the exported PPPoE session header in its source
+
+ppe_drv_pppoe_session_deinit() and ppe_drv_pppoe_session_init() are
+EXPORT_SYMBOL'd and declared in exports/ppe_drv_pppoe_session.h, but the
+translation unit never includes that header, so -Wmissing-prototypes
+(6.10) fires.  Include the header rather than repeating the prototypes.
+diff -ruN a/drv/ppe_drv/ppe_drv_pppoe_session.c b/drv/ppe_drv/ppe_drv_pppoe_session.c
+--- a/drv/ppe_drv/ppe_drv_pppoe_session.c
++++ b/drv/ppe_drv/ppe_drv_pppoe_session.c
+@@ -5,6 +5,8 @@
+ 
+ #include <linux/netdevice.h>
+ #include "ppe_drv.h"
++/* Own exported API: gives the exported functions a visible prototype. */
++#include <exports/ppe_drv_pppoe_session.h>
+ 
+ /**
+  * ppe_drv_pppoe_session_deinit

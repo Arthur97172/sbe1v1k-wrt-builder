@@ -1,0 +1,134 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss_dp_main: port RPS lookup, mem-profile size and driver ops to 6.12
+
+Four independent 6.10-6.12 changes hit nss_dp_main.c and nss_dp_dev.h:
+
+1. RPS internals (Linux 6.11 "net: move rps fields to net_hotdata"):
+   struct rps_dev_flow_table, struct rps_sock_flow_table and struct
+   rps_dev_flow became visible only through <net/rps.h>, and the globals
+   rps_sock_flow_table / rps_cpu_mask moved into net_hotdata.  The RX
+   flow-steering path is otherwise unchanged; net_hotdata is exported.
+   Class: mainline-replaces-API.
+
+2. skb_active_profile (nss_dp_dev.h): the RX buffer size came from QSDK's
+   CONFIG_SKB_RECYCLER memory-profile table, which mainline does not have.
+   QSDK's own table resolves to __SKB_VAL = 1984 on 64-bit targets for all
+   three profiles unless CONFIG_SKB_RECYCLE_SIZE is 1664, so the value is
+   pinned to 1984 with a comment.  Class: must-shim (vendor kernel ABI,
+   not needed for the mainline data path's correctness).
+
+3. -Wmissing-prototypes (Linux 6.10): nss_dp_adjust_link(), nss_dp_init()
+   and nss_dp_exit() have no prototype.  All three are file-local (the
+   adjust_link callback is only passed to phy_connect(), the other two
+   only to module_init/module_exit), so give them internal linkage.
+   Class: mainline-replaces-API (compiler policy tightened).
+
+4. platform_driver::remove (Linux 6.11 "driver core: make driver remove()
+   return void"): nss_dp_remove() returned int.  Make it void and drop the
+   trailing return 0;.  Class: mainline-replaces-API.
+
+Original diagnostics:
+
+nss_dp_main.c:696:29: error: invalid use of undefined type 'struct rps_dev_flow_table'
+nss_dp_main.c:699:43: error: 'rps_sock_flow_table' undeclared
+nss_dp_main.c:706:19: error: 'rps_cpu_mask' undeclared
+nss_dp_main.c:1079:6: error: no previous prototype for 'nss_dp_adjust_link'
+nss_dp_main.c:1392:19: error: initialization of 'void (*)(struct platform_device *)'
+  from incompatible pointer type 'int (*)(struct platform_device *)'
+nss_dp_main.c:1567:12: error: no previous prototype for 'nss_dp_init'
+nss_dp_main.c:1669:13: error: no previous prototype for 'nss_dp_exit'
+include/nss_dp_dev.h:74:42: error: 'skb_active_profile' undeclared
+diff -ruN a/include/nss_dp_dev.h b/include/nss_dp_dev.h
+--- a/include/nss_dp_dev.h
++++ b/include/nss_dp_dev.h
+@@ -69,9 +69,15 @@
+ #define NSS_DP_GSO_MAX_SEGS		NSS_DP_HAL_GSO_MAX_SEGS
+ 
+ /*
+- * Rx buffer allocation size as per memory profile
++ * Rx buffer allocation size.  The vendor kernel derives it from
++ * skb_active_profile,
++ * part of its CONFIG_SKB_RECYCLER memory-profile support.  Mainline 6.12
++ * does not carry that infrastructure.  QSDK's profile table resolves to
++ * __SKB_VAL = 1984 on 64-bit targets for all three profiles (optimized,
++ * balanced, high) unless CONFIG_SKB_RECYCLE_SIZE is 1664, so use that
++ * value directly.
+  */
+-#define NSS_DP_RX_BUFFER_SIZE		(skb_active_profile->value)
++#define NSS_DP_RX_BUFFER_SIZE		1984
+ 
+ /*
+  * With Page pool Keep Rx buffer allocation size to (2048-320) = 1728.
+diff -ruN a/nss_dp_main.c b/nss_dp_main.c
+--- a/nss_dp_main.c
++++ b/nss_dp_main.c
+@@ -28,6 +28,7 @@
+ #include <net/switchdev.h>
+ #if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 6, 0))
+ #include <net/netdev_rx_queue.h>
++#include <net/rps.h>
+ #endif
+ #if defined(NSS_DP_MAC_POLL_SUPPORT)
+ #include <init/ssdk_init.h>
+@@ -696,14 +697,14 @@
+ 	rxflow = &flow_table->flows[hash & flow_table->mask];
+ 	rxcpu = (uint32_t)rxflow->cpu;
+ 
+-	sock_flow_table = rcu_dereference(rps_sock_flow_table);
++	sock_flow_table = rcu_dereference(net_hotdata.rps_sock_flow_table);
+ 	if (!sock_flow_table) {
+ 		netdev_dbg(netdev, "Global RPS flow table not found\n");
+ 		return -EINVAL;
+ 	}
+ 
+ 	rfscpu = sock_flow_table->ents[hash & sock_flow_table->mask];
+-	rfscpu &= rps_cpu_mask;
++	rfscpu &= net_hotdata.rps_cpu_mask;
+ 
+ 	if (rxcpu == rfscpu)
+ 		return 0;
+@@ -1076,7 +1077,7 @@
+ /*
+  * nss_dp_adjust_link()
+  */
+-void nss_dp_adjust_link(struct net_device *netdev)
++static void nss_dp_adjust_link(struct net_device *netdev)
+ {
+ 	struct nss_dp_dev *dp_priv = netdev_priv(netdev);
+ 	int current_state = dp_priv->link_state;
+@@ -1323,7 +1324,7 @@
+  * Note: We only remove the physical ports here. Virtual
+  * port devices are removed explicitly by the VP module.
+  */
+-static int nss_dp_remove(struct platform_device *pdev)
++static void nss_dp_remove(struct platform_device *pdev)
+ {
+ 	uint32_t i;
+ 	struct nss_dp_dev *dp_priv;
+@@ -1377,8 +1378,6 @@
+ 		free_netdev(dp_priv->netdev);
+ 		dp_global_ctx.nss_dp[i] = NULL;
+ 	}
+-
+-	return 0;
+ }
+ 
+ static struct of_device_id nss_dp_dt_ids[] = {
+@@ -1564,7 +1563,7 @@
+ /*
+  * nss_dp_init()
+  */
+-int __init nss_dp_init(void)
++static int __init nss_dp_init(void)
+ {
+ 	int ret, i;
+ 
+@@ -1666,7 +1665,7 @@
+ /*
+  * nss_dp_exit()
+  */
+-void __exit nss_dp_exit(void)
++static void __exit nss_dp_exit(void)
+ {
+ 	/*
+ 	 * Ensure netdev remove is done before HAL cleanup.

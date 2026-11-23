@@ -1,0 +1,38 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: make mdio-ahb platform remove() return void
+
+The platform driver .remove callback returns void since v6.11, and the
+int-returning .remove_new alias was removed in v6.12, so assigning
+mdio_ahb_remove() to .remove no longer compiles.  Drop the return value;
+the function never failed in the first place (it always returned 0).
+---
+--- a/linux_std/mdio_ahb/mdio-ahb.c	2026-10-21 04:46:14.860779220 +0000
++++ b/linux_std/mdio_ahb/mdio-ahb.c	2026-10-23 23:17:00.604052379 +0000
+@@ -437,15 +437,15 @@
+  * This function is called when the platform device is removed.
+  * It unregisters and frees the MDIO-AHB bus.
+  *
+- * Return: 0 on success
++ * Return: void
+  */
+-static int mdio_ahb_remove(struct platform_device *pdev)
++static void mdio_ahb_remove(struct platform_device *pdev)
+ {
+ 	struct mdio_ahb_driver_data *drv_data = platform_get_drvdata(pdev);
+ 	struct mii_bus *bus;
+ 
+ 	if (!drv_data)
+-		return 0;
++		return;
+ 
+ 	bus = drv_data->bus;
+ 
+@@ -464,8 +464,6 @@
+ 	mdio_ahb_clock_deinit(drv_data);
+ 
+ 	dev_info(&pdev->dev, "MDIO-AHB bus removed\n");
+-
+-	return 0;
+ }
+ 
+ /* Device tree match table */

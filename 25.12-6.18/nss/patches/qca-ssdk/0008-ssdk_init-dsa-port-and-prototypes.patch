@@ -1,0 +1,198 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ssdk_init: port DSA events to 6.12 netdevice notifiers
+
+Mainline DSA dropped the DSA notifier API that QSDK 14.x uses:
+
+  src/init/ssdk_init.c:1714:14: error: implicit declaration of function
+    'dsa_slave_dev_check'; did you mean 'dsa_user_dev_check'?
+  src/init/ssdk_init.c:1719:73: error: 'struct dsa_port' has no member
+    named 'master'
+  src/init/ssdk_init.c:1760:22: error: 'DSA_NOTIFIER_PORT_LINK' undeclared
+  src/init/ssdk_init.c:1763:59: error: invalid use of undefined type
+    'struct dsa_notifier_link'
+  src/init/ssdk_init.c:1862:17: error: implicit declaration of function
+    'register_dsa_blocking_notifier'
+
+Mappings:
+ - dsa_slave_dev_check()  -> dsa_user_dev_check()   [rename]
+ - dp->cpu_dp->master     -> dsa_port_to_conduit(dp) [rename; the
+   dsa_port union now names the CPU-port netdev 'conduit']
+ - DSA_NOTIFIER_PORT_LINK -> netdevice notifier NETDEV_CHANGE filtered
+   with dsa_user_dev_check(), with netif_carrier_ok() replacing
+   info->link.  Registration stays gated on the same legacy chip
+   versions (MHT/AR8337/AR8327), so ipq95xx/APPE never runs it.
+
+Classification: 6.12 移除的 API，主线已有替代（netdevice notifier）。
+
+Also fix the missing-prototype warnings in this file: include fal_uk_if.h
+for ssdk_cleanup(), keep qca_ar8327_phy_linkdown() external (ref_port_ctrl.c
+calls it) with a local prototype, and give the remaining file-local
+helpers internal linkage.
+
+--- a/src/init/ssdk_init.c
++++ b/src/init/ssdk_init.c
+@@ -51,6 +51,7 @@
+ #include <linux/of_address.h>
+ #include <linux/reset.h>
+ #include "ssdk_plat.h"
++#include "fal_uk_if.h"
+ /*qca808x_end*/
+ #include "ssdk_clk.h"
+ #include "ssdk_led.h"
+@@ -572,7 +573,7 @@
+ 	}
+ }
+ 
+-void
++static void
+ qca_mac_disable(a_uint32_t device_id)
+ {
+ 	hsl_api_t *p_api;
+@@ -619,7 +620,7 @@
+ 	return;
+ }
+ 
+-void
++static void
+ qca_ar8327_phy_enable(struct qca_phy_priv *priv)
+ {
+ 	int i = 0;
+@@ -641,7 +642,7 @@
+ 		msleep(100);
+ 	}
+ }
+-void qca_ar8327_sw_soft_reset(struct qca_phy_priv *priv)
++static void qca_ar8327_sw_soft_reset(struct qca_phy_priv *priv)
+ {
+ 	a_uint32_t value = 0;
+ 
+@@ -1022,7 +1023,7 @@
+ 	return rv;
+ }
+ 
+-void qm_err_check_work_init(struct qca_phy_priv *priv)
++static void qm_err_check_work_init(struct qca_phy_priv *priv)
+ {
+ 	if (_qm_err_work_chip_check(priv) != SW_OK)
+ 		return;
+@@ -1075,7 +1076,7 @@
+ 	return;
+ }
+ 
+-void
++static void
+ qca_mac_sw_sync_work_task(struct work_struct *work)
+ {
+ 	adpt_api_t *p_adpt_api;
+@@ -1525,7 +1526,7 @@
+ EXPORT_SYMBOL(ssdk_port_phylink_destroy);
+ #endif
+ 
+-void
++static void
+ qca_fdb_sw_sync_work_task(struct work_struct *work)
+ {
+ 	struct qca_phy_priv *priv = container_of(work, struct qca_phy_priv,
+@@ -1538,7 +1539,7 @@
+ 		msecs_to_jiffies(QCA_FDB_SW_SYNC_WORK_DELAY));
+ }
+ 
+-int
++static int
+ qca_fdb_sw_sync_work_init(struct qca_phy_priv *priv)
+ {
+ 	if ((priv->version != QCA_VER_HPPE) && (priv->version != QCA_VER_APPE) &&
+@@ -1711,12 +1712,12 @@
+ 	ssdk_netdev_switch_t *netdev_switch = NULL;
+ 	a_uint32_t dev_id = 0;
+ 
+-	if (!dsa_slave_dev_check(dev))
++	if (!dsa_user_dev_check(dev))
+ 		return NULL;
+ 
+ 	/* find dp,master by dsa helper and get net_switch */
+ 	dp = dsa_port_from_netdev(dev);
+-	netdev_switch = ssdk_dts_netdev_switch_find_by_netdev(dp->cpu_dp->master);
++	netdev_switch = ssdk_dts_netdev_switch_find_by_netdev(dsa_port_to_conduit(dp));
+ 	if (netdev_switch) {
+ 		dev_id = netdev_switch->switch_dev_id;
+ 	}
+@@ -1753,21 +1754,26 @@
+ 	}
+ }
+ 
++/*
++ * Mainline removed the DSA notifier API (DSA_NOTIFIER_PORT_LINK,
++ * struct dsa_notifier_link, register_dsa_blocking_notifier) in favour of
++ * plain netdevice events on the user port.  Replace it with a netdevice
++ * notifier filtered to DSA user devices; netif_carrier_ok() replaces
++ * info->link.
++ */
+ static int ssdk_dsa_event_nb(struct notifier_block *unused,
+ 		unsigned long event, void *ptr)
+ {
+-	switch (event) {
+-		case DSA_NOTIFIER_PORT_LINK:
+-			struct dsa_notifier_link *info = (struct dsa_notifier_link *)ptr;
++	struct net_device *dev;
+ 
+-			SSDK_DEBUG("%s, link: %d.\n", info->info.dev->name, info->link);
+-			return ssdk_dsa_event_link_change(info->info.dev, info->link);
++	if (event != NETDEV_CHANGE)
++		return NOTIFY_DONE;
+ 
+-		default:
+-			SSDK_INFO("DSA event %lu is not supported\n", event);
+-	}
++	dev = netdev_notifier_info_to_dev(ptr);
++	if (!dsa_user_dev_check(dev))
++		return NOTIFY_DONE;
+ 
+-	return NOTIFY_DONE;
++	return ssdk_dsa_event_link_change(dev, netif_carrier_ok(dev));
+ }
+ 
+ static struct notifier_block ssdk_dsa_notifier_nb = {
+@@ -1859,12 +1865,14 @@
+ 	if (priv->version == QCA_VER_MHT ||
+ 		priv->version == QCA_VER_AR8337 ||
+ 		priv->version == QCA_VER_AR8327)
+-		register_dsa_blocking_notifier(&ssdk_dsa_notifier_nb);
++		register_netdevice_notifier(&ssdk_dsa_notifier_nb);
+ #endif
+ 
+ 	return 0;
+ }
+ 
++void qca_ar8327_phy_linkdown(a_uint32_t dev_id);
++
+ static int ssdk_switch_unregister(a_uint32_t dev_id)
+ {
+ 	struct qca_phy_priv *priv = qca_phy_priv_global[dev_id];
+@@ -1887,7 +1895,7 @@
+ 	if (priv->version == QCA_VER_MHT ||
+ 		priv->version == QCA_VER_AR8337 ||
+ 		priv->version == QCA_VER_AR8327)
+-		unregister_dsa_blocking_notifier(&ssdk_dsa_notifier_nb);
++		unregister_netdevice_notifier(&ssdk_dsa_notifier_nb);
+ #endif
+ 
+ 	return 0;
+@@ -2220,7 +2228,7 @@
+ 			if (strstr(dev->name, "eth") && !(dev->priv_flags & IFF_802_1Q_VLAN))
+ 				ssdk_netdev_switch_init(dev);
+ #if IS_ENABLED(CONFIG_NET_DSA)
+-			if (dsa_slave_dev_check(dev))
++			if (dsa_user_dev_check(dev))
+ 				ssdk_dsa_intf_register(dev);
+ #endif
+ 			break;
+@@ -2339,7 +2347,7 @@
+ }
+ #endif
+ 
+-void ssdk_init_status_debug_state(a_uint32_t dev_id, ssdk_init_state_t state, int rv)
++static void ssdk_init_status_debug_state(a_uint32_t dev_id, ssdk_init_state_t state, int rv)
+ {
+ 	struct qca_phy_priv *priv;
+ 

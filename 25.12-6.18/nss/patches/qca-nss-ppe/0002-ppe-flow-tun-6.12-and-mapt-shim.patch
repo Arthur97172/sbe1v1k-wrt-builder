@@ -1,0 +1,138 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: flow/tunnel fixes for Linux 6.12 and MAP-T shim
+
+Second batch of 6.12 port fixes for the qca-nss-ppe core module:
+
+  ppe_drv_flow.c     vzalloc()/vfree() are implicit without
+                     <linux/vmalloc.h>; include it (mainline has the
+                     calls, only the header was missing)
+  ppe_drv_flow.c     -Wmissing-prototypes (6.10): five helpers used only
+                     inside this file and never exported -> static
+  ppe_drv_flow.c     dev->priv_flags_ext / IFF_EXT_MAPT do not exist
+  tun/ppe_drv_tun_v6.c  in mainline (see below)
+
+Classification:
+
+  mainline equivalent     vmalloc header include
+  must shim               priv_flags_ext / IFF_EXT_MAPT
+
+QSDK adds a priv_flags_ext word to struct net_device and sets
+IFF_EXT_MAPT on MAP-T interfaces.  Mainline 6.12 has neither field nor
+flag, and qca-nss-ppe-mapt is not part of this port, so nothing can ever
+set the bit here.  ppe_drv_dev_is_mapt() therefore returns false, which
+makes the port behave exactly like a QSDK build without MAP-T rather
+than dropping the check.  This is a behavioural shim, not a build fix:
+if MAP-T is added later it has to become a real mainline flag.
+
+ppe_tun is built for this target (PPE_TUN_ENABLE=y), which is why
+tun/ppe_drv_tun_v6.c is fixed here as well.
+diff -ruN a/drv/ppe_drv/ppe_drv_flow.c b/drv/ppe_drv/ppe_drv_flow.c
+--- a/drv/ppe_drv/ppe_drv_flow.c
++++ b/drv/ppe_drv/ppe_drv_flow.c
+@@ -10,6 +10,7 @@
+ #include <fal/fal_flow.h>
+ #include <fal/fal_qos.h>
+ #include <linux/phy.h>
++#include <linux/vmalloc.h>
+ #include "ppe_drv.h"
+ #include "tun/ppe_drv_tun.h"
+ 
+@@ -129,7 +130,7 @@
+  * ppe_drv_flow_sawf_sc_stats_add()
+  *	Update stats for given service class.
+  */
+-void ppe_drv_flow_sawf_sc_stats_add(uint8_t service_class, uint32_t delta_pkts, uint32_t delta_bytes)
++static void ppe_drv_flow_sawf_sc_stats_add(uint8_t service_class, uint32_t delta_pkts, uint32_t delta_bytes)
+ {
+ 	struct ppe_drv_stats_sawf_sc *sawf_sc_stats;
+ 
+@@ -976,7 +977,7 @@
+  * ppe_drv_flow_v6_pri_profile_get()
+  *	Apply appropiate pri_profile for this flow.
+  */
+-bool ppe_drv_flow_v6_pri_profile_get(struct ppe_drv_v6_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *pri_profile)
++static bool ppe_drv_flow_v6_pri_profile_get(struct ppe_drv_v6_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *pri_profile)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 	struct ppe_drv_flow *reverse_flow = NULL;
+@@ -1213,7 +1214,7 @@
+  * ppe_drv_flow_v6_service_code_get()
+  *	Return service code required for this flow.
+  */
+-bool ppe_drv_flow_v6_service_code_get(struct ppe_drv_v6_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *scp)
++static bool ppe_drv_flow_v6_service_code_get(struct ppe_drv_v6_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *scp)
+ {
+ 	struct ppe_drv *p __maybe_unused = ppe_drv_gbl;
+ 	struct ppe_drv_port *port_rx = pcf->rx_port;
+@@ -2608,7 +2609,7 @@
+  * ppe_drv_flow_v4_pri_profile_get()
+  *	Apply appropiate pri_profile for this flow.
+  */
+-bool ppe_drv_flow_v4_pri_profile_get(struct ppe_drv_v4_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *pri_profile)
++static bool ppe_drv_flow_v4_pri_profile_get(struct ppe_drv_v4_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *pri_profile)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 	struct ppe_drv_flow *reverse_flow = NULL;
+@@ -2829,7 +2830,7 @@
+  * ppe_drv_flow_v4_service_code_get()
+  *	Return service code required for this flow.
+  */
+-bool ppe_drv_flow_v4_service_code_get(struct ppe_drv_v4_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *scp)
++static bool ppe_drv_flow_v4_service_code_get(struct ppe_drv_v4_conn_flow *pcf, struct ppe_drv_port *pp, uint8_t *scp)
+ {
+ 	struct ppe_drv *p __maybe_unused = ppe_drv_gbl;
+ 	struct ppe_drv_port *port_rx = pcf->rx_port;
+@@ -3543,7 +3544,7 @@
+ 		 */
+ 		flow_cfg.fwd_type = FAL_FLOW_FORWARD;
+ 		ppe_drv_trace("%p: flow_tbl[fwd_type]: L2-Multicast: %u", pcf, FAL_FLOW_FORWARD);
+-	} else if ((match_src_ip != xlate_src_ip) || (dev_eg && (dev_eg->priv_flags_ext & IFF_EXT_MAPT))) {
++	} else if ((match_src_ip != xlate_src_ip) || (dev_eg && ppe_drv_dev_is_mapt(dev_eg))) {
+ 		/*
+ 		 * Case SNAT
+ 		 */
+@@ -3551,7 +3552,7 @@
+ 		flow_cfg.snat_nexthop = nh->index;
+ 		flow_cfg.snat_srcport = ppe_drv_v4_conn_flow_xlate_src_ident_get(pcf);
+ 		ppe_drv_trace("%p: flow_tbl[nat_type]: SNAT: %u snat_port: %u", pcf, FAL_FLOW_SNAT, flow_cfg.snat_srcport);
+-	} else if ((match_dest_ip != xlate_dest_ip) || (dev_in && (dev_in->priv_flags_ext & IFF_EXT_MAPT))) {
++	} else if ((match_dest_ip != xlate_dest_ip) || (dev_in && ppe_drv_dev_is_mapt(dev_in))) {
+ 		/*
+ 		 * Case DNAT
+ 		 */
+diff -ruN a/drv/ppe_drv/ppe_drv.h b/drv/ppe_drv/ppe_drv.h
+--- a/drv/ppe_drv/ppe_drv.h
++++ b/drv/ppe_drv/ppe_drv.h
+@@ -61,6 +61,20 @@
+ #include <linux/netdevice.h>
+ #endif
+ 
++/*
++ * QSDK extends struct net_device with a priv_flags_ext word and marks
++ * MAP-T interfaces with IFF_EXT_MAPT.  Mainline 6.12 has neither, and the
++ * MAP-T client (qca-nss-ppe-mapt) is not part of this port, so no
++ * interface can ever carry the flag and the test is always false.  This
++ * keeps the port's behaviour identical to a QSDK build without MAP-T.
++ * If MAP-T support is added later, this must become a real flag on the
++ * mainline net_device rather than a constant.
++ */
++static inline bool ppe_drv_dev_is_mapt(const struct net_device *dev)
++{
++	return false;
++}
++
+ extern uint32_t static_dbg_level;
+ extern bool flow_deacclr_dis;
+ extern int mac_lrn_exception_en;
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_v6.c b/drv/ppe_drv/tun/ppe_drv_tun_v6.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_v6.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_v6.c
+@@ -281,7 +281,7 @@
+ 	/*
+ 	 * Check if the rule is for MAP-T
+ 	 */
+-	if (dev->priv_flags_ext & IFF_EXT_MAPT) {
++	if (ppe_drv_dev_is_mapt(dev)) {
+ 		spin_unlock_bh(&p->lock);
+ 		return true;
+ 	}

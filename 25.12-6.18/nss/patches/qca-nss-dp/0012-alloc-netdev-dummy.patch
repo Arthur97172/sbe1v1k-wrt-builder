@@ -1,0 +1,102 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-dp: allocate the NAPI dummy netdev with alloc_netdev_dummy()
+
+6.18 made init_dummy_netdev() static in net/core/dev.c; the only exported
+entry point left is alloc_netdev_dummy(sizeof_priv) (EXPORT_SYMBOL_GPL),
+released with free_netdev(). edma_ppeds.c still calls the old helper on an
+embedded struct net_device:
+
+  edma_ppeds.c:968:9: error: implicit declaration of function 'init_dummy_netdev'
+
+Keep one dummy net_device per PPE-DS node, but hold it as a pointer:
+allocate it in edma_ppeds_wifi7_setup() before the NAPIs are added, fail
+cleanly through the existing teardown chain, and release it in
+edma_ppeds_inst_free() just before the node itself is freed.
+
+edma v2 is the one built for ipq95xx (edma_v3 serves other SoCs); only v2
+is touched.
+
+Classification: portability (kernel API removal, no behaviour change).
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_ppeds.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_ppeds.c
+@@ -965,7 +965,12 @@
+ 	/*
+ 	 * Setup dummy netdev for all the NAPIs associated with this node
+ 	 */
+-	init_dummy_netdev(&ppeds_node->napi_ndev);
++	ppeds_node->napi_ndev = alloc_netdev_dummy(0);
++	if (!ppeds_node->napi_ndev) {
++		edma_err("Failed to allocate dummy netdev for node %d\n",
++				ppeds_node->db_idx);
++		goto napi_ndev_alloc_failed;
++	}
+ 
+ 	/*
+ 	 * Setup TxComp IRQ and NAPI
+@@ -984,10 +989,10 @@
+ 	}
+ 
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+-	netif_napi_add(&ppeds_node->napi_ndev, &ppeds_node_cfg->txcmpl_ring.napi,
++	netif_napi_add(ppeds_node->napi_ndev, &ppeds_node_cfg->txcmpl_ring.napi,
+ 			edma_ppeds_txcomp_napi_poll, wifi7_hdl->eth_txcomp_budget);
+ #else
+-	netif_napi_add_weight(&ppeds_node->napi_ndev, &ppeds_node_cfg->txcmpl_ring.napi,
++	netif_napi_add_weight(ppeds_node->napi_ndev, &ppeds_node_cfg->txcmpl_ring.napi,
+ 			edma_ppeds_txcomp_napi_poll, wifi7_hdl->eth_txcomp_budget);
+ #endif
+ 
+@@ -1022,10 +1027,10 @@
+ 	}
+ 
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+-	netif_napi_add(&ppeds_node->napi_ndev, &ppeds_node_cfg->rx_ring.napi,
++	netif_napi_add(ppeds_node->napi_ndev, &ppeds_node_cfg->rx_ring.napi,
+ 			edma_ppeds_rx_napi_poll, EDMA_PPEDS_RX_WEIGHT);
+ #else
+-	netif_napi_add_weight(&ppeds_node->napi_ndev, &ppeds_node_cfg->rx_ring.napi,
++	netif_napi_add_weight(ppeds_node->napi_ndev, &ppeds_node_cfg->rx_ring.napi,
+ 		edma_ppeds_rx_napi_poll, EDMA_PPEDS_RX_WEIGHT);
+ #endif
+ 
+@@ -1047,10 +1052,10 @@
+ 	}
+ 
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+-	netif_napi_add(&ppeds_node->napi_ndev, &ppeds_node_cfg->rxfill_ring.napi,
++	netif_napi_add(ppeds_node->napi_ndev, &ppeds_node_cfg->rxfill_ring.napi,
+ 			edma_ppeds_rxfill_napi_poll, wifi7_hdl->eth_rxfill_budget);
+ #else
+-	netif_napi_add_weight(&ppeds_node->napi_ndev, &ppeds_node_cfg->rxfill_ring.napi,
++	netif_napi_add_weight(ppeds_node->napi_ndev, &ppeds_node_cfg->rxfill_ring.napi,
+ 			edma_ppeds_rxfill_napi_poll, wifi7_hdl->eth_rxfill_budget);
+ #endif
+ 
+@@ -1111,6 +1116,7 @@
+ 			(void *)&ppeds_node_cfg->txcmpl_ring);
+ 	netif_napi_del(&ppeds_node_cfg->txcmpl_ring.napi);
+ 
++napi_ndev_alloc_failed:
+ txcomp_irq_fail:
+ 	kfree(wifi7_hdl->tx_cmpl_arr);
+ 	wifi7_hdl->tx_cmpl_arr= NULL;
+@@ -1549,6 +1555,8 @@
+ 	edma_ppeds_rx_fill_ring_free(&ppeds_node_cfg->rxfill_ring);
+ 	edma_ppeds_tx_cmpl_ring_free(&ppeds_node_cfg->txcmpl_ring);
+ 
++	free_netdev(ppeds_node->napi_ndev);
++
+ 	kfree(ppeds_node);
+ 
+ 	/*
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_ppeds_priv.h
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_ppeds_priv.h
+@@ -98,7 +98,7 @@
+  */
+ struct edma_ppeds {
+ 	const struct nss_dp_ppeds_cb *ops;	/* PPE-DS EDMA callback pointer */
+-	struct net_device napi_ndev;		/* Dummy net_device for NAPI */
++	struct net_device *napi_ndev;		/* Dummy net_device for NAPI */
+ 	uint32_t wifi_arch_mode;
+ 	union {
+ 		struct edma_ppeds_wifi7_cfg wifi7_cfg;

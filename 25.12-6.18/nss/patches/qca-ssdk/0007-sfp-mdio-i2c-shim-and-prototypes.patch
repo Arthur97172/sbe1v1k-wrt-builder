@@ -1,0 +1,237 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qca-ssdk: SFP files - mdio-i2c shim and missing prototypes
+
+sfp_phy.c dereferences the QSDK-only struct qcom_mdio_i2c_data, which
+the vendor kernel defines in include/linux/mdio/mdio-i2c.h when its
+mdio-i2c driver is present (vendor patches 0643/0934).  Mainline 6.12
+has no such struct:
+
+  src/hsl/phy/sfp_phy.c:66:44: error: invalid use of undefined type
+    'struct qcom_mdio_i2c_data'
+
+Provide a compile-only definition guarded by MIDO_I2C_QCOM, the macro
+the vendor header defines.  The code path using it (->i2c on an mii_bus
+whose id contains "i2c") is only reachable with that vendor driver, and
+ipq9574-sbe1v1k.dts has no mdio-i2c node, so this is inert on target.
+
+Classification: must-shim (vendor kernel ABI, no mainline equivalent;
+compile-only until the mdio-i2c driver is ported).
+
+Remaining missing prototypes: sfp_phy_part_number_check(),
+sfp_phy_usxgmii_check() and sfp_phy_present_status_check() are used only
+within sfp_phy.c, so make them static.  adpt_sfp.c never includes
+adpt_sfp.h (which declares adpt_sfp_init()) and its 16 other sfp ops are
+referenced only from adpt_sfp_init(), so include the header and give
+them internal linkage.
+
+--- a/src/adpt/sfp/adpt_sfp.c
++++ b/src/adpt/sfp/adpt_sfp.c
+@@ -23,12 +23,13 @@
+ #include "sfp_reg.h"
+ #include "sfp.h"
+ #include "hsl_phy.h"
++#include "adpt_sfp.h"
+ 
+ 
+ #define ADPT_RTN_ON_INVALID_DATA_OFFSET(offset) \
+     do { if (offset > 0xff) return(SW_BAD_PARAM); } while(0);
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_diag_ctrl_status_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_ctrl_status_t *ctrl_status)
+ {
+@@ -66,7 +67,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_diag_extenal_calibration_const_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_cal_const_t *cal_const)
+ {
+@@ -125,7 +126,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_link_length_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_link_length_t *link_len)
+ {
+@@ -150,7 +151,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_diag_internal_threshold_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_internal_threshold_t *threshold)
+ {
+@@ -209,7 +210,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_diag_realtime_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_realtime_diag_t *real_diag)
+ {
+@@ -238,7 +239,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_laser_wavelength_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_laser_wavelength_t *laser_wavelen)
+ {
+@@ -259,7 +260,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_option_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_option_t *option)
+ {
+@@ -286,7 +287,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_checkcode_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_cc_type_t cc_type, a_uint8_t *ccode)
+ {
+@@ -326,7 +327,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_diag_alarm_warning_flag_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_alarm_warn_flag_t *alarm_warn_flag)
+ {
+@@ -366,7 +367,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_device_type_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_dev_type_t *sfp_id)
+ {
+@@ -398,7 +399,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_vendor_info_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_vendor_info_t *vender_info)
+ {
+@@ -451,7 +452,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_transceiver_code_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_transc_code_t *transc_code)
+ {
+@@ -482,7 +483,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_ctrl_rate_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_rate_t *rate_limit)
+ {
+@@ -503,7 +504,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_enhanced_cfg_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_enhanced_cfg_t *enhanced_feature)
+ {
+@@ -538,7 +539,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_rate_encode_get(a_uint32_t dev_id, a_uint32_t port_id,
+ 		fal_sfp_rate_encode_t *encode)
+ {
+@@ -570,7 +571,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_eeprom_data_get(a_uint32_t dev_id, a_uint32_t port_id, fal_sfp_data_t *entry)
+ {
+ 	sw_error_t rv = SW_OK;
+@@ -587,7 +588,7 @@
+ 	return SW_OK;
+ }
+ 
+-sw_error_t
++static sw_error_t
+ adpt_sfp_eeprom_data_set(a_uint32_t dev_id, a_uint32_t port_id, fal_sfp_data_t *entry)
+ {
+ 	sw_error_t rv = SW_OK;
+--- a/src/hsl/phy/sfp_phy.c
++++ b/src/hsl/phy/sfp_phy.c
+@@ -24,6 +24,20 @@
+ #include "hppe_uniphy.h"
+ #include "hsl_port_prop.h"
+ #include <linux/mdio/mdio-i2c.h>
++
++#ifndef MIDO_I2C_QCOM
++/*
++ * QSDK-only MDIO-over-I2C bus ABI.  The vendor kernel's mdio-i2c driver
++ * (patches 0643/0934) stores this struct in mii_bus->priv and flags
++ * itself with MIDO_I2C_QCOM.  Mainline 6.12 has neither; the i2c branch
++ * below is only reachable with that driver, and the SBE1V1K board DTS
++ * has no mdio-i2c node, so this definition exists only to compile.
++ */
++struct qcom_mdio_i2c_data {
++	struct i2c_adapter *i2c;
++};
++#endif
++
+ #include <linux/i2c.h>
+ #include <linux/phylink.h>
+ #include <linux/sfp.h>
+@@ -744,7 +758,7 @@
+ 
+ static a_uint16_t sfp_part_num[5] = {0x3330, 0x2d31, 0x3539, 0x392d, 0x3032};
+ 
+-a_bool_t
++static a_bool_t
+ sfp_phy_part_number_check(a_uint32_t dev_id, a_uint32_t port_id)
+ {
+ 	sw_error_t rv = SW_OK;
+@@ -761,7 +775,7 @@
+ 	return A_TRUE;
+ }
+ 
+-a_bool_t
++static a_bool_t
+ sfp_phy_usxgmii_check(a_uint32_t dev_id, a_uint32_t port_id)
+ {
+ 	if (sfp_phy_part_number_check(dev_id, port_id) == A_TRUE) {
+@@ -778,7 +792,7 @@
+ 	return A_FALSE;
+ }
+ 
+-a_bool_t
++static a_bool_t
+ sfp_phy_present_status_check(a_uint32_t dev_id, a_uint32_t port_id)
+ {
+ 	sw_error_t rv = SW_OK;

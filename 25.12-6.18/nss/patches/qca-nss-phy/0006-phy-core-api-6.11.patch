@@ -1,0 +1,63 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: adapt nss_phy_linux.c to 6.11+ PHY core APIs
+
+Four independent API changes, all in the nss_ext glue:
+
+- match_phy_device() gained a const struct phy_driver * argument
+  (v6.11); the op still decides purely on the MDIO id, so the new
+  parameter is unused.
+- phydev->drv became a const pointer (v6.11).  nss_phy_driver itself
+  is a non-const global, so the driver_data stash keeps working; cast
+  away the qualifier at the single assignment site.
+- platform driver .remove() returns void since v6.11.
+- struct platform_driver needs <linux/platform_device.h>; it used to
+  be pulled in transitively via <linux/of_device.h>.
+---
+--- a/nss_ext/nss_phy_linux.c	2026-10-21 04:46:14.862247445 +0000
++++ b/nss_ext/nss_phy_linux.c	2026-10-23 23:18:24.386069626 +0000
+@@ -27,6 +27,7 @@
+ #endif
+ #include "nss_phy_c45_common.h"
+ #include <linux/of_device.h>
++#include <linux/platform_device.h>
+ #include <linux/of_mdio.h>
+ #if IS_ENABLED(CONFIG_MDIO_I2C)
+ #include <linux/mdio/mdio-i2c.h>
+@@ -467,7 +468,8 @@
+ 		return ret;
+ 	}
+ #endif
+-	phydev->drv->driver_data = ops;
++	/* phydev->drv is const since 6.11; nss_phy_driver itself is not. */
++	((struct phy_driver *)phydev->drv)->driver_data = ops;
+ 
+ 	return 0;
+ }
+@@ -586,7 +588,8 @@
+ 		nss_phy_status_poll_cancel, nss_phydev);
+ }
+ 
+-static int nss_phy_match_phy_device(struct phy_device *phydev)
++static int nss_phy_match_phy_device(struct phy_device *phydev,
++				     const struct phy_driver *phydrv)
+ {
+ 	if (!QCA_PHY_MATCH(nss_phydev_id_get(phydev)))
+ 		return false;
+@@ -784,7 +787,7 @@
+ 	return 0;
+ }
+ 
+-static int nss_phy_platform_remove(struct platform_device *pdev)
++static void nss_phy_platform_remove(struct platform_device *pdev)
+ {
+ #if IS_ENABLED(CONFIG_MDIO_I2C)
+ 	struct phy_device *phydev = NULL;
+@@ -796,8 +799,6 @@
+ 		mdiobus_unregister(bus);
+ 	}
+ #endif
+-
+-	return 0;
+ }
+ 
+ static const struct of_device_id nss_phy_of_match[] = {

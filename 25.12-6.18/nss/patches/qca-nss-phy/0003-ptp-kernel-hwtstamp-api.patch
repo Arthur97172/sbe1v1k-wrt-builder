@@ -1,0 +1,68 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: port PHC timestamping to the 6.12 mii_timestamper API
+
+Linux 6.11 reworked hardware timestamping configuration: the
+mii_timestamper hwtstamp() op now takes struct kernel_hwtstamp_config *
+plus a netlink extack instead of struct ifreq *, and ts_info() takes
+struct kernel_ethtool_ts_info * instead of struct ethtool_ts_info *.
+The core parses the user request before calling the op and copies the
+result back afterwards (config->copied_to_user), so the driver no
+longer performs copy_from_user()/copy_to_user() itself.
+
+Behaviour is unchanged: same validation range, same tx_type/rx_filter
+mapping, same registers programmed.  Only the plumbing changes.
+---
+--- a/linux_std/ptp/qca808x_phc.c	2026-10-21 04:46:14.860944592 +0000
++++ b/linux_std/ptp/qca808x_phc.c	2026-10-23 23:15:14.702245854 +0000
+@@ -1372,26 +1372,24 @@
+ 	return qca808x_rx_timestamp_mode_set(phydev, embeded);
+ }
+ 
+-static int qca808x_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
++static int qca808x_hwtstamp(struct mii_timestamper *mii_ts,
++			    struct kernel_hwtstamp_config *cfg,
++			    struct netlink_ext_ack *extack)
+ {
+ 	struct qca808x_ptp_info *ptp_info = container_of(mii_ts,
+ 							 struct qca808x_ptp_info,
+ 							 mii_ts);
+ 	struct phy_device *phydev = ptp_info->phydev;
+ 	bool ptp_en = false, one_step = false;
+-	struct hwtstamp_config cfg = {0};
+ 
+-	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
+-		return -EFAULT;
+-
+-	if (cfg.tx_type < 0 || cfg.tx_type > HWTSTAMP_TX_ONESTEP_P2P)
++	if (cfg->tx_type < 0 || cfg->tx_type > HWTSTAMP_TX_ONESTEP_P2P)
+ 		return -ERANGE;
+ 
+ 	phydev_dbg(phydev, "[PHC] hwtstamp: tx_type=%d rx_filter=%d\n",
+-		   cfg.tx_type, cfg.rx_filter);
++		   cfg->tx_type, cfg->rx_filter);
+ 
+-	ptp_info->hwts_tx_type = cfg.tx_type;
+-	switch (cfg.rx_filter) {
++	ptp_info->hwts_tx_type = cfg->tx_type;
++	switch (cfg->rx_filter) {
+ 		case HWTSTAMP_FILTER_NONE:
+ 			ptp_info->hwts_rx_type = PTP_CLASS_NONE;
+ 			break;
+@@ -1445,7 +1443,7 @@
+ 
+ 	mutex_unlock(&ptp_info->tsreg_lock);
+ 
+-	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
++	return 0;
+ }
+ 
+ static bool qca808x_rxtstamp(struct mii_timestamper *mii_ts, struct sk_buff *skb,
+@@ -1587,7 +1585,7 @@
+ }
+ 
+ static int qca808x_ts_info(struct mii_timestamper *mii_ts,
+-			   struct ethtool_ts_info *info)
++			   struct kernel_ethtool_ts_info *info)
+ {
+ 	struct qca808x_ptp_info *ptp_info = container_of(mii_ts,
+ 							 struct qca808x_ptp_info,

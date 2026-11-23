@@ -1,0 +1,161 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+
+# START=18 removed for 25.12 NSS bring-up: no boot autostart.
+# Start manually: /usr/sbin/nss-load load dp (see docs/NSS_AUTOLOAD_OFF.md).
+
+# 启动取证（v35 起）：事件同时写 syslog 与 /sbe-boot-trace/events.log，
+# 后者落在 overlay 里，断电重启后仍可读。
+sbe_trace_event() {
+	logger -t qca-nss-dp "$*" 2>/dev/null
+	[ -x /usr/sbin/sbe-boot-trace ] && /usr/sbin/sbe-boot-trace event "qca-nss-dp: $*"
+	return 0
+}
+
+qca_nss_dp_dependency() {
+	# 等 qca-nss-dp 模块装载。原脚本这里无超时：模块只要装载失败（例如它
+	# 依赖的 qca-ssdk/qca-nss-ppe 装载失败），rcS 就永远停在 S18，netifd、
+	# dnsmasq 全都不启动——v34（2026-11-16）卡死即此形态的候选。现在限时
+	# 等待；超时则补一次 modprobe 并取证，然后继续，不再卡死启动。
+	local timeout="${QCA_NSS_DP_WAIT_TIMEOUT:-30}"
+	local waited=0
+	local ko="/lib/modules/$(uname -r)/qca-nss-dp.ko"
+
+	[ -e "$ko" ] || return 0
+	[ -d /sys/module/qca_nss_dp ] && return 0
+
+	sbe_trace_event "waiting for module (ko present, /sys/module/qca_nss_dp missing), timeout ${timeout}s"
+	while [ ! -d /sys/module/qca_nss_dp ] && [ "$waited" -lt "$timeout" ]; do
+		sleep 1
+		waited=$((waited + 1))
+	done
+
+	if [ -d /sys/module/qca_nss_dp ]; then
+		[ "$waited" -gt 0 ] && sbe_trace_event "module present after ${waited}s"
+		return 0
+	fi
+
+	sbe_trace_event "TIMEOUT: module not loaded after ${timeout}s, trying modprobe"
+	modprobe qca-nss-dp 2>&1 | while read -r line; do
+		sbe_trace_event "modprobe: $line"
+	done
+	if [ -d /sys/module/qca_nss_dp ]; then
+		sbe_trace_event "modprobe loaded the module"
+		return 0
+	fi
+	dmesg | tail -n 40 | while read -r line; do
+		sbe_trace_event "dmesg: $line"
+	done
+	sbe_trace_event "module still missing; continuing boot without it"
+	return 0
+}
+
+enable_rps() {
+
+	# Detect platform to determine core count and RPS core usage
+	# Default to 4 cores (threshold 8) and 3 RPS cores, use 5 RPS cores
+	# (threshold 16) for IPQ96XX
+	local core_threshold=8
+	local num_cores=3
+
+	local arch=$(uname -m 2>/dev/null)
+
+	# Check device tree model for IPQ96XX. Use 5 RPS cores only on 64-bit
+	# profile (aarch64); keep default core settings for 32-bit profile.
+	if [ -f /proc/device-tree/model ]; then
+		model=$(cat /proc/device-tree/model 2>/dev/null)
+		case "$model" in
+			*IPQ96*|*ipq96*)
+				if [ "$arch" = "aarch64" ]; then
+					core_threshold=16
+				fi
+				;;
+		esac
+	fi
+
+	# Alternative: Check board name if device tree not available
+	if [ $core_threshold -eq 8 ] && [ -f /tmp/sysinfo/board_name ]; then
+		board=$(cat /tmp/sysinfo/board_name 2>/dev/null)
+		case "$board" in
+			*ipq96*|*IPQ96*)
+				if [ "$arch" = "aarch64" ]; then
+					core_threshold=16
+				fi
+				;;
+		esac
+	fi
+
+	i=1
+	irq_rps=`grep edma_rxdesc /proc/interrupts | grep -v edma_rxdesc_gro | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_rps
+	do
+		printf "%x\n" "$i" > /proc/irq/$entry/smp_affinity
+		i=$(expr $i \* 2)
+		if [ $i -gt $core_threshold ];then
+			i=1
+		fi
+	done
+
+	# Assign SMP affinity for HW GRO RX rings separately, starting from
+	# CPU0, so their assignment is independent of non-GRO rxdesc rings.
+	i=1
+	irq_rps=`grep edma_rxdesc_gro /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_rps
+	do
+		printf "%x\n" "$i" > /proc/irq/$entry/smp_affinity
+		i=$(expr $i \* 2)
+		if [ $i -gt $core_threshold ];then
+			i=1
+		fi
+	done
+
+	i=1
+        irq_rps=`grep edma_rxfill /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+        for entry in $irq_rps
+        do
+                printf "%x\n" "$i" > /proc/irq/$entry/smp_affinity
+                i=$(expr $i \* 2)
+                if [ $i -gt $core_threshold ];then
+                        i=1
+                fi
+        done
+
+	i=1
+	irq_rps=`grep edma_txcmpl /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_rps
+	do
+		printf "%x\n" "$i" > /proc/irq/$entry/smp_affinity
+		i=$(expr $i \* 2)
+		if [ $i -gt $core_threshold ];then
+			i=1
+		fi
+	done
+
+	# Enable RPS core count based on platform
+	echo $num_cores > /proc/sys/net/edma/rps_num_cores
+}
+
+start() {
+	qca_nss_dp_dependency
+	# uci_get 只在 source 过 /lib/functions.sh 的进程里存在；init 脚本没有
+	# source 它，原来每次启动都会打 "uci_get: not found" 与 "out of range"。
+	# 默认值与 /etc/config/qca_nss_dp 一致（1）。
+	local rps_enabled="$(uci -q get qca_nss_dp.@general[0].enable_rps)"
+	if [ "${rps_enabled:-1}" -eq 1 ]; then
+		enable_rps
+	fi
+}

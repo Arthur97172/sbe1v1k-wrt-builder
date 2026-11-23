@@ -1,0 +1,31 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-sfe: use timer_delete() for 6.18
+
+6.18 removed del_timer() with no compatibility alias; include/linux/timer.h
+now declares timer_delete() with the same semantics. sfe_ipv6_frag_exit()
+still tears down the per-CPU exception timers and the fragment timer with
+the old name.
+
+Rename both call sites; the timers are being freed right after, so the
+delete-if-pending behaviour of del_timer() is what is kept.
+
+Classification: portability (kernel API rename, same semantics).
+--- a/sfe_ipv6_frag.c
++++ b/sfe_ipv6_frag.c
+@@ -1276,14 +1276,14 @@
+ 	 */
+ 	for_each_online_cpu(cpu) {
+ 		struct sfe_ipv6_frag_exception *pcpu = per_cpu_ptr(sif->pcpu, cpu);
+-		del_timer(&pcpu->timer);
++		timer_delete(&pcpu->timer);
+ 		skb_queue_purge(&pcpu->exception_queue);
+ 	}
+ 
+ 	/*
+ 	 * Delete the timer.
+ 	 */
+-	del_timer(&sif->timer);
++	timer_delete(&sif->timer);
+ 
+ 	/*
+ 	 * Free the fragment entries.

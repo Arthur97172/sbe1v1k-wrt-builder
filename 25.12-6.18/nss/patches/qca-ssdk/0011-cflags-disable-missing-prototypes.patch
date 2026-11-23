@@ -1,0 +1,27 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] mk: disable missing-prototype/declaration warnings in qca-ssdk
+
+OpenWrt 25.12 ships GCC 14, which enables -Wmissing-prototypes by
+default for C.  qca-ssdk builds with -Werror, so every vendor function
+that lacks a header prototype becomes a build failure.  qca-ssdk has
+1115 such functions spread over 77 files (hsl/adpt/appe/httppe/mht
+back-ends, shell_lib, fal legacy wrappers); adding prototypes to all of
+them would fork the vendor tree far beyond what a kernel version port
+requires.
+
+The header-level bugs found along the way were still fixed properly in
+patches 0002-0010 (missing self-includes, sfp.h union order, DSA API
+port).  GCC's companion flag -Wmissing-declarations (and the shipped
+shell_lib's __aeabi_unwind_cpp_pr* definitions) needs the same
+treatment, so both are disabled here.  This patch only silences these
+two style warnings for this vendor module; it is not used for
+qca-nss-dp or the kernel.
+
+--- a/mk/cflags.mk
++++ b/mk/cflags.mk
+@@ -499,4 +499,4 @@
+ #############################################
+ #            combine all cflags
+ #############################################
+-ccflags-y += ${MODULE_INC} ${MODULE_CFLAG} -DFALLTHROUGH -Werror -Wall
++ccflags-y += ${MODULE_INC} ${MODULE_CFLAG} -DFALLTHROUGH -Werror -Wall -Wno-missing-prototypes -Wno-missing-declarations

@@ -1,0 +1,2020 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qca-nss-ecm: 主线 Linux 6.12 / GCC 14 可移植性
+
+QSDK 14 的 ECM 是按 6.6 厂商内核写的，直接放到 25.12（主线 6.12.112）
+上编译会遇到四类问题。本补丁一次性处理它们，产物即 25.12 树上实际编译
+通过的源码形态。
+
+1. 内核 ABI 缺失（新增 frontends/include/ecm_netdev_compat.h 统一 shim）
+
+   - priv_flags_ext / IFF_EXT_HW_NO_OFFLOAD：主线没有该字段。本构建树内
+     没有任何代码设置该位，厂商构建里这些判断也恒为假，故
+     ecm_netdev_hw_no_offload() 恒返回 false。
+   - skb->int_pri：主线没有。ecm_skb_int_pri() 返回 0，
+     ecm_skb_set_int_pri() 为空操作（DSCP 分类器的 flow_int_pri 因此恒 0）。
+   - ppp_is_xmit_locked()：恒 false（PPP 通道 API 同样缺失，见第 6 节）。
+   - vlan_dev_next_dev()：映射到 vlan_dev_real_dev()。
+   - IPPROTO_ETHERIP：主线无此枚举，补 97。
+   - dsa_slave_dev_check()：6.12 已改名为 dsa_user_dev_check()。
+   - is_map_t_dev()：恒 false；配套地，包 Makefile 关闭
+     ECM_INTERFACE_MAP_T_ENABLE（树内 nat46 是 OpenWrt 版，没有
+     xlate_6_to_4()/is_map_t_dev()，MAP-T 路径无法链接）。
+   - 卸载统计类 helper（*_offload_stats_*）、桥 FDB / 邻居 MAC 事件、
+     br_port_get_sub_br_id()、bond_register_cb()：主线无对应机制，
+     一并做成空实现 / -EOPNOTSUPP。
+
+   这些都是“厂商扩展缺失”的兼容 shim，不改变主线内核 ABI。
+
+2. 删掉的厂商 conntrack 扩展头
+   net/netfilter/nf_conntrack_dscpremark_ext.h 按 QSDK 接口补出，
+   但扩展恒不存在（dscp_remark_rule 相关字段查询恒失败）。
+
+3. 内核 API 差异
+   - udp_get_timeouts() 在主线是 static，6 处改为直接读
+     nf_udp_pernet(nf_ct_net(ct))->timeouts。
+   - <asm/unaligned.h> 已移除，14 处改为 <linux/unaligned.h>。
+   - ECM_INTERFACE_MAP_T_ENABLE 保护下的 ecm_db_iface_map_t_info_get()
+     补上原型。
+
+4. GCC 14 / -Werror 下的告警
+   - 34 处文件内函数补 static（-Wmissing-prototypes）。
+   - ecm_conntrack_notifier.c 的 init_cleanup_1 标签按
+     CONFIG_NF_CONNTRACK_CHAIN_EVENTS 保护（主线
+     nf_conntrack_register_notifier() 返回 void，该分支到不了，
+     -Wunused-label 会报错）。
+   - 若干缺失的头文件包含（ecm_non_ported_ipv4/6.h、ecm_bond_notifier.h、
+     ecm_netdev_compat.h）。
+
+已知行为偏差（均为“该特性不卸载”，不会挂死）：
+   - PPP/PPPoE/PPTP/L2TPv2、MAP-T 接口不被加速；
+   - DSA/VLAN/网桥的卸载统计不导出；
+   - 桥 FDB / 邻居 MAC 变化不触发连接 defunct；
+   - 网桥隔离子接口 ID 查询失败（按 ECM 语义 fail-closed）；
+   - LAG 成员 up/down 不 defunct 上层连接（bond 回调缺失）。
+
+分类：兼容 shim + 编译可移植性；不修改内核 ABI。
+
+--- a/ecm_classifier_dscp.c
++++ b/ecm_classifier_dscp.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -210,13 +211,13 @@
+ {
+ 	if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+ 		cdscpi->process_response.flow_qos_tag = skb->priority;
+-		cdscpi->process_response.flow_int_pri = skb->int_pri;
++		cdscpi->process_response.flow_int_pri = ecm_skb_int_pri(skb);
+ 		cdscpi->process_response.flow_mark = skb->mark;
+ 		cdscpi->process_response.flow_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;
+ 		cdscpi->packet_seen[ECM_CONN_DIR_FLOW] = true;
+ 	} else {
+ 		cdscpi->process_response.return_qos_tag = skb->priority;
+-		cdscpi->process_response.return_int_pri = skb->int_pri;
++		cdscpi->process_response.return_int_pri = ecm_skb_int_pri(skb);
+ 		cdscpi->process_response.return_mark = skb->mark;
+ 		cdscpi->process_response.return_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;
+ 		cdscpi->packet_seen[ECM_CONN_DIR_RETURN] = true;
+@@ -501,7 +502,7 @@
+ 		 */
+ 		if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+ 			cdscpi->process_response.flow_qos_tag = skb->priority;
+-			cdscpi->process_response.flow_int_pri = skb->int_pri;
++			cdscpi->process_response.flow_int_pri = ecm_skb_int_pri(skb);
+ 			cdscpi->process_response.flow_mark = skb->mark;
+ 			cdscpi->process_response.flow_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;
+ 
+@@ -511,7 +512,7 @@
+ 			 */
+ 			if (!ci->unidir_accel_en) {
+ 				if (cdscpi->process_response.return_int_pri == 0) {
+-					cdscpi->process_response.return_int_pri = skb->int_pri;
++					cdscpi->process_response.return_int_pri = ecm_skb_int_pri(skb);
+ 				}
+ 
+ 				if (cdscpi->process_response.return_qos_tag == 0) {
+@@ -528,7 +529,7 @@
+ 			}
+ 		} else {
+ 			cdscpi->process_response.return_qos_tag = skb->priority;
+-			cdscpi->process_response.return_int_pri = skb->int_pri;
++			cdscpi->process_response.return_int_pri = ecm_skb_int_pri(skb);
+ 			cdscpi->process_response.return_mark = skb->mark;
+ 			cdscpi->process_response.return_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;
+ 
+@@ -538,7 +539,7 @@
+ 			 */
+ 			if (!ci->unidir_accel_en) {
+ 				if (cdscpi->process_response.flow_int_pri == 0) {
+-					cdscpi->process_response.flow_int_pri = skb->int_pri;
++					cdscpi->process_response.flow_int_pri = ecm_skb_int_pri(skb);
+ 				}
+ 
+ 				if (cdscpi->process_response.flow_qos_tag == 0) {
+--- a/ecm_classifier_emesh.c
++++ b/ecm_classifier_emesh.c
+@@ -2494,7 +2494,7 @@
+  *	Update fse flow parameters to wlan host driver when
+  *	emesh-sawf connection is accelerated as well as decelerated.
+  */
+-void ecm_classifier_emesh_sawf_update_fse_flow(struct ecm_classifier_instance *aci,
++static void ecm_classifier_emesh_sawf_update_fse_flow(struct ecm_classifier_instance *aci,
+ 						uint8_t fse_flags)
+ {
+ 	ip_addr_t src_ip;
+@@ -2627,7 +2627,7 @@
+  * ecm_classifier_emesh_sawf_fill_multicast_sync_params()
+  *      For multicast traffic, fetch the list of src and dest ifindex..
+  */
+-bool ecm_classifier_emesh_sawf_fill_multicast_sync_params (struct ecm_db_connection_instance  *ci,
++static bool ecm_classifier_emesh_sawf_fill_multicast_sync_params (struct ecm_db_connection_instance  *ci,
+ 		struct ecm_classifier_emesh_sawf_multicast_sync_params *sawf_multicast_sync_params, uint8_t mode) {
+ 
+ 	ip_addr_t src_ip;
+@@ -2872,7 +2872,7 @@
+  * ecm_classifier_emesh_sawf_update_latency_param_on_conn_decel()
+  *	Update mesh latency parameters to wlan host driver when a connection gets decelerated in ECM
+  */
+-void ecm_classifier_emesh_sawf_update_latency_param_on_conn_decel(struct ecm_classifier_instance *aci, struct ecm_classifier_rule_sync *sync)
++static void ecm_classifier_emesh_sawf_update_latency_param_on_conn_decel(struct ecm_classifier_instance *aci, struct ecm_classifier_rule_sync *sync)
+ {
+ 	struct ecm_classifier_emesh_sawf_instance *cemi;
+ 	struct ecm_classifer_emesh_sawf_mesh_latency_params mesh_params = {0};
+@@ -3114,7 +3114,7 @@
+  *	Update the flow mark of the connection with the valid flow metadata
+  *	which was stored in the classifier by ecm_classifier_emesh_sawf_update_flowmark_wifi()
+  */
+-void ecm_classifier_emesh_sawf_update_flowmark_upon_notify_create(struct ecm_classifier_instance *aci, void *arg)
++static void ecm_classifier_emesh_sawf_update_flowmark_upon_notify_create(struct ecm_classifier_instance *aci, void *arg)
+ {
+ 	struct net_device *src_dev = NULL;
+ 	struct net_device *dest_dev = NULL;
+@@ -3270,7 +3270,7 @@
+  * ecm_classifier_emesh_sawf_notify_create()
+  *	Notification to classifier upon rule create.
+  */
+-void ecm_classifier_emesh_sawf_notify_create(struct ecm_classifier_instance *aci, void *arg)
++static void ecm_classifier_emesh_sawf_notify_create(struct ecm_classifier_instance *aci, void *arg)
+ {
+ 	struct ecm_classifier_emesh_sawf_instance *cemi;
+ 	cemi = (struct ecm_classifier_emesh_sawf_instance *)aci;
+@@ -3291,7 +3291,7 @@
+  *	skb->mark carries the SCS information. Use the SCS information and
+  *	query the WLAN driver for flow metadata and update the AE with the flow metadata.
+  */
+-void ecm_classifier_emesh_sawf_update_flowmark_wifi(struct ecm_classifier_instance *aci, void *arg)
++static void ecm_classifier_emesh_sawf_update_flowmark_wifi(struct ecm_classifier_instance *aci, void *arg)
+ {
+ 	struct ecm_front_end_flowsawf_msg *arg_msg = (struct ecm_front_end_flowsawf_msg *)arg;
+ 	struct net_device *src_dev = NULL;
+@@ -3572,7 +3572,7 @@
+  * ecm_classifier_emesh_sawf_update()
+  *	Called from the frontend files to update the classifier instance.
+  */
+-void ecm_classifier_emesh_sawf_update(struct ecm_classifier_instance *aci, enum ecm_rule_update_type type, void *arg)
++static void ecm_classifier_emesh_sawf_update(struct ecm_classifier_instance *aci, enum ecm_rule_update_type type, void *arg)
+ {
+ 
+ 	if (type != ECM_RULE_UPDATE_TYPE_BI_DI_SAWF_QOS && type != ECM_RULE_UPDATE_TYPE_FLOWMARK_WIFI_QM) {
+@@ -4731,7 +4731,7 @@
+  * 	2. peer_netdev info(valid/mac/if_num)
+  * 	3. MSDUQ
+  */
+-ecm_classifier_emesh_sdwf_deprio_status_t ecm_classifier_emesh_sdwf_check_and_deprio_connection(struct ecm_db_connection_instance *ci, struct ecm_classifier_emesh_flow_deprio_param *param, struct net_device *dev, uint8_t *svc_id)
++static ecm_classifier_emesh_sdwf_deprio_status_t ecm_classifier_emesh_sdwf_check_and_deprio_connection(struct ecm_db_connection_instance *ci, struct ecm_classifier_emesh_flow_deprio_param *param, struct net_device *dev, uint8_t *svc_id)
+ {
+ 	struct ecm_front_end_flowsawf_msg msg = {0};
+ 	ecm_classifier_emesh_sdwf_deprio_status_t status;
+--- a/ecm_classifier_wifi.c
++++ b/ecm_classifier_wifi.c
+@@ -715,7 +715,7 @@
+  * ecm_classifier_wifi_update()
+  *	Update Wi-Fi classifier related information
+  */
+-void ecm_classifier_wifi_update(struct ecm_classifier_instance *aci, enum ecm_rule_update_type type, void *arg)
++static void ecm_classifier_wifi_update(struct ecm_classifier_instance *aci, enum ecm_rule_update_type type, void *arg)
+ {
+ 	struct ecm_front_end_flowsawf_msg *msg = (struct ecm_front_end_flowsawf_msg *)arg;
+ 	struct ecm_classifier_wifi_instance *cwifii;
+--- a/ecm_conntrack_notifier.c
++++ b/ecm_conntrack_notifier.c
+@@ -552,7 +552,15 @@
+ 	nf_conntrack_unregister_notifier(&init_net);
+ #endif
+ 
++/*
++ * Mainline's nf_conntrack_register_notifier() returns void, so the only
++ * branch that can reach this label is the chain-events one.  Without the
++ * guard GCC's -Wunused-label (an error here) fires on the mainline path.
++ * The fallthrough from init_cleanup_2 still reaches the cleanup below.
++ */
++#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+ init_cleanup_1:
++#endif
+ 	ecm_debugfs_remove_recursive(ecm_conntrack_notifier_dentry);
+ 	unregister_sysctl_table(ecm_conntrack_notifier_ctl_table_header);
+ 	return -1;
+--- a/ecm_db/ecm_db_iface.h
++++ b/ecm_db/ecm_db_iface.h
+@@ -259,6 +259,7 @@
+ 
+ #ifdef ECM_INTERFACE_MAP_T_ENABLE
+ struct ecm_db_iface_instance *ecm_db_iface_find_and_ref_map_t(int if_index, int32_t ae_interface_num);
++void ecm_db_iface_map_t_info_get(struct ecm_db_iface_instance *ii, struct ecm_db_interface_info_map_t *map_t_info);
+ void ecm_db_iface_add_map_t(struct ecm_db_iface_instance *ii,
+ 			    struct ecm_db_interface_info_map_t *map_t_info, char *name,
+ 			    int32_t mtu, int32_t interface_identifier, int32_t ae_interface_identifier,
+--- a/ecm_interface.c
++++ b/ecm_interface.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -285,7 +286,7 @@
+ 	 * Additional check to see if its a tunnel dev,
+ 	 * in case missed by above checks.
+ 	 */
+-	if (dev->priv_flags_ext & (
++	if (ecm_netdev_priv_flags_ext(dev) & (
+ 				IFF_EXT_TUN_TAP | IFF_EXT_PPP_L2TPV2|
+ 				IFF_EXT_PPP_L2TPV3 | IFF_EXT_PPP_PPTP |
+ 				IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP |
+@@ -810,7 +811,7 @@
+  */
+ static inline struct net_device *ecm_interface_vlan_real_dev(struct net_device *vlan_dev)
+ {
+-	return vlan_dev_next_dev(vlan_dev);
++	return ecm_vlan_dev_next_dev(vlan_dev);
+ }
+ 
+ /*
+@@ -2187,7 +2188,7 @@
+ 	 * skip first pass of l2tp/pptp tunnel encapsulated traffic
+ 	 */
+ 	if (out->type == ARPHRD_PPP) {
+-		if (out->priv_flags_ext & IFF_EXT_PPP_PPTP) {
++		if (ecm_netdev_priv_flags_ext(out) & IFF_EXT_PPP_PPTP) {
+ 			return true;
+ 		}
+ 	}
+@@ -2198,7 +2199,7 @@
+ 	}
+ 
+ 	if (in->type == ARPHRD_PPP) {
+-		if (in->priv_flags_ext & IFF_EXT_PPP_PPTP) {
++		if (ecm_netdev_priv_flags_ext(in) & IFF_EXT_PPP_PPTP) {
+ 			dev_put(in);
+ 			return true;
+ 		}
+@@ -2234,7 +2235,7 @@
+ 	/*
+ 	 * skip first pass of l2tp/pptp tunnel encapsulated traffic
+ 	 */
+-	if (out->priv_flags_ext & flag) {
++	if (ecm_netdev_priv_flags_ext(out) & flag) {
+ 		return true;
+ 	}
+ 
+@@ -2243,7 +2244,7 @@
+ 		return true;
+ 	}
+ 
+-	if (in->priv_flags_ext & flag) {
++	if (ecm_netdev_priv_flags_ext(in) & flag) {
+ 		dev_put(in);
+ 		return true;
+ 	}
+@@ -2266,7 +2267,7 @@
+ 	/*
+ 	 * skip first pass of l2tp/pptp tunnel encapsulated traffic
+ 	 */
+-	if (out->priv_flags_ext & (IFF_EXT_PPP_L2TPV2 | IFF_EXT_PPP_L2TPV3 |
++	if (ecm_netdev_priv_flags_ext(out) & (IFF_EXT_PPP_L2TPV2 | IFF_EXT_PPP_L2TPV3 |
+ 			       IFF_EXT_PPP_PPTP)) {
+ 		return true;
+ 	}
+@@ -2276,7 +2277,7 @@
+ 		return true;
+ 	}
+ 
+-	if (in->priv_flags_ext & (IFF_EXT_PPP_L2TPV2 | IFF_EXT_PPP_L2TPV3 |
++	if (ecm_netdev_priv_flags_ext(in) & (IFF_EXT_PPP_L2TPV2 | IFF_EXT_PPP_L2TPV3 |
+ 			      IFF_EXT_PPP_PPTP)) {
+ 		dev_put(in);
+ 		return true;
+@@ -4082,7 +4083,7 @@
+ 		/*
+ 		 * GRE TAP?
+ 		 */
+-		if (dev->priv_flags_ext & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
++		if (ecm_netdev_priv_flags_ext(dev) & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
+ 			interface_type = feci->ae_interface_type_get(feci, dev);
+ 			ae_interface_num = feci->ae_interface_number_by_dev_type_get(dev, interface_type);
+ 
+@@ -4103,7 +4104,7 @@
+ 		/*
+ 		 * L2TPV3 ethernet pseudowire interface
+ 		 */
+-		if (dev->priv_flags_ext & (IFF_EXT_ETH_L2TPV3)) {
++		if (ecm_netdev_priv_flags_ext(dev) & (IFF_EXT_ETH_L2TPV3)) {
+ 			interface_type = feci->ae_interface_type_get(feci, dev);
+ 			ae_interface_num = feci->ae_interface_number_by_dev_type_get(dev, interface_type);
+ 
+@@ -4136,7 +4137,7 @@
+ 			 * MTU check for master and slave interface
+ 			 */
+ 			dsa_port_from_dev = dsa_port_from_netdev(dev);
+-			master_dev = dsa_port_from_dev->cpu_dp->master;
++			master_dev = dsa_port_to_conduit(dsa_port_from_dev);
+ 			dev_mtu = dev->mtu > master_dev->mtu ? master_dev->mtu : dev->mtu;
+ 
+ 			/*
+@@ -4397,7 +4398,7 @@
+ 	/*
+ 	 * OVPN Tunnel?
+ 	 */
+-	if ((dev_type == ARPHRD_NONE) && (dev->priv_flags_ext & IFF_EXT_TUN_TAP)) {
++	if ((dev_type == ARPHRD_NONE) && (ecm_netdev_priv_flags_ext(dev) & IFF_EXT_TUN_TAP)) {
+ 		struct net_device *tun_dev = NULL;
+ 		ip_addr_t saddr, daddr;
+ 
+@@ -4463,7 +4464,7 @@
+ 	 * ppp_is_multilink() and ppp_hold_channels() which acquire same lock
+ 	 */
+ 
+-	if ((dev->priv_flags_ext & IFF_EXT_PPP_L2TPV2) && ppp_is_xmit_locked(dev)) {
++	if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_PPP_L2TPV2) && ecm_ppp_is_xmit_locked(dev)) {
+ 		if (skb && (skb->skb_iif == dev->ifindex)) {
+ 			struct pppol2tp_common_addr info;
+ 
+@@ -4521,7 +4522,7 @@
+ #endif
+ 
+ #ifdef ECM_INTERFACE_PPTP_ENABLE
+-	if ((protocol == IPPROTO_GRE) && skb && v4_hdr && (dev->priv_flags_ext & IFF_EXT_PPP_PPTP)) {
++	if ((protocol == IPPROTO_GRE) && skb && v4_hdr && (ecm_netdev_priv_flags_ext(dev) & IFF_EXT_PPP_PPTP)) {
+ 		struct gre_base_hdr *gre_hdr;
+ 		uint16_t proto;
+ 		int ret;
+@@ -4813,7 +4814,7 @@
+ 				 * Ethernet - but what sub type?
+ 				 */
+ #ifdef ECM_INTERFACE_GRE_TAP_ENABLE
+-				if (dest_dev->priv_flags_ext & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
++				if (ecm_netdev_priv_flags_ext(dest_dev) & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
+ 					DEBUG_TRACE("%px: Acceleration not supported for GRE tap flows\n", dest_dev);
+ 					dev_put(dest_dev);
+ 					ecm_db_multicast_copy_if_heirarchy(to_list_single, interface);
+@@ -5575,11 +5576,11 @@
+ 	 * packet is being transmitted can lead to a deadlock.
+ 	 * Dont send NS frames on tunnel interface if the IP protocol is of tunnel type
+ 	 */
+-	if ((dev->priv_flags_ext & IFF_EXT_ETH_L2TPV3) && (proto == IPPROTO_L2TP)) {
++	if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_ETH_L2TPV3) && (proto == IPPROTO_L2TP)) {
+ 		return false;
+ 	}
+ 
+-	if ((dev->priv_flags_ext & IFF_EXT_GRE_V4_TAP) && (proto == IPPROTO_GRE)) {
++	if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V4_TAP) && (proto == IPPROTO_GRE)) {
+ 		return false;
+ 	}
+ 
+@@ -5603,11 +5604,11 @@
+ 	 * packet is being transmitted can lead to a deadlock.
+ 	 * Dont send NS frames on tunnel interface if the IP protocol is of tunnel type
+ 	 */
+-	if ((dev->priv_flags_ext & IFF_EXT_ETH_L2TPV3) && (proto == IPPROTO_L2TP)) {
++	if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_ETH_L2TPV3) && (proto == IPPROTO_L2TP)) {
+ 		return false;
+ 	}
+ 
+-	if ((dev->priv_flags_ext & IFF_EXT_GRE_V6_TAP) && (proto == IPPROTO_GRE)) {
++	if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V6_TAP) && (proto == IPPROTO_GRE)) {
+ 		return false;
+ 	}
+ 
+@@ -5747,13 +5748,13 @@
+ 
+ #ifdef ECM_INTERFACE_L2TPV3_ENABLE
+ 	if ((protocol == IPPROTO_L2TP) && (dev->type == ARPHRD_ETHER)
+-			&& (dev->priv_flags_ext & IFF_EXT_ETH_L2TPV3)) {
++			&& (ecm_netdev_priv_flags_ext(dev) & IFF_EXT_ETH_L2TPV3)) {
+ 		return true;
+ 	}
+ #endif
+ 
+ #ifdef ECM_INTERFACE_OVPN_ENABLE
+-	if (dev->type == ARPHRD_NONE && dev->priv_flags_ext & IFF_EXT_TUN_TAP) {
++	if (dev->type == ARPHRD_NONE && ecm_netdev_priv_flags_ext(dev) & IFF_EXT_TUN_TAP) {
+ 		return true;
+ 	}
+ #endif
+@@ -5903,7 +5904,7 @@
+ 	/*
+ 	 * if the address is a local address and indev=l2tp.
+ 	 */
+-	if ((given_src_dev->type == ARPHRD_PPP) && (given_src_dev->priv_flags_ext & IFF_EXT_PPP_L2TPV2) && ppp_is_xmit_locked(given_src_dev)) {
++	if ((given_src_dev->type == ARPHRD_PPP) && (ecm_netdev_priv_flags_ext(given_src_dev) & IFF_EXT_PPP_L2TPV2) && ecm_ppp_is_xmit_locked(given_src_dev)) {
+ 		if (!dst_xfrm(skb_dst(skb)) || (dest_dev->type != ECM_ARPHRD_IPSEC_TUNNEL_TYPE)) {
+ 			dev_put(dest_dev);
+ 			dest_dev = given_dest_dev;
+@@ -5919,7 +5920,7 @@
+ 	/*
+ 	 * if the address is a local address and indev=PPTP.
+ 	 */
+-	if (protocol == IPPROTO_GRE && given_dest_dev && (given_dest_dev->priv_flags_ext & IFF_EXT_PPP_PPTP)){
++	if (protocol == IPPROTO_GRE && given_dest_dev && (ecm_netdev_priv_flags_ext(given_dest_dev) & IFF_EXT_PPP_PPTP)){
+ 		dev_put(dest_dev);
+ 		dest_dev = given_dest_dev;
+ 		if (dest_dev) {
+@@ -6630,7 +6631,7 @@
+ 			/*
+ 			 * OVPN ?
+ 			 */
+-			if ((dest_dev_type == ARPHRD_NONE) && (dest_dev->priv_flags_ext & IFF_EXT_TUN_TAP)) {
++			if ((dest_dev_type == ARPHRD_NONE) && (ecm_netdev_priv_flags_ext(dest_dev) & IFF_EXT_TUN_TAP)) {
+ 				DEBUG_TRACE("Net device: %px is OVPN, device name: %s\n", dest_dev, dest_dev->name);
+ 				break;
+ 			}
+@@ -6649,7 +6650,7 @@
+ 			DEBUG_TRACE("%px: Net device: %px is PPP\n", feci, dest_dev);
+ 
+ #ifdef ECM_INTERFACE_L2TPV2_ENABLE
+-			if ((given_src_dev->priv_flags_ext & IFF_EXT_PPP_L2TPV2) && ppp_is_xmit_locked(given_src_dev)) {
++			if ((ecm_netdev_priv_flags_ext(given_src_dev) & IFF_EXT_PPP_L2TPV2) && ecm_ppp_is_xmit_locked(given_src_dev)) {
+ 				if (skb->skb_iif == dest_dev->ifindex) {
+ 					DEBUG_TRACE("%px: Net device: %px PPP channel is PPPoL2TPV2\n", feci, dest_dev);
+ 					break;
+@@ -6658,7 +6659,7 @@
+ #endif
+ 
+ #ifdef ECM_INTERFACE_PPTP_ENABLE
+-			if (protocol == IPPROTO_GRE && dest_dev && (dest_dev->priv_flags_ext & IFF_EXT_PPP_PPTP)) {
++			if (protocol == IPPROTO_GRE && dest_dev && (ecm_netdev_priv_flags_ext(dest_dev) & IFF_EXT_PPP_PPTP)) {
+ 				DEBUG_TRACE("%px: Net device: %px PPP channel is PPTP\n", feci, dest_dev);
+ 				break;
+ 			}
+@@ -6935,7 +6936,7 @@
+ 	/*
+ 	 * if the address is a local address and indev=l2tp.
+ 	 */
+-	if ((given_src_dev->type == ARPHRD_PPP) && (given_src_dev->priv_flags_ext & IFF_EXT_PPP_L2TPV2) && ppp_is_xmit_locked(given_src_dev)) {
++	if ((given_src_dev->type == ARPHRD_PPP) && (ecm_netdev_priv_flags_ext(given_src_dev) & IFF_EXT_PPP_L2TPV2) && ecm_ppp_is_xmit_locked(given_src_dev)) {
+ 		if (!dst_xfrm(skb_dst(skb)) || (dest_dev->type != ECM_ARPHRD_IPSEC_TUNNEL_TYPE)) {
+ 			dev_put(dest_dev);
+ 			dest_dev = given_dest_dev;
+@@ -7173,7 +7174,7 @@
+ 				 */
+ 
+ #ifdef ECM_INTERFACE_GRE_TAP_ENABLE
+-				if (dest_dev->priv_flags_ext & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
++				if (ecm_netdev_priv_flags_ext(dest_dev) & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
+ 					DEBUG_TRACE("%px: Acceleration not supported for GRE tap flows.\n", dest_dev);
+ 					dev_put(src_dev);
+ 					dev_put(dest_dev);
+@@ -7183,7 +7184,7 @@
+ #endif
+ 
+ #ifdef ECM_INTERFACE_L2TPV3_ENABLE
+-				if (dest_dev->priv_flags_ext & (IFF_EXT_ETH_L2TPV3)) {
++				if (ecm_netdev_priv_flags_ext(dest_dev) & (IFF_EXT_ETH_L2TPV3)) {
+ 					DEBUG_TRACE("%px: Acceleration not supported for L2TPV3 flows.\n", dest_dev);
+ 					dev_put(src_dev);
+ 					dev_put(dest_dev);
+@@ -7508,7 +7509,7 @@
+ 			DEBUG_TRACE("Net device: %px is PPP\n", dest_dev);
+ 
+ #ifdef ECM_INTERFACE_L2TPV2_ENABLE
+-			if ((given_src_dev->priv_flags_ext & IFF_EXT_PPP_L2TPV2) && ppp_is_xmit_locked(given_src_dev)) {
++			if ((ecm_netdev_priv_flags_ext(given_src_dev) & IFF_EXT_PPP_L2TPV2) && ecm_ppp_is_xmit_locked(given_src_dev)) {
+ 				if (skb->skb_iif == dest_dev->ifindex) {
+ 					DEBUG_TRACE("Net device: %px PPP channel is PPPoL2TPV2\n", dest_dev);
+ 					break;
+@@ -10657,11 +10658,11 @@
+ 	 * For MAP-T tunnels, only check the device for IPv6 packets
+ 	 */
+ 	if (skb && skb->protocol == htons(ETH_P_IPV6)) {
+-		if (in_dev->priv_flags_ext & IFF_EXT_MAPT) {
++		if (ecm_netdev_priv_flags_ext(in_dev) & IFF_EXT_MAPT) {
+ 			return true;
+ 		}
+ 
+-		if (out_dev->priv_flags_ext & IFF_EXT_MAPT) {
++		if (ecm_netdev_priv_flags_ext(out_dev) & IFF_EXT_MAPT) {
+ 			return true;
+ 		}
+ 	}
+@@ -10713,7 +10714,7 @@
+ 	struct iphdr *iph;
+ 	struct udphdr *udph;
+ 
+-	if ((dev->priv_flags_ext & IFF_EXT_PPP_L2TPV2) && ppp_is_xmit_locked(dev)) {
++	if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_PPP_L2TPV2) && ecm_ppp_is_xmit_locked(dev)) {
+ 		if (skb && (skb->skb_iif == dev->ifindex)) {
+ 			/*
+ 			 * Get the PPP channel to extract L2TP tunnel information
+--- a/ecm_interface.h
++++ b/ecm_interface.h
+@@ -47,11 +47,13 @@
+ /*
+  * External defined functions
+  */
++#ifndef ECM_NETDEV_COMPAT_BOND
+ extern struct net_device *bond_get_tx_dev(struct sk_buff *skb, uint8_t *src_mac,
+ 					  uint8_t *dst_mac, void *src,
+ 					  void *dst, uint16_t protocol,
+ 					  struct net_device *bond_dev,
+ 					  __be16 *layer4hdr);
++#endif
+ bool ecm_interface_mac_addr_get_pppoe(struct net_device *local_dev, uint8_t *node_addr);
+ bool ecm_interface_mac_addr_get_no_route(struct net_device *dev, ip_addr_t ip_addr, uint8_t *mac_addr);
+ bool ecm_interface_mac_addr_get(ip_addr_t addr, uint8_t *mac_addr, bool *on_link, ip_addr_t gw_addr, uint32_t skb_mark);
+--- a/ecm_tracker.c
++++ b/ecm_tracker.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+--- a/examples/ecm_pcc_test.c
++++ b/examples/ecm_pcc_test.c
+@@ -183,8 +183,7 @@
+  *	Find rule for egress dev.
+  *	Note: Caller has to take and release lock on this API.
+  */
+-static struct
+-ecm_pcc_test_rule *__ecm_pcc_test_rule_find_on_egress_dev(struct net_device *in_dev)
++static struct ecm_pcc_test_rule *__ecm_pcc_test_rule_find_on_egress_dev(struct net_device *in_dev)
+ {
+ 	struct ecm_pcc_test_rule *rule = NULL;
+ 
+@@ -216,8 +215,7 @@
+  * __ecm_pcc_test_rule_find()
+  *	Return matching rule
+  */
+-static struct
+-ecm_pcc_test_rule *__ecm_pcc_test_rule_find(unsigned int proto,
++static struct ecm_pcc_test_rule *__ecm_pcc_test_rule_find(unsigned int proto,
+ 					    uint8_t *src_mac,
+ 					    uint8_t *dest_mac,
+ 					    struct in6_addr *src_addr,
+--- a/frontends/cmn/ecm_bond_notifier.c
++++ b/frontends/cmn/ecm_bond_notifier.c
+@@ -70,6 +70,8 @@
+ #include "ecm_db.h"
+ #include "ecm_classifier_default.h"
+ #include "ecm_interface.h"
++#include "ecm_bond_notifier.h"
++#include "ecm_netdev_compat.h"
+ 
+ /*
+  * Default path for syctl
+--- a/frontends/cmn/ecm_ipv4.c
++++ b/frontends/cmn/ecm_ipv4.c
+@@ -37,6 +37,7 @@
+ #include <linux/netfilter_ipv4.h>
+ #include <linux/netfilter_bridge.h>
+ #include <linux/if_bridge.h>
++#include "ecm_netdev_compat.h"
+ #include <net/arp.h>
+ #ifdef ECM_INTERFACE_VXLAN_ENABLE
+ #include <net/vxlan.h>
+@@ -1727,7 +1728,7 @@
+ 	/*
+ 	 * Skip flow with out interface marked for don't offload.
+ 	 */
+-	if (out->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(out) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		ecm_stats_v4_inc(ECM_STATS_V4_EXCEPTION_CMN, ECM_STATS_V4_EXCEPTION_ROUTE_OUT_IFF_NO_OFFLOAD);
+ 		return NF_ACCEPT;
+ 	}
+@@ -1796,7 +1797,7 @@
+ 	/*
+ 	 * Skip flow with source interface marked for don't offload.
+ 	 */
+-	if (in->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(in) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		dev_put(in);
+ 		ecm_stats_v4_inc(ECM_STATS_V4_EXCEPTION_CMN, ECM_STATS_V4_EXCEPTION_ROUTE_IN_IFF_NO_OFFLOAD);
+ 		return NF_ACCEPT;
+@@ -1941,7 +1942,7 @@
+ 	/*
+ 	 * Skip flow with out interface marked for don't offload.
+ 	 */
+-	if (out->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(out) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		ecm_stats_v4_inc(ECM_STATS_V4_EXCEPTION_CMN, ECM_STATS_V4_EXCEPTION_BRIDGE_OUT_IFF_NO_OFFLOAD);
+ 		return NF_ACCEPT;
+ 	}
+@@ -2037,7 +2038,7 @@
+ 	/*
+ 	 * Skip flow with interface marked for don't offload.
+ 	 */
+-	if (in->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(in) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		dev_put(bridge);
+ 		dev_put(in);
+ 		ecm_stats_v4_inc(ECM_STATS_V4_EXCEPTION_CMN, ECM_STATS_V4_EXCEPTION_BRIDGE_IN_IFF_NO_OFFLOAD);
+@@ -2200,7 +2201,7 @@
+  * ecm_ipv4_ovs_dp_process()
+  *      Process OVS IPv4 bridged packets.
+  */
+-unsigned int ecm_ipv4_ovs_dp_process(struct sk_buff *skb, struct net_device *out)
++static unsigned int ecm_ipv4_ovs_dp_process(struct sk_buff *skb, struct net_device *out)
+ {
+ 	struct ethhdr *skb_eth_hdr;
+ 	bool can_accel = true;
+--- a/frontends/cmn/ecm_ipv6.c
++++ b/frontends/cmn/ecm_ipv6.c
+@@ -39,6 +39,7 @@
+ #include <linux/netfilter_ipv6.h>
+ #include <linux/netfilter_bridge.h>
+ #include <linux/if_bridge.h>
++#include "ecm_netdev_compat.h"
+ #include <net/arp.h>
+ #ifdef ECM_INTERFACE_VXLAN_ENABLE
+ #include <net/vxlan.h>
+@@ -1820,7 +1821,7 @@
+ 	/*
+ 	 * Skip flow with interface marked for don't offload.
+ 	 */
+-	if (out->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(out) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		ecm_stats_v6_inc(ECM_STATS_V6_EXCEPTION_CMN, ECM_STATS_V6_EXCEPTION_ROUTE_OUT_IFF_NO_OFFLOAD);
+ 		return NF_ACCEPT;
+ 	}
+@@ -1889,7 +1890,7 @@
+ 	/*
+ 	 * Skip flow with interface marked for don't offload.
+ 	 */
+-	if (in->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(in) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		dev_put(in);
+ 		ecm_stats_v6_inc(ECM_STATS_V6_EXCEPTION_CMN, ECM_STATS_V6_EXCEPTION_ROUTE_IN_IFF_NO_OFFLOAD);
+ 		return NF_ACCEPT;
+@@ -2047,7 +2048,7 @@
+ 	/*
+ 	 * Skip flow with interface marked for don't offload.
+ 	 */
+-	if (out->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(out) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		ecm_stats_v6_inc(ECM_STATS_V6_EXCEPTION_CMN, ECM_STATS_V6_EXCEPTION_BRIDGE_OUT_IFF_NO_OFFLOAD);
+ 		return NF_ACCEPT;
+ 	}
+@@ -2143,7 +2144,7 @@
+ 	/*
+ 	 * Skip flow with interface marked for don't offload.
+ 	 */
+-	if (in->priv_flags_ext & IFF_EXT_HW_NO_OFFLOAD) {
++	if ((ecm_netdev_priv_flags_ext(in) & IFF_EXT_HW_NO_OFFLOAD)) {
+ 		dev_put(bridge);
+ 		dev_put(in);
+ 		ecm_stats_v6_inc(ECM_STATS_V6_EXCEPTION_CMN, ECM_STATS_V6_EXCEPTION_BRIDGE_IN_IFF_NO_OFFLOAD);
+@@ -2303,7 +2304,7 @@
+  * ecm_ipv6_ovs_dp_process()
+  *      Process OVS IPv6 bridged packets.
+  */
+-unsigned int ecm_ipv6_ovs_dp_process(struct sk_buff *skb, struct net_device *out)
++static unsigned int ecm_ipv6_ovs_dp_process(struct sk_buff *skb, struct net_device *out)
+ {
+ 	struct ethhdr *skb_eth_hdr;
+ 	bool can_accel = true;
+--- a/frontends/cmn/ecm_multicast_ipv4.c
++++ b/frontends/cmn/ecm_multicast_ipv4.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -1425,8 +1426,8 @@
+ 	prevalent_pr.drop = false;
+ 	prevalent_pr.flow_qos_tag = skb->priority;
+ 	prevalent_pr.return_qos_tag = skb->priority;
+-	prevalent_pr.flow_int_pri = skb->int_pri;
+-	prevalent_pr.return_int_pri = skb->int_pri;
++	prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++	prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	prevalent_pr.accel_mode = ECM_CLASSIFIER_ACCELERATION_MODE_ACCEL;
+ 	prevalent_pr.timer_group = ci_orig_timer_group = ecm_db_connection_timer_group_get(ci);
+ 	prevalent_pr.process_actions = 0;
+--- a/frontends/cmn/ecm_multicast_ipv6.c
++++ b/frontends/cmn/ecm_multicast_ipv6.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -1389,8 +1390,8 @@
+ 	prevalent_pr.drop = false;
+ 	prevalent_pr.flow_qos_tag = skb->priority;
+ 	prevalent_pr.return_qos_tag = skb->priority;
+-	prevalent_pr.flow_int_pri = skb->int_pri;
+-	prevalent_pr.return_int_pri = skb->int_pri;
++	prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++	prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	prevalent_pr.accel_mode = ECM_CLASSIFIER_ACCELERATION_MODE_ACCEL;
+ 	prevalent_pr.timer_group = ci_orig_timer_group = ecm_db_connection_timer_group_get(ci);
+ 	prevalent_pr.process_actions = 0;
+--- a/frontends/cmn/ecm_non_ported_ipv4.c
++++ b/frontends/cmn/ecm_non_ported_ipv4.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -91,6 +92,7 @@
+ #include "ecm_ppe_common.h"
+ #endif
+ #include "ecm_front_end_common.h"
++#include "ecm_non_ported_ipv4.h"
+ #include "ecm_ipv4.h"
+ #include "ecm_ae_classifier_public.h"
+ #include "ecm_ae_classifier.h"
+@@ -781,8 +783,8 @@
+ 	prevalent_pr.drop = false;
+ 	prevalent_pr.flow_qos_tag = skb->priority;
+ 	prevalent_pr.return_qos_tag = skb->priority;
+-	prevalent_pr.flow_int_pri = skb->int_pri;
+-	prevalent_pr.return_int_pri = skb->int_pri;
++	prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++	prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	prevalent_pr.accel_mode = ECM_CLASSIFIER_ACCELERATION_MODE_ACCEL;
+ 	prevalent_pr.timer_group = ci_orig_timer_group = ecm_db_connection_timer_group_get(ci);
+ 
+--- a/frontends/cmn/ecm_non_ported_ipv6.c
++++ b/frontends/cmn/ecm_non_ported_ipv6.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -92,6 +93,7 @@
+ #include "ecm_ppe_common.h"
+ #endif
+ #include "ecm_front_end_common.h"
++#include "ecm_non_ported_ipv6.h"
+ #include "ecm_ipv6.h"
+ #include "ecm_ae_classifier_public.h"
+ #include "ecm_ae_classifier.h"
+@@ -663,8 +665,8 @@
+ 	prevalent_pr.drop = false;
+ 	prevalent_pr.flow_qos_tag = skb->priority;
+ 	prevalent_pr.return_qos_tag = skb->priority;
+-	prevalent_pr.flow_int_pri = skb->int_pri;
+-	prevalent_pr.return_int_pri = skb->int_pri;
++	prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++	prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	prevalent_pr.accel_mode = ECM_CLASSIFIER_ACCELERATION_MODE_ACCEL;
+ 	prevalent_pr.timer_group = ci_orig_timer_group = ecm_db_connection_timer_group_get(ci);
+ 
+--- a/frontends/cmn/ecm_ported_ipv4.c
++++ b/frontends/cmn/ecm_ported_ipv4.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -1039,33 +1040,33 @@
+ 	if (ci->unidir_accel_en) {
+ 		if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+ 			prevalent_pr.flow_qos_tag = skb->priority;
+-			prevalent_pr.flow_int_pri = skb->int_pri;
++			prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
+ 		} else {
+ 			prevalent_pr.return_qos_tag = skb->priority;
+-			prevalent_pr.return_int_pri = skb->int_pri;
++			prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 		}
+ 	} else {
+ 		prevalent_pr.flow_qos_tag = skb->priority;
+ 		prevalent_pr.return_qos_tag = skb->priority;
+-		prevalent_pr.flow_int_pri = skb->int_pri;
+-		prevalent_pr.return_int_pri = skb->int_pri;
++		prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++		prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	}
+ 
+ 	/*
+ 	 * Derive int_pri for this packet's direction from the prevalent qos_tag
+-	 * and write it into skb->int_pri.
++	 * and write it into ecm_skb_int_pri(skb).
+ 	 */
+ 	ecm_front_end_common_update_int_pri(ci, skb, sender, prevalent_pr.flow_qos_tag, prevalent_pr.return_qos_tag);
+ 
+ 	if (ci->unidir_accel_en) {
+ 		if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+-			prevalent_pr.flow_int_pri = skb->int_pri;
++			prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
+ 		} else {
+-			prevalent_pr.return_int_pri = skb->int_pri;
++			prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 		}
+ 	} else {
+-		prevalent_pr.flow_int_pri = skb->int_pri;
+-		prevalent_pr.return_int_pri = skb->int_pri;
++		prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++		prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	}
+ 
+ 	prevalent_pr.accel_mode = ECM_CLASSIFIER_ACCELERATION_MODE_ACCEL;
+--- a/frontends/cmn/ecm_ported_ipv6.c
++++ b/frontends/cmn/ecm_ported_ipv6.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -281,7 +282,7 @@
+ 		/*
+ 		 * Deny acceleration for L2TP-over-UDP tunnel
+ 		 */
+-		if ((in_dev->priv_flags_ext & IFF_EXT_PPP_L2TPV2) && ppp_is_xmit_locked(in_dev)) {
++		if ((ecm_netdev_priv_flags_ext(in_dev) & IFF_EXT_PPP_L2TPV2) && ecm_ppp_is_xmit_locked(in_dev)) {
+ 			DEBUG_TRACE("Skip packets for L2TP tunnel in skb %px\n", skb);
+ 			flags &= ~ECM_FRONT_END_ENGINE_FLAG_CAN_ACCEL;
+ 		}
+@@ -1064,33 +1065,33 @@
+ 	if (ci->unidir_accel_en) {
+ 		if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+ 			prevalent_pr.flow_qos_tag = skb->priority;
+-			prevalent_pr.flow_int_pri = skb->int_pri;
++			prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
+ 		} else {
+ 			prevalent_pr.return_qos_tag = skb->priority;
+-			prevalent_pr.return_int_pri = skb->int_pri;
++			prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 		}
+ 	} else {
+ 		prevalent_pr.flow_qos_tag = skb->priority;
+ 		prevalent_pr.return_qos_tag = skb->priority;
+-		prevalent_pr.flow_int_pri = skb->int_pri;
+-		prevalent_pr.return_int_pri = skb->int_pri;
++		prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++		prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	}
+ 
+ 	/*
+ 	 * Derive int_pri for this packet's direction from the prevalent qos_tag
+-	 * and write it into skb->int_pri.
++	 * and write it into ecm_skb_int_pri(skb).
+ 	 */
+ 	ecm_front_end_common_update_int_pri(ci, skb, sender, prevalent_pr.flow_qos_tag, prevalent_pr.return_qos_tag);
+ 
+ 	if (ci->unidir_accel_en) {
+ 		if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+-			prevalent_pr.flow_int_pri = skb->int_pri;
++			prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
+ 		} else {
+-			prevalent_pr.return_int_pri = skb->int_pri;
++			prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 		}
+ 	} else {
+-		prevalent_pr.flow_int_pri = skb->int_pri;
+-		prevalent_pr.return_int_pri = skb->int_pri;
++		prevalent_pr.flow_int_pri = ecm_skb_int_pri(skb);
++		prevalent_pr.return_int_pri = ecm_skb_int_pri(skb);
+ 	}
+ 
+ 	prevalent_pr.accel_mode = ECM_CLASSIFIER_ACCELERATION_MODE_ACCEL;
+--- a/frontends/ecm_front_end_common.c
++++ b/frontends/ecm_front_end_common.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/debugfs.h>
+@@ -932,8 +933,8 @@
+ 	/*
+ 	 * L2TPv3 acceleration is allowed for l2tp-ethX interfaces
+ 	 */
+-	if ((indev->priv_flags_ext & IFF_EXT_ETH_L2TPV3)
+-		|| (outdev->priv_flags_ext & IFF_EXT_ETH_L2TPV3)) {
++	if ((ecm_netdev_priv_flags_ext(indev) & IFF_EXT_ETH_L2TPV3)
++		|| (ecm_netdev_priv_flags_ext(outdev) & IFF_EXT_ETH_L2TPV3)) {
+ 		return true;
+ 	}
+ #endif
+@@ -1039,8 +1040,8 @@
+ 	/*
+ 	 * Case 3: GRE V4 or V6 TAP
+ 	 */
+-	if ((indev->priv_flags_ext & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP))
+-		|| (outdev->priv_flags_ext & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP))) {
++	if ((ecm_netdev_priv_flags_ext(indev) & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP))
++		|| (ecm_netdev_priv_flags_ext(outdev) & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP))) {
+ #ifdef ECM_INTERFACE_GRE_TAP_ENABLE
+ 		DEBUG_TRACE("%px: GRE IPv%d TAP flow - allow acceleration\n", skb, ip_version);
+ 		return true;
+@@ -1172,7 +1173,7 @@
+ 	if (dscpcte) {
+ 		if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+ 			dscpcte->flow_priority = skb->priority;
+-			dscpcte->flow_int_pri = skb->int_pri;
++			dscpcte->flow_int_pri = ecm_skb_int_pri(skb);
+ 			dscpcte->flow_mark = skb->mark;
+ 			dscpcte->flow_dscp = iph->ds >> XT_DSCP_SHIFT;
+ 			dscpcte->flow_set_flags = NF_CT_DSCPREMARK_EXT_PRIO | NF_CT_DSCPREMARK_EXT_DSCP | NF_CT_DSCPREMARK_EXT_MARK;
+@@ -1180,7 +1181,7 @@
+ 				    ct, sender, dscpcte->flow_priority, dscpcte->flow_int_pri, dscpcte->flow_dscp, dscpcte->flow_mark, dscpcte->flow_set_flags);
+ 		} else {
+ 			dscpcte->reply_priority =  skb->priority;
+-			dscpcte->reply_int_pri = skb->int_pri;
++			dscpcte->reply_int_pri = ecm_skb_int_pri(skb);
+ 			dscpcte->reply_mark =  skb->mark;
+ 			dscpcte->reply_dscp = iph->ds >> XT_DSCP_SHIFT;
+ 			dscpcte->return_set_flags = NF_CT_DSCPREMARK_EXT_PRIO | NF_CT_DSCPREMARK_EXT_DSCP | NF_CT_DSCPREMARK_EXT_MARK;
+@@ -1323,7 +1324,7 @@
+  * ecm_front_end_esp_spi_passthrough_enable_handler()
+  *	Sysctl to enable/disable ESP SPI based passthrough feature.
+  */
+-int ecm_front_end_esp_spi_passthrough_enable_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_front_end_esp_spi_passthrough_enable_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+ 	int current_value;
+@@ -1360,7 +1361,7 @@
+  * ecm_front_end_ppe_fse_enable_limit_handler()
+  *	Sysctl to enable/disable FSE programming through PPE.
+  */
+-int ecm_front_end_ppe_fse_enable_handler(ECM_CTL_TABLE_CONST struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_front_end_ppe_fse_enable_handler(ECM_CTL_TABLE_CONST struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+ 
+@@ -1654,7 +1655,7 @@
+  * ecm_front_end_unidir_accel_proc_handler()
+  *	Per-direction acceleration sysctl handler.
+  */
+-int ecm_front_end_unidir_accel_proc_handler(const struct ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_front_end_unidir_accel_proc_handler(const struct ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+ 
+@@ -2520,7 +2521,7 @@
+ 	}
+ 
+ 	egress_ifnum = ecm_db_iface_interface_identifier_get(ifaces[ifaces_first]);
+-	skb->int_pri = ecm_front_end_common_int_pri_get(egress_ifnum, qos_tag, skb->int_pri);
++	ecm_skb_set_int_pri(skb, ecm_front_end_common_int_pri_get(egress_ifnum, qos_tag, ecm_skb_int_pri(skb)));
+ 	ecm_db_connection_interfaces_deref(ifaces, ifaces_first);
+ }
+ 
+--- a/frontends/include/ecm_netdev_compat.h
++++ b/frontends/include/ecm_netdev_compat.h
+@@ -0,0 +1,363 @@
++/*
++ **************************************************************************
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ * SPDX-License-Identifier: ISC
++ ***************************************************************************
++ */
++
++/*
++ * 6.12 mainline port (SBE1V1K, stage W1).
++ *
++ * The QSDK kernel carries a set of net_device/skb extensions that ECM uses
++ * to recognise offload-relevant interface classes.  Mainline 6.12 has none
++ * of them, so this header provides the minimum needed to build and keeps the
++ * behaviour explicit.  Every deviation is listed here rather than hidden in
++ * the call sites.
++ *
++ * 1. priv_flags_ext
++ *	QSDK adds 'unsigned int priv_flags_ext' to struct net_device and the
++ *	IFF_EXT_* bits below.  Drivers set them in tun.c, ifb.c, ppp_generic.c,
++ *	l2tp_eth.c, gre.c, mapt and the QSDK tunnel code.  Mainline keeps no
++ *	such field.
++ *
++ *	ecm_netdev_priv_flags_ext() returns 0, i.e. "no extended flag set".
++ *	Consequences, all confined to non-Ethernet tunnel devices:
++ *	  - ecm_interface_hierarchy_is_tunnel_dev() still classifies tunnels by
++ *	    dev->type and by the name of the tunnel netdev (its primary check,
++ *	    done before the flag test), so ordinary GRE/IPIP/SIT/VXLAN/GENEVE
++ *	    tunnels remain detected;
++ *	  - tunnels that only the flag would have caught (tun/tap, L2TPv3
++ *	    Ethernet, MAP-T, PPP-over-L2TP/PPTP) are treated as plain devices.
++ *	    ECM_INTERFACE_L2TPV3/PTPT/OVPN/MAP_T support is therefore inert.
++ *	  - IFF_EXT_HW_NO_OFFLOAD has no writer anywhere in the QSDK source
++ *	    either, so "this interface must not be offloaded" is always false
++ *	    on both builds.
++ *	For the W1 target (Ethernet WAN, bridged/VLAN Ethernet LAN) none of
++ *	these device classes exist, so the datapath decisions are unchanged.
++ *
++ * 2. skb->int_pri
++ *	QSDK adds an 8-bit internal priority to struct sk_buff, used only by
++ *	the PPE QoS mapping.  Mainline has no equivalent; reading it yields 0
++ *	and writing it is a no-op, so PPE QoS rules see priority 0.  Interface
++ *	and flow classification are unaffected.
++ *
++ * 3. ppp_is_xmit_locked()
++ *	QSDK exports this from ppp_channel.c.  Mainline has no such helper;
++ *	ECM used it to avoid offloading packets while the PPP tx path is
++ *	locked.  Reporting "not locked" preserves the ordinary (unlocked)
++ *	behaviour; PPP interfaces are not a W1 target.
++ *
++ * 4. vlan_dev_next_dev()
++ *	QSDK rename of mainline's vlan_dev_real_dev(); mapped directly.
++ *
++ * 5. IPPROTO_ETHERIP
++ *	Present in QSDK's uapi/linux/in.h, absent from mainline 6.12.  Value
++ *	97 is the IANA assignment, identical to QSDK.
++ */
++#ifndef __ECM_NETDEV_COMPAT_H
++#define __ECM_NETDEV_COMPAT_H
++
++#include <linux/kernel.h>
++#include <linux/netdevice.h>
++#include <linux/skbuff.h>
++#include <linux/if_vlan.h>
++#include <linux/if_bridge.h>
++
++/*
++ * QSDK include/linux/netdevice.h: enum netdev_priv_flags_ext.
++ * Values are kept identical so that the ECM tests read the same way.
++ */
++enum ecm_netdev_priv_flags_ext {
++	IFF_EXT_TUN_TAP		= 1 << 0,
++	IFF_EXT_PPP_L2TPV2	= 1 << 1,
++	IFF_EXT_PPP_L2TPV3	= 1 << 2,
++	IFF_EXT_PPP_PPTP	= 1 << 3,
++	IFF_EXT_GRE_V4_TAP	= 1 << 4,
++	IFF_EXT_GRE_V6_TAP	= 1 << 5,
++	IFF_EXT_IFB		= 1 << 6,
++	IFF_EXT_MAPT		= 1 << 7,
++	IFF_EXT_HW_NO_OFFLOAD	= 1 << 8,
++	IFF_EXT_ETH_L2TPV3	= 1 << 9,
++};
++
++/*
++ * No mainline interface is ever marked with an extended flag; see 1. above.
++ */
++static inline unsigned int ecm_netdev_priv_flags_ext(const struct net_device *dev)
++{
++	return 0;
++}
++
++/* QSDK skb->int_pri; see 2. above. */
++static inline u8 ecm_skb_int_pri(const struct sk_buff *skb)
++{
++	return 0;
++}
++
++static inline void ecm_skb_set_int_pri(struct sk_buff *skb, u8 int_pri)
++{
++}
++
++/* QSDK ppp_is_xmit_locked(); see 3. above. */
++static inline bool ecm_ppp_is_xmit_locked(struct net_device *dev)
++{
++	return false;
++}
++
++/*
++ * QSDK include/linux/if_vlan.h: vlan_dev_next_dev().  Mainline exposes the
++ * same operation as vlan_dev_real_dev().
++ */
++#define ecm_vlan_dev_next_dev(dev)	vlan_dev_real_dev(dev)
++
++/* See 5. above. */
++#ifndef IPPROTO_ETHERIP
++#define IPPROTO_ETHERIP	97
++#endif
++
++/*
++ * 6. PPP channel API
++ *	QSDK extends include/linux/ppp_channel.h with helpers that let an
++ *	offload engine inspect and account the channels behind a PPP netdev.
++ *	Mainline exports only ppp_register_channel()/ppp_unregister_channel().
++ *
++ *	ppp_hold_channels() reports "no channel could be taken", which is the
++ *	condition ECM already handles by establishing the device as
++ *	ECM_DB_IFACE_TYPE_UNKNOWN.  PPP, PPPoE, PPTP and L2TPv2 interfaces are
++ *	therefore not accelerated; everything else in the datapath is
++ *	unaffected.  ppp_update_stats() becomes a no-op, so offloaded byte and
++ *	packet counts are not folded back into the PPP netdev counters.
++ */
++struct ppp_channel;
++struct pppoe_opt;
++
++static inline int ecm_ppp_hold_channels(struct net_device *dev,
++					struct ppp_channel *channels[],
++					unsigned int chan_sz)
++{
++	return 0;
++}
++
++static inline void ecm_ppp_release_channels(struct ppp_channel *channels[],
++					    unsigned int chan_sz)
++{
++}
++
++static inline int ecm_ppp_channel_get_protocol(struct ppp_channel *chan)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline int ecm_pppoe_channel_addressing_get(struct ppp_channel *chan,
++						   struct pppoe_opt *addressing)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline int ecm_ppp_is_multilink(struct net_device *dev)
++{
++	return 0;
++}
++
++#define ppp_hold_channels		ecm_ppp_hold_channels
++#define ppp_release_channels		ecm_ppp_release_channels
++#define ppp_channel_get_protocol	ecm_ppp_channel_get_protocol
++#define pppoe_channel_addressing_get	ecm_pppoe_channel_addressing_get
++#define ppp_is_multilink		ecm_ppp_is_multilink
++
++static inline void ppp_update_stats(struct net_device *dev,
++				    unsigned long rx_packets,
++				    unsigned long rx_bytes,
++				    unsigned long tx_packets,
++				    unsigned long tx_bytes,
++				    unsigned long rx_errors,
++				    unsigned long tx_errors,
++				    unsigned long rx_dropped,
++				    unsigned long tx_dropped)
++{
++}
++
++/*
++ * 7. DSA
++ *	Mainline renamed dsa_slave_dev_check() to dsa_user_dev_check() and
++ *	replaced the cpu_dp->master netdev pointer with dsa_port_to_conduit().
++ *	Both are straight renames, so the DSA interface path keeps working.
++ */
++#define dsa_slave_dev_check(dev)	dsa_user_dev_check(dev)
++
++/*
++ * 8. MAP-T
++ *	QSDK's nat46 exports is_map_t_dev().  The nat46 shipped for this build
++ *	has no MAP-T netdev support, so no device is ever a MAP-T device.
++ */
++static inline bool is_map_t_dev(const struct net_device *dev)
++{
++	return false;
++}
++
++/*
++ * 9. Offload statistics helpers
++ *	QSDK lets an offload engine push its counters into the bridge, bridge
++ *	VLAN, VLAN and DSA devices.  Mainline has no such entry points.
++ *
++ *	Offloaded traffic is then missing from those device counters only;
++ *	per-interface counters and the accelerated datapath are unaffected.
++ *	br_vlan_update_stats() returns 0 so that ECM does not log a failure for
++ *	every update.
++ */
++static inline void br_dev_update_stats(struct net_device *dev,
++				       struct rtnl_link_stats64 *nlstats)
++{
++}
++
++static inline int br_vlan_update_stats(struct net_device *dev, u32 vid,
++				       u64 rx_bytes, u64 rx_packets,
++				       u64 tx_bytes, u64 tx_packets)
++{
++	return 0;
++}
++
++static inline void __vlan_dev_update_accel_stats(struct net_device *dev,
++						 struct rtnl_link_stats64 *stats)
++{
++}
++
++static inline void __dsa_dev_update_accel_stats(struct net_device *dev,
++						struct rtnl_link_stats64 *stats)
++{
++}
++
++/*
++ * 10. Bridge FDB and neighbour MAC change events
++ *	QSDK's bridge code publishes MAC add/delete/move events so that ECM
++ *	can defunct the connections of a station that roamed or aged out; the
++ *	qualcommbe kernel patch restores those chains on mainline 6.12, so
++ *	ECM uses the real ones.  The no-op fallback below only applies to a
++ *	kernel without the patch (BR_FDB_EVENT_ADD undefined).
++ *
++ *	Only the neighbour-side events remain stubbed: QSDK's
++ *	neigh_mac_update chains are not part of the restored ABI.
++ */
++#ifndef BR_FDB_EVENT_ADD
++struct net_bridge;
++
++struct br_fdb_event {
++	unsigned char addr[6];
++	unsigned char is_local;
++	struct net_device *dev;
++	struct net_bridge *br;
++	struct net_device *orig_dev;
++};
++
++#define BR_FDB_EVENT_ADD	0x01
++#define BR_FDB_EVENT_DEL	0x02
++
++static inline void br_fdb_update_register_notify(struct notifier_block *nb)
++{
++}
++
++static inline void br_fdb_update_unregister_notify(struct notifier_block *nb)
++{
++}
++
++static inline void br_fdb_register_notify(struct notifier_block *nb)
++{
++}
++
++static inline void br_fdb_unregister_notify(struct notifier_block *nb)
++{
++}
++#endif /* !BR_FDB_EVENT_ADD */
++
++struct neigh_mac_update {
++	unsigned char old_mac[ALIGN(MAX_ADDR_LEN, sizeof(unsigned long))];
++	unsigned char update_mac[ALIGN(MAX_ADDR_LEN, sizeof(unsigned long))];
++};
++
++static inline void neigh_mac_update_register_notify(struct notifier_block *nb)
++{
++}
++
++static inline void neigh_mac_update_unregister_notify(struct notifier_block *nb)
++{
++}
++
++/*
++ * 11. Bridge isolation
++ *	QSDK tags bridge ports with a "sub bridge id" so that ECM never
++ *	accelerates between isolated bridges.  Mainline has no such tag.
++ *	Reporting -EOPNOTSUPP makes the check fail closed: traffic is not
++ *	accelerated while the ecm_interface bridge_isolation knob is enabled,
++ *	which is the safe direction.  The knob defaults to off.
++ */
++static inline int br_port_get_sub_br_id(struct net_device *dev)
++{
++	return -EOPNOTSUPP;
++}
++
++/*
++ * 12. Bonding driver callbacks
++ *	QSDK's bonding driver exports struct bond_cb and
++ *	bond_register_cb()/bond_unregister_cb() so that an offload engine is
++ *	told when a LAG member changes state (link up/down, enslave/release).
++ *	Mainline exports neither; it only reports LAG state through netdevice
++ *	notifier events, which ECM already handles for the master device.
++ *
++ *	Consequence: a LAG member link flap or release does not defunct the
++ *	connections riding the master at the moment it happens; they are
++ *	invalidated by the next event or by their own timeout.  W1 has no LAG
++ *	configured (single Ethernet WAN, bridged Ethernet LAN), so this stub
++ *	is inert.
++ */
++struct bond_cb {
++	void (*bond_cb_link_up)(struct net_device *slave);
++	void (*bond_cb_link_down)(struct net_device *slave);
++	void (*bond_cb_enslave)(struct net_device *slave);
++	void (*bond_cb_release)(struct net_device *slave);
++	void (*bond_cb_delete_by_slave)(struct net_device *slave);
++	void (*bond_cb_delete_by_mac)(uint8_t *mac_addr);
++};
++
++static inline int ecm_bond_register_cb(struct bond_cb *cb)
++{
++	return 0;
++}
++
++static inline void ecm_bond_unregister_cb(void)
++{
++}
++
++#define bond_register_cb	ecm_bond_register_cb
++#define bond_unregister_cb	ecm_bond_unregister_cb
++
++/*
++ * 13. LAG transmit device selection
++ *	QSDK's bonding driver exports bond_get_tx_dev(), which predicts the
++ *	slave a LAG master will hash a given packet onto so that an offload
++ *	engine can program the rule on the physical port.  Mainline keeps that
++ *	decision inside the bonding driver (bond_xmit_hash() and friends are
++ *	static) and exports no equivalent.
++ *
++ *	The stub returns NULL, which sends every caller down its existing
++ *	"Unable to obtain LAG output slave device" path: connections whose
++ *	egress device is a LAG master are not accelerated, while the master
++ *	itself keeps forwarding them in software.  This is fail-closed (no
++ *	rule is installed for a device ECM cannot resolve to a slave) and W1
++ *	has no LAG configured, so it is inert on the target.
++ *
++ *	The declaration in ecm_interface.h is guarded by ECM_NETDEV_COMPAT_BOND
++ *	so that this definition does not collide with it.
++ */
++#define ECM_NETDEV_COMPAT_BOND	1
++
++static inline struct net_device *ecm_bond_get_tx_dev(struct sk_buff *skb,
++		uint8_t *src_mac, uint8_t *dst_mac, void *src, void *dst,
++		uint16_t protocol, struct net_device *bond_dev,
++		__be16 *layer4hdr)
++{
++	return NULL;
++}
++
++#define bond_get_tx_dev	ecm_bond_get_tx_dev
++
++#endif /* __ECM_NETDEV_COMPAT_H */
+--- a/frontends/include/net/netfilter/nf_conntrack_dscpremark_ext.h
++++ b/frontends/include/net/netfilter/nf_conntrack_dscpremark_ext.h
+@@ -0,0 +1,94 @@
++/*
++ **************************************************************************
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ * SPDX-License-Identifier: ISC
++ ***************************************************************************
++ */
++
++/*
++ * 6.12 mainline port (SBE1V1K, stage W1).
++ *
++ * QSDK adds a conntrack extension that stores per-direction DSCP/priority/mark
++ * values filled in by its iptables DSCP target, keyed on the
++ * CONFIG_NF_CONNTRACK_DSCPREMARK_EXT option.  Mainline 6.12 has neither the
++ * option nor the extension, so the ECM DSCP classifier cannot be fed from
++ * conntrack.
++ *
++ * This header mirrors the QSDK API with the extension permanently absent,
++ * which is exactly the QSDK header's behaviour when its Kconfig option is
++ * disabled: find/add return NULL and the validity check reports
++ * RULE_NOT_VALID.  ECM already handles that case -
++ * ecm_classifier_dscp_process() marks the classifier irrelevant when the
++ * extension is missing, and ecm_front_end_tcp_set_dscp_ext() does nothing.
++ *
++ * Behavioural consequence: DSCP-based QoS/marking offload is inactive;
++ * ordinary connection tracking and all datapath acceleration are unaffected.
++ * The type is kept complete so that the ECM sources compile unchanged.
++ *
++ * Path note: this file is reached through the compiler's
++ * -I$(obj)/frontends/include from the ECM Makefile.
++ */
++#ifndef _NF_CONNTRACK_DSCPREMARK_H
++#define _NF_CONNTRACK_DSCPREMARK_H
++
++#include <net/netfilter/nf_conntrack.h>
++
++/* Rule flags */
++#define NF_CT_DSCPREMARK_EXT_DSCP_RULE_VALID	0x1
++
++/* Rule validity */
++#define NF_CT_DSCPREMARK_EXT_RULE_VALID		0x1
++#define NF_CT_DSCPREMARK_EXT_RULE_NOT_VALID	0x0
++
++/* Which QoS features are set flags */
++#define NF_CT_DSCPREMARK_EXT_PRIO	0x1
++#define NF_CT_DSCPREMARK_EXT_DSCP	0x2
++#define NF_CT_DSCPREMARK_EXT_IGS_QOS	0x4
++#define NF_CT_DSCPREMARK_EXT_MARK	0x8
++#define NF_CT_DSCPREMARK_EXT_SAWF	0x10
++
++/*
++ * DSCP remark conntrack extension structure (QSDK layout, kept for source
++ * compatibility; no instance exists on mainline).
++ */
++struct nf_ct_dscpremark_ext {
++	u32 flow_priority;
++	u32 reply_priority;
++	u32 flow_mark;
++	u32 reply_mark;
++	u32 flow_sawf_meta;
++	u32 return_sawf_meta;
++	u16 igs_flow_qos_tag;
++	u16 igs_reply_qos_tag;
++	u8 flow_dscp;
++	u8 reply_dscp;
++	u8 flow_int_pri;
++	u8 reply_int_pri;
++	u16 rule_flags;
++	u16 flow_set_flags;
++	u16 return_set_flags;
++};
++
++static inline struct nf_ct_dscpremark_ext *
++nf_ct_dscpremark_ext_find(const struct nf_conn *ct)
++{
++	return NULL;
++}
++
++static inline struct nf_ct_dscpremark_ext *
++nf_ct_dscpremark_ext_add(struct nf_conn *ct, gfp_t gfp)
++{
++	return NULL;
++}
++
++static inline int nf_conntrack_dscpremark_ext_set_dscp_rule_valid(struct nf_conn *ct)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline int nf_conntrack_dscpremark_ext_get_dscp_rule_validity(struct nf_conn *ct)
++{
++	return NF_CT_DSCPREMARK_EXT_RULE_NOT_VALID;
++}
++
++#endif /* _NF_CONNTRACK_DSCPREMARK_H */
+--- a/frontends/nss/ecm_nss_common.h
++++ b/frontends/nss/ecm_nss_common.h
+@@ -18,6 +18,7 @@
+ 
+ #ifdef ECM_INTERFACE_MAP_T_ENABLE
+ #include <nat46-core.h>
++#include "ecm_netdev_compat.h"
+ #endif
+ 
+ #ifdef ECM_INTERFACE_IPSEC_ENABLE
+@@ -163,7 +164,7 @@
+ 		/*
+ 		 * If device is not GRETAP then return NONE.
+ 		 */
+-		if (!(dev->priv_flags_ext & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP))) {
++		if (!(ecm_netdev_priv_flags_ext(dev) & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP))) {
+ 			break;
+ 		}
+ #if __has_attribute(__fallthrough__)
+@@ -196,7 +197,7 @@
+ 		break;
+ 	case ARPHRD_PPP:
+ #ifdef ECM_INTERFACE_PPTP_ENABLE
+-		if (dev->priv_flags_ext & IFF_EXT_PPP_PPTP) {
++		if (ecm_netdev_priv_flags_ext(dev) & IFF_EXT_PPP_PPTP) {
+ 			if (feci->protocol == IPPROTO_GRE) {
+ 				return NSS_DYNAMIC_INTERFACE_TYPE_PPTP_OUTER;
+ 			}
+--- a/frontends/nss/ecm_nss_ipv4.c
++++ b/frontends/nss/ecm_nss_ipv4.c
+@@ -21,7 +21,7 @@
+ #include <net/ip.h>
+ #include <net/tcp.h>
+ #include <net/addrconf.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -598,7 +598,7 @@
+ #else
+ 				timeouts = nf_ct_timeout_lookup(ct);
+ 				if (!timeouts) {
+-					timeouts = udp_get_timeouts(nf_ct_net(ct));
++					timeouts = nf_udp_pernet(nf_ct_net(ct))->timeouts;
+ 				}
+ 
+ 				spin_lock_bh(&ct->lock);
+--- a/frontends/nss/ecm_nss_ipv6.c
++++ b/frontends/nss/ecm_nss_ipv6.c
+@@ -22,7 +22,7 @@
+ #include <net/addrconf.h>
+ #include <net/ipv6.h>
+ #include <net/tcp.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -575,7 +575,7 @@
+ #else
+ 				timeouts = nf_ct_timeout_lookup(ct);
+ 				if (!timeouts) {
+-					timeouts = udp_get_timeouts(nf_ct_net(ct));
++					timeouts = nf_udp_pernet(nf_ct_net(ct))->timeouts;
+ 				}
+ 
+ 				spin_lock_bh(&ct->lock);
+--- a/frontends/nss/ecm_nss_multicast_ipv4.c
++++ b/frontends/nss/ecm_nss_multicast_ipv4.c
+@@ -23,7 +23,7 @@
+ #include <net/route.h>
+ #include <net/ip.h>
+ #include <net/addrconf.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -1784,7 +1784,7 @@
+  * ecm_nss_multicast_ipv4_connection_defunct_callback()
+  *	Callback to be called when a Mcast connection has become defunct.
+  */
+-bool ecm_nss_multicast_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_nss_multicast_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+@@ -2356,7 +2356,7 @@
+ /*
+  * ecm_nss_multicast_ipv4_get_accelerated_count()
+  */
+-ssize_t ecm_nss_multicast_ipv4_get_accelerated_count(struct device *dev,
++static ssize_t ecm_nss_multicast_ipv4_get_accelerated_count(struct device *dev,
+ 				  struct device_attribute *attr,
+ 				  char *buf)
+ {
+@@ -2699,7 +2699,7 @@
+ /*
+  * ecm_nss_multicast_ipv4_stop()
+  */
+-void ecm_nss_multicast_ipv4_stop(int num)
++static void ecm_nss_multicast_ipv4_stop(int num)
+ {
+ 	ecm_front_end_ipv4_mc_stopped = num;
+ }
+--- a/frontends/nss/ecm_nss_multicast_ipv6.c
++++ b/frontends/nss/ecm_nss_multicast_ipv6.c
+@@ -22,7 +22,7 @@
+ #include <net/addrconf.h>
+ #include <net/ipv6.h>
+ #include <net/tcp.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -1742,7 +1742,7 @@
+  * ecm_nss_multicast_ipv6_connection_defunct_callback()
+  *	Callback to be called when a Mcast connection has become defunct.
+  */
+-bool ecm_nss_multicast_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_nss_multicast_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+@@ -2635,7 +2635,7 @@
+ /*
+  * ecm_nss_multicast_ipv6_stop()
+  */
+-void ecm_nss_multicast_ipv6_stop(int num)
++static void ecm_nss_multicast_ipv6_stop(int num)
+ {
+ 	ecm_front_end_ipv6_mc_stopped = num;
+ }
+--- a/frontends/nss/ecm_nss_non_ported_ipv4.c
++++ b/frontends/nss/ecm_nss_non_ported_ipv4.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -21,7 +22,7 @@
+ #include <net/ip.h>
+ #include <net/tcp.h>
+ #include <net/addrconf.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -698,7 +699,7 @@
+ 				 * which is not claimed to be supported. Need to be looked at further when this
+ 				 * case needs to be supported
+ 				 */
+-				if ((dev->priv_flags_ext & IFF_EXT_GRE_V4_TAP) && proto == IPPROTO_GRE) {
++				if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V4_TAP) && proto == IPPROTO_GRE) {
+ 					/*
+ 					 * Clear QOS_VALID to prevent outer rule from overwriting
+ 					 * inner flow's QoS classification.
+@@ -1711,7 +1712,7 @@
+  * ecm_nss_non_ported_ipv4_connection_defunct_callback()
+  *	Callback to be called when a non-ported connection has become defunct.
+  */
+-bool ecm_nss_non_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_nss_non_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/nss/ecm_nss_non_ported_ipv6.c
++++ b/frontends/nss/ecm_nss_non_ported_ipv6.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -22,7 +23,7 @@
+ #include <net/addrconf.h>
+ #include <net/ipv6.h>
+ #include <net/tcp.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -605,7 +606,7 @@
+ 				 * which is not claimed to be supported. Need to be looked at further when this
+ 				 * case needs to be supported
+ 				 */
+-				if ((dev->priv_flags_ext & IFF_EXT_GRE_V6_TAP) && proto == IPPROTO_GRE) {
++				if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V6_TAP) && proto == IPPROTO_GRE) {
+ 					/*
+ 					 * Clear QOS_VALID to prevent outer rule from overwriting
+ 					 * inner flow's QoS classification.
+@@ -1511,7 +1512,7 @@
+  * ecm_nss_non_ported_ipv6_connection_defunct_callback()
+  *	Callback to be called when a non-ported connection has become defunct.
+  */
+-bool ecm_nss_non_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_nss_non_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/nss/ecm_nss_ported_ipv4.c
++++ b/frontends/nss/ecm_nss_ported_ipv4.c
+@@ -21,7 +21,7 @@
+ #include <net/ip.h>
+ #include <net/tcp.h>
+ #include <net/addrconf.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -1821,7 +1821,7 @@
+  * ecm_nss_ported_ipv4_connection_defunct_callback()
+  *	Callback to be called when a ported connection has become defunct.
+  */
+-bool ecm_nss_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_nss_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/nss/ecm_nss_ported_ipv6.c
++++ b/frontends/nss/ecm_nss_ported_ipv6.c
+@@ -22,7 +22,7 @@
+ #include <net/addrconf.h>
+ #include <net/ipv6.h>
+ #include <net/tcp.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -1734,7 +1734,7 @@
+  * ecm_nss_ported_ipv6_connection_defunct_callback()
+  *	Callback to be called when a ported connection has become defunct.
+  */
+-bool ecm_nss_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_nss_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/ppe/ecm_ppe_ipv4.c
++++ b/frontends/ppe/ecm_ppe_ipv4.c
+@@ -20,7 +20,7 @@
+ #include <net/ip.h>
+ #include <net/tcp.h>
+ #include <net/addrconf.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -501,7 +501,7 @@
+ #else
+ 				timeouts = nf_ct_timeout_lookup(ct);
+ 				if (!timeouts) {
+-					timeouts = udp_get_timeouts(nf_ct_net(ct));
++					timeouts = nf_udp_pernet(nf_ct_net(ct))->timeouts;
+ 				}
+ 
+ 				spin_lock_bh(&ct->lock);
+--- a/frontends/ppe/ecm_ppe_ipv6.c
++++ b/frontends/ppe/ecm_ppe_ipv6.c
+@@ -21,7 +21,7 @@
+ #include <net/addrconf.h>
+ #include <net/ipv6.h>
+ #include <net/tcp.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -563,7 +563,7 @@
+ #else
+ 				timeouts = nf_ct_timeout_lookup(ct);
+ 				if (!timeouts) {
+-					timeouts = udp_get_timeouts(nf_ct_net(ct));
++					timeouts = nf_udp_pernet(nf_ct_net(ct))->timeouts;
+ 				}
+ 
+ 				spin_lock_bh(&ct->lock);
+--- a/frontends/ppe/ecm_ppe_non_ported_ipv4.c
++++ b/frontends/ppe/ecm_ppe_non_ported_ipv4.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -20,7 +21,7 @@
+ #include <net/ip.h>
+ #include <net/tcp.h>
+ #include <net/addrconf.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -475,7 +476,7 @@
+ 				 * which is not claimed to be supported. Need to be looked at further when this
+ 				 * case needs to be supported
+ 				 */
+-				if ((dev->priv_flags_ext & IFF_EXT_GRE_V4_TAP) && proto == IPPROTO_GRE) {
++				if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V4_TAP) && proto == IPPROTO_GRE) {
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, saddr);
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_TO, daddr);
+ 					if (!ecm_interface_tunnel_mtu_update(saddr, daddr, ECM_DB_IFACE_TYPE_GRE_TAP, &(pd4rc->conn_rule.flow_mtu))) {
+@@ -1551,7 +1552,7 @@
+  * ecm_ppe_non_ported_ipv4_connection_defunct_callback()
+  *	Callback to be called when a non-ported connection has become defunct.
+  */
+-bool ecm_ppe_non_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_ppe_non_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/ppe/ecm_ppe_non_ported_ipv6.c
++++ b/frontends/ppe/ecm_ppe_non_ported_ipv6.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -21,7 +22,7 @@
+ #include <net/addrconf.h>
+ #include <net/ipv6.h>
+ #include <net/tcp.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -462,7 +463,7 @@
+ 				 * which is not claimed to be supported. Need to be looked at further when this
+ 				 * case needs to be supported
+ 				 */
+-				if ((dev->priv_flags_ext & IFF_EXT_GRE_V6_TAP) && proto == IPPROTO_GRE) {
++				if ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V6_TAP) && proto == IPPROTO_GRE) {
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, saddr);
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_TO, daddr);
+ 					if (!ecm_interface_tunnel_mtu_update(saddr, daddr, ECM_DB_IFACE_TYPE_GRE_TAP, (uint32_t *)&(pd6rc->conn_rule.flow_mtu))) {
+@@ -1580,7 +1581,7 @@
+  * ecm_ppe_non_ported_ipv6_connection_defunct_callback()
+  *	Callback to be called when a non-ported connection has become defunct.
+  */
+-bool ecm_ppe_non_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_ppe_non_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/ppe/ecm_ppe_ported_ipv4.c
++++ b/frontends/ppe/ecm_ppe_ported_ipv4.c
+@@ -20,7 +20,7 @@
+ #include <net/ip.h>
+ #include <net/tcp.h>
+ #include <net/addrconf.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -2306,7 +2306,7 @@
+  * ecm_ppe_ported_ipv4_connection_defunct_callback()
+  *	Callback to be called when a ported connection has become defunct.
+  */
+-bool ecm_ppe_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_ppe_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/ppe/ecm_ppe_ported_ipv6.c
++++ b/frontends/ppe/ecm_ppe_ported_ipv6.c
+@@ -21,7 +21,7 @@
+ #include <net/addrconf.h>
+ #include <net/ipv6.h>
+ #include <net/tcp.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ #include <asm/uaccess.h>	/* for put_user */
+ #include <net/ipv6.h>
+ #include <linux/inet.h>
+@@ -2518,7 +2518,7 @@
+  * ecm_ppe_ported_ipv6_connection_defunct_callback()
+  *	Callback to be called when a ported connection has become defunct.
+  */
+-bool ecm_ppe_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_ppe_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+--- a/frontends/sfe/ecm_sfe_common.c
++++ b/frontends/sfe/ecm_sfe_common.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -1266,7 +1267,7 @@
+ 	}
+ 
+ #ifdef ECM_INTERFACE_GRE_TAP_ENABLE
+-	if (dev->priv_flags_ext & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
++	if (ecm_netdev_priv_flags_ext(dev) & (IFF_EXT_GRE_V4_TAP | IFF_EXT_GRE_V6_TAP)) {
+ 		vp = ppe_tun_hybrid_ol_ctx_get(dev);
+ 	}
+ #endif
+--- a/frontends/sfe/ecm_sfe_ipv4.c
++++ b/frontends/sfe/ecm_sfe_ipv4.c
+@@ -551,7 +551,7 @@
+ #else
+ 				timeouts = nf_ct_timeout_lookup(ct);
+ 				if (!timeouts) {
+-					timeouts = udp_get_timeouts(nf_ct_net(ct));
++					timeouts = nf_udp_pernet(nf_ct_net(ct))->timeouts;
+ 				}
+ 
+ 				spin_lock_bh(&ct->lock);
+--- a/frontends/sfe/ecm_sfe_ipv6.c
++++ b/frontends/sfe/ecm_sfe_ipv6.c
+@@ -556,7 +556,7 @@
+ #else
+ 				timeouts = nf_ct_timeout_lookup(ct);
+ 				if (!timeouts) {
+-					timeouts = udp_get_timeouts(nf_ct_net(ct));
++					timeouts = nf_udp_pernet(nf_ct_net(ct))->timeouts;
+ 				}
+ 
+ 				spin_lock_bh(&ct->lock);
+--- a/frontends/sfe/ecm_sfe_multicast_ipv4.c
++++ b/frontends/sfe/ecm_sfe_multicast_ipv4.c
+@@ -2267,7 +2267,7 @@
+  * ecm_sfe_multicast_ipv4_connection_defunct_callback()
+  *	Callback to be called when a Mcast connection has become defunct.
+  */
+-bool ecm_sfe_multicast_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_sfe_multicast_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+@@ -2863,7 +2863,7 @@
+ /*
+  * ecm_sfe_multicast_ipv4_get_accelerated_count()
+  */
+-ssize_t ecm_sfe_multicast_ipv4_get_accelerated_count(struct device *dev,
++static ssize_t ecm_sfe_multicast_ipv4_get_accelerated_count(struct device *dev,
+ 				  struct device_attribute *attr,
+ 				  char *buf)
+ {
+@@ -3269,7 +3269,7 @@
+ /*
+  * ecm_sfe_multicast_ipv4_stop()
+  */
+-void ecm_sfe_multicast_ipv4_stop(int num)
++static void ecm_sfe_multicast_ipv4_stop(int num)
+ {
+ 	ecm_front_end_ipv4_mc_stopped = !!num;
+ }
+--- a/frontends/sfe/ecm_sfe_multicast_ipv6.c
++++ b/frontends/sfe/ecm_sfe_multicast_ipv6.c
+@@ -2287,7 +2287,7 @@
+  * ecm_sfe_multicast_ipv6_connection_defunct_callback()
+  *	Callback to be called when a Mcast connection has become defunct.
+  */
+-bool ecm_sfe_multicast_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_sfe_multicast_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
+@@ -3266,7 +3266,7 @@
+ /*
+  * ecm_sfe_multicast_ipv6_stop()
+  */
+-void ecm_sfe_multicast_ipv6_stop(int num)
++static void ecm_sfe_multicast_ipv6_stop(int num)
+ {
+ 	ecm_front_end_ipv6_mc_stopped = !!num;
+ }
+--- a/frontends/sfe/ecm_sfe_non_ported_ipv4.c
++++ b/frontends/sfe/ecm_sfe_non_ported_ipv4.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -672,12 +673,12 @@
+ #if defined(ECM_INTERFACE_GRE_TAP_ENABLE) || defined(ECM_INTERFACE_L2TPV3_ENABLE)
+ 			dev = dev_get_by_index(&init_net, ecm_db_iface_interface_identifier_get(ii));
+ 			if (dev) {
+-				if (((dev->priv_flags_ext & IFF_EXT_GRE_V4_TAP) && proto == IPPROTO_GRE)
+-						|| ((dev->priv_flags_ext & IFF_EXT_ETH_L2TPV3) && proto == IPPROTO_L2TP)) {
++				if (((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V4_TAP) && proto == IPPROTO_GRE)
++						|| ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_ETH_L2TPV3) && proto == IPPROTO_L2TP)) {
+ 					int db_iface_type;
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, saddr);
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_TO, daddr);
+-					db_iface_type = (dev->priv_flags_ext & IFF_EXT_GRE_V4_TAP) ? ECM_DB_IFACE_TYPE_GRE_TAP : ECM_DB_IFACE_TYPE_L2TPV3;
++					db_iface_type = (ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V4_TAP) ? ECM_DB_IFACE_TYPE_GRE_TAP : ECM_DB_IFACE_TYPE_L2TPV3;
+ 					if (!ecm_interface_tunnel_mtu_update(saddr, daddr, db_iface_type, &(nircm->conn_rule.flow_mtu))) {
+ 						rule_invalid = true;
+ 						ecm_sfe_stats_v4_inc(feci, ECM_SFE_STATS_V4_EXCEPTION_NON_PORTED, ECM_SFE_STATS_V4_EXCEPTION_NON_PORTED_FROM_IFACE_GRETAP_OR_L2TPV3_IFACE_MTU_UNKNOWN);
+@@ -1876,7 +1877,7 @@
+  * ecm_sfe_non_ported_ipv4_connection_defunct_callback()
+  *	Callback to be called when a non-ported connection has become defunct.
+  */
+-bool ecm_sfe_non_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_sfe_non_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	bool is_defunct __maybe_unused;
+--- a/frontends/sfe/ecm_sfe_non_ported_ipv6.c
++++ b/frontends/sfe/ecm_sfe_non_ported_ipv6.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/version.h>
++#include "ecm_netdev_compat.h"
+ #include <linux/types.h>
+ #include <linux/ip.h>
+ #include <linux/tcp.h>
+@@ -579,12 +580,12 @@
+ #if defined(ECM_INTERFACE_GRE_TAP_ENABLE) || defined(ECM_INTERFACE_L2TPV3_ENABLE)
+ 			dev = dev_get_by_index(&init_net, ecm_db_iface_interface_identifier_get(ii));
+ 			if (dev) {
+-				if (((dev->priv_flags_ext & IFF_EXT_GRE_V6_TAP) && proto == IPPROTO_GRE)
+-						|| ((dev->priv_flags_ext & IFF_EXT_ETH_L2TPV3) && proto == IPPROTO_L2TP)) {
++				if (((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V6_TAP) && proto == IPPROTO_GRE)
++						|| ((ecm_netdev_priv_flags_ext(dev) & IFF_EXT_ETH_L2TPV3) && proto == IPPROTO_L2TP)) {
+ 					int db_iface_type;
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, saddr);
+ 					ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_TO, daddr);
+-					db_iface_type = (dev->priv_flags_ext & IFF_EXT_GRE_V6_TAP) ? ECM_DB_IFACE_TYPE_GRE_TAP : ECM_DB_IFACE_TYPE_L2TPV3;
++					db_iface_type = (ecm_netdev_priv_flags_ext(dev) & IFF_EXT_GRE_V6_TAP) ? ECM_DB_IFACE_TYPE_GRE_TAP : ECM_DB_IFACE_TYPE_L2TPV3;
+ 					if (!ecm_interface_tunnel_mtu_update(saddr, daddr, db_iface_type, &(nircm->conn_rule.flow_mtu))) {
+ 						rule_invalid = true;
+ 						ecm_sfe_stats_v6_inc(feci, ECM_SFE_STATS_V6_EXCEPTION_NON_PORTED, ECM_SFE_STATS_V6_EXCEPTION_NON_PORTED_FROM_IFACE_GRETAP_OR_L2TPV3_IFACE_MTU_UNKNOWN);
+@@ -1670,7 +1671,7 @@
+  * ecm_sfe_non_ported_ipv6_connection_defunct_callback()
+  *	Callback to be called when a non-ported connection has become defunct.
+  */
+-bool ecm_sfe_non_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
++static bool ecm_sfe_non_ported_ipv6_connection_defunct_callback(void *arg, int *accel_mode)
+ {
+ 	bool ret;
+ 	bool is_defunct __maybe_unused;

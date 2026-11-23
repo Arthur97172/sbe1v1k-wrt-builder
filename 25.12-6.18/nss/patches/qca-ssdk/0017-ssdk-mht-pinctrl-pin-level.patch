@@ -1,0 +1,24 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-ssdk: map the legacy OUTPUT pin config to PIN_CONFIG_LEVEL
+
+6.18 dropped PIN_CONFIG_OUTPUT from enum pin_config_param; driving a pin
+to a level is expressed with PIN_CONFIG_LEVEL, whose argument is the
+level itself. ssdk_mht_pinctrl.c still switches on the removed symbol:
+
+  ../src/init/ssdk_mht_pinctrl.c:290: error: 'PIN_CONFIG_OUTPUT' undeclared; did you mean 'PIN_CONFIG_MAX'?
+
+The handler already does exactly what LEVEL means: it enables the output
+and drives the configuration argument onto the pin.
+
+Classification: portability (kernel API, no behaviour change).
+--- a/src/init/ssdk_mht_pinctrl.c
++++ b/src/init/ssdk_mht_pinctrl.c
+@@ -287,7 +287,7 @@
+                 rv = mht_gpio_pin_cfg_set_drvs(dev_id, pin, arg);
+                 break;
+ 
+-            case PIN_CONFIG_OUTPUT:
++            case PIN_CONFIG_LEVEL:
+                 rv = mht_gpio_pin_cfg_set_oe(dev_id, pin, A_TRUE);
+                 rv = mht_gpio_set_bit(dev_id, pin, arg);
+                 break;

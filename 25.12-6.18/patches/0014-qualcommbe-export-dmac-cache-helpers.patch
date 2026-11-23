@@ -1,0 +1,104 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 导出 QSDK dmac_* 缓存维护函数供 qca-nss-dp 使用
+
+qca-nss-dp 的 ipq95xx EDMA 数据路径用 QSDK 的 dmac_inv_range()、
+dmac_inv_range_no_dsb()、dmac_clean_range_no_dsb() 转移缓冲区所有权。
+主线 6.12 只保留了改名后的 dcache_{inval,clean}_poc()，且都没有导出，
+外部模块无法直接调用：
+
+  exports/nss_dp_arch.h:182: error: implicit declaration of function
+    'dmac_inv_range'; did you mean 'mas_find_range'?
+
+本补丁在 arch/arm64/mm/flush.c 中恢复这三个函数并按 QSDK 的方式
+EXPORT_SYMBOL。QSDK 的 *_no_dsb 汇编会省掉尾随 DSB；主线没有无屏障
+原语，因此 *_no_dsb 包装改为调用常规 dcache_*_poc()（带 DSB），比
+QSDK 更保守，这是唯一的行为差异。
+
+dmac_flush_range()/dmac_clean_range() 未加入：使用者只有 ipq50xx 的
+syn_gmac_dp，本目标不编译。
+
+分类：必须 shim（厂商内核 ABI；主线原语存在但未导出）。
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0503-arm64-export-qcom-dmac-cache-helpers.patch b/target/linux/qualcommbe/patches-6.18/0503-arm64-export-qcom-dmac-cache-helpers.patch
+--- a/target/linux/qualcommbe/patches-6.18/0503-arm64-export-qcom-dmac-cache-helpers.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0503-arm64-export-qcom-dmac-cache-helpers.patch	2026-11-22 23:23:06.883525837 +0000
+@@ -0,0 +1,80 @@
++arm64: export the QSDK dmac_* cache maintenance helpers for qca-nss-dp
++
++qca-nss-dp's ipq95xx EDMA data path flushes buffer ownership with three
++QSDK cache helpers, declared in the vendor
++arch/arm64/include/asm/cacheflush.h and exported from
++arch/arm64/mm/flush.c:
++
++  dmac_inv_range()             -> dcache_inval_poc()
++  dmac_inv_range_no_dsb()      -> __dma_inv_area_no_dsb()
++  dmac_clean_range_no_dsb()    -> __dma_clean_area_no_dsb()
++  dmac_flush_range()           -> dcache_clean_inval_poc()
++
++Mainline 6.12 keeps the renamed primitives (dcache_inval_poc(),
++dcache_clean_poc(), dcache_clean_inval_poc()) but exports none of them,
++so an out-of-tree module cannot use them directly:
++
++  exports/nss_dp_arch.h:182: error: implicit declaration of function
++    'dmac_inv_range'; did you mean 'mas_find_range'?
++
++This patch restores the three helpers qca-nss-dp needs and exports them
++with EXPORT_SYMBOL like QSDK does.  The __dma_*_no_dsb assembly in QSDK
++skips the trailing DSB for speed; mainline has no barrier-free
++primitives, so the *_no_dsb wrappers call the regular dcache_*_poc()
++helper and carry their DSB.  That is strictly more conservative than
++QSDK and is the only observable difference.
++
++dmac_flush_range() and dmac_clean_range() are not added: their only users
++are the ipq50xx syn_gmac_dp files, which qca-nss-dp does not compile for
++this target.
++
++Classification: must-shim (vendor kernel ABI); mainline primitives exist
++but are not exported.
++
++diff -ruN a/arch/arm64/include/asm/cacheflush.h b/arch/arm64/include/asm/cacheflush.h
++--- a/arch/arm64/include/asm/cacheflush.h
+++++ b/arch/arm64/include/asm/cacheflush.h
++@@ -76,6 +76,13 @@
++ extern void dcache_clean_poc(unsigned long start, unsigned long end);
++ extern void dcache_clean_pop(unsigned long start, unsigned long end);
++ extern void dcache_clean_pou(unsigned long start, unsigned long end);
+++/*
+++ * QSDK compatibility: cache maintenance entry points used by qca-nss-dp's
+++ * EDMA data path (see arch/arm64/mm/flush.c).
+++ */
+++extern void dmac_inv_range(const void *start, const void *end);
+++extern void dmac_inv_range_no_dsb(const void *start, const void *end);
+++extern void dmac_clean_range_no_dsb(const void *start, const void *end);
++ extern long caches_clean_inval_user_pou(unsigned long start, unsigned long end);
++ extern void sync_icache_aliases(unsigned long start, unsigned long end);
++ 
++--- a/arch/arm64/mm/flush.c
+++++ b/arch/arm64/mm/flush.c
++@@ -100,3 +100,27 @@
++ }
++ EXPORT_SYMBOL_GPL(arch_invalidate_pmem);
++ #endif
+++
+++/*
+++ * QSDK cache maintenance ABI.  qca-nss-dp hands buffer ownership to and
+++ * from the EDMA engine with these calls.  The *_no_dsb variants exist in
+++ * QSDK to skip the trailing DSB; mainline 6.12 has no barrier-free
+++ * primitives, so they map to the standard dcache_*_poc() helpers.
+++ */
+++void dmac_inv_range(const void *start, const void *end)
+++{
+++	dcache_inval_poc((unsigned long)start, (unsigned long)end);
+++}
+++EXPORT_SYMBOL(dmac_inv_range);
+++
+++void dmac_inv_range_no_dsb(const void *start, const void *end)
+++{
+++	dcache_inval_poc((unsigned long)start, (unsigned long)end);
+++}
+++EXPORT_SYMBOL(dmac_inv_range_no_dsb);
+++
+++void dmac_clean_range_no_dsb(const void *start, const void *end)
+++{
+++	dcache_clean_poc((unsigned long)start, (unsigned long)end);
+++}
+++EXPORT_SYMBOL(dmac_clean_range_no_dsb);

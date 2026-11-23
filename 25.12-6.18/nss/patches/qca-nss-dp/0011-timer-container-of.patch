@@ -1,0 +1,35 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-dp: use timer_container_of() instead of from_timer()
+
+6.16 removed the from_timer() helper (timer.h now provides
+timer_container_of() with the same argument order). Both rx-fill delay
+timers need it:
+
+  hal/dp_ops/edma_dp/edma_v2/edma_rx.c:2551:48: error: implicit declaration of function 'from_timer'; did you mean 'mod_timer'?
+
+edma v2 is the one built for ipq95xx (edma_v3 serves other SoCs); patch
+both so the source stays consistent.
+
+Classification: portability (kernel API, no behaviour change).
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
+@@ -2548,7 +2548,7 @@
+  */
+ void edma_rxfill_intr_timer(struct timer_list *tm)
+ {
+-	struct edma_rxfill_ring *rxfill_ring = from_timer(rxfill_ring, tm, delayed_intr);
++	struct edma_rxfill_ring *rxfill_ring = timer_container_of(rxfill_ring, tm, delayed_intr);
+ 	struct edma_gbl_ctx *egc = edma_gbl_ctx;
+ 
+ 	/*
+--- a/hal/dp_ops/edma_dp/edma_v3/edma_rx.c
++++ b/hal/dp_ops/edma_dp/edma_v3/edma_rx.c
+@@ -3152,7 +3152,7 @@
+  */
+ void edma_rxfill_intr_timer(struct timer_list *tm)
+ {
+-	struct edma_rxfill_ring *rxfill_ring = from_timer(rxfill_ring, tm, delayed_intr);
++	struct edma_rxfill_ring *rxfill_ring = timer_container_of(rxfill_ring, tm, delayed_intr);
+ 	struct edma_gbl_ctx *egc = edma_gbl_ctx;
+ 
+ 	/*

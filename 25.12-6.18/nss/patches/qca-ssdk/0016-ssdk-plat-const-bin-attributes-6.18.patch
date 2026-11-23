@@ -1,0 +1,50 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-ssdk: const-qualify bin_attribute callbacks for 6.18
+
+6.14+ made the sysfs bin_attribute read/write callbacks take a
+const struct bin_attribute * (the attribute itself is never modified on
+these paths). The four packet/byte counter callbacks still declare a
+non-const pointer, which the 6.18 build rejects:
+
+  src/init/ssdk_plat.c:1918: error: initialization of 'ssize_t (*)(struct file *, struct kobject *, const struct bin_attribute *, char *, loff_t, size_t)' from incompatible pointer type 'ssize_t (*)(struct file *, struct kobject *, struct bin_attribute *, char *, loff_t, size_t)'
+
+The attribute contents are only read (name/mode come from the static
+initializer), so const-qualifying the parameters is sufficient.
+--- a/src/init/ssdk_plat.c
++++ b/src/init/ssdk_plat.c
+@@ -1317,7 +1317,7 @@
+ /* bin_attribute read function for packet_counter */
+ static ssize_t ssdk_packet_counter_bin_read(struct file *filp,
+ 					     struct kobject *kobj,
+-					     struct bin_attribute *attr,
++					     const struct bin_attribute *attr,
+ 					     char *buf, loff_t off, size_t count)
+ {
+ 	return ssdk_counter_bin_read_common(&ssdk_packet_counter_ctx, buf, off, count);
+@@ -1326,7 +1326,7 @@
+ /* bin_attribute write function for packet_counter (clear counters) */
+ static ssize_t ssdk_packet_counter_bin_write(struct file *filp,
+ 					      struct kobject *kobj,
+-					      struct bin_attribute *attr,
++					      const struct bin_attribute *attr,
+ 					      char *buf, loff_t off, size_t count)
+ {
+ 	return ssdk_counter_bin_write_common(&ssdk_packet_counter_ctx, count);
+@@ -1335,7 +1335,7 @@
+ /* bin_attribute read function for byte_counter */
+ static ssize_t ssdk_byte_counter_bin_read(struct file *filp,
+ 					   struct kobject *kobj,
+-					   struct bin_attribute *attr,
++					   const struct bin_attribute *attr,
+ 					   char *buf, loff_t off, size_t count)
+ {
+ 	return ssdk_counter_bin_read_common(&ssdk_byte_counter_ctx, buf, off, count);
+@@ -1344,7 +1344,7 @@
+ /* bin_attribute write function for byte_counter (clear counters) */
+ static ssize_t ssdk_byte_counter_bin_write(struct file *filp,
+ 					    struct kobject *kobj,
+-					    struct bin_attribute *attr,
++					    const struct bin_attribute *attr,
+ 					    char *buf, loff_t off, size_t count)
+ {
+ 	return ssdk_counter_bin_write_common(&ssdk_byte_counter_ctx, count);

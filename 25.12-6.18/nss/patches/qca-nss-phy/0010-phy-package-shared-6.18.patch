@@ -1,0 +1,363 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: reach PHY package data through phy_package accessors
+
+6.18 moved struct phy_package_shared out of include/linux/phy.h into
+drivers/net/phy/phy_package.c as a private type; the public header only
+keeps the pointer in struct phy_device (phydev->shared).  qca-nss-phy
+still declares the struct and reads its members directly:
+
+  linux_std/qce1204/qce1204.c, qce1204_hwmon.c, qcom_phy_lib.c,
+  linux_std/qca8084/qca8084.c, linux_std/ptp/qca808x_phc.c,
+  linux_std/macsec/qca_macsec_lib.c, nss_ext/nss_phy_linux_wrapper.c
+
+which fails with "invalid use of undefined type 'struct
+phy_package_shared'" for every member access.  Also, 6.18 no longer
+declares devm_of_phy_package_join() outside the private phylib.h, so
+qce1204.c:2340 got an implicit declaration.
+
+Replace the member reads with the exported accessors and drop the now
+unusable local declarations; the NULL checks keep testing
+phydev->shared, which remains a plain pointer:
+
+  shared->priv       -> phy_package_get_priv(phydev)
+  shared->np         -> phy_package_get_node(phydev)
+  shared->base_addr  -> phy_package_get_base_addr(phydev)
+
+phy_package_get_base_addr() does not exist upstream; kernel patch 0513
+(25.12-6.18/patches/0029) adds it next to the other accessors, and also
+restores the package-join prototypes in include/linux/phy.h so
+out-of-tree PHY drivers see them.  Comments still mention the old member
+names; they describe the concept and are left alone.
+
+Classification: portability (kernel API, no behaviour change).
+--- a/linux_std/macsec/qca_macsec_lib.c
++++ b/linux_std/macsec/qca_macsec_lib.c
+@@ -2385,7 +2385,7 @@
+ 		cpriv = (struct qca_common_private *)phydev->priv;
+ 	else if (chip == QCE1204_PHY)
+ 		cpriv = phydev->shared ?
+-			(struct qca_common_private *)phydev->shared->priv : NULL;
++			(struct qca_common_private *)phy_package_get_priv(phydev) : NULL;
+ 
+ 	if (chip == QCA81xx_PHY || chip == QCE1204_PHY) {
+ 		sku_name = (cpriv && cpriv->sku.name) ? cpriv->sku.name : NULL;
+--- a/linux_std/ptp/qca808x_phc.c
++++ b/linux_std/ptp/qca808x_phc.c
+@@ -1044,10 +1044,10 @@
+ 		 */
+ 		struct qce1204_shared_priv *shared_priv;
+ 
+-		if (!phydev->shared || !phydev->shared->priv)
++		if (!phydev->shared || !phy_package_get_priv(phydev))
+ 			return -EINVAL;
+ 
+-		shared_priv = (struct qce1204_shared_priv *)phydev->shared->priv;
++		shared_priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 		pin_id = QCE1204_GPIO_PPS_IN;
+ 
+ 		if (en) {
+--- a/linux_std/qca8084/qca8084.c
++++ b/linux_std/qca8084/qca8084.c
+@@ -220,7 +220,7 @@
+ 
+ static int qca8084_phy_index_get(struct phy_device *phydev)
+ {
+-	return (phydev->mdio.addr - phydev->shared->base_addr + 1);
++	return (phydev->mdio.addr - phy_package_get_base_addr(phydev) + 1);
+ }
+ 
+ static int qca8084_phy_fifo_reset(struct phy_device *phydev, bool enable)
+--- a/linux_std/qce1204/qce1204.c
++++ b/linux_std/qce1204/qce1204.c
+@@ -236,7 +236,7 @@
+ 	if (!phydev || !phydev->shared)
+ 		return PHY_MAX_ADDR;
+ 
+-	return phydev->shared->base_addr + QCE1204_SOC_ADDR_OFFSET;
++	return phy_package_get_base_addr(phydev) + QCE1204_SOC_ADDR_OFFSET;
+ }
+ 
+ static void qce1204_split_addr(u32 regaddr, u16 *reg_low, u16 *reg_mid,
+@@ -331,7 +331,7 @@
+ static int qce1204_pcs_addr_get(struct phy_device *phydev, int offset)
+ {
+ 	if (phydev->shared)
+-		return phydev->shared->base_addr + offset;
++		return phy_package_get_base_addr(phydev) + offset;
+ 
+ 	return PHY_MAX_ADDR;
+ }
+@@ -514,17 +514,18 @@
+  */
+ static u8 qce1204_count_package_ports(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
++	struct device_node *np = phy_package_get_node(phydev);
++	int base_addr = phy_package_get_base_addr(phydev);
+ 	u8 count = 0;
+ 	u32 reg;
+ 
+-	if (!shared || !shared->np)
++	if (!phydev->shared || !np)
+ 		return QCE1204_PORT_NUM;
+ 
+-	for_each_available_child_of_node_scoped(shared->np, child) {
++	for_each_available_child_of_node_scoped(np, child) {
+ 		if (!of_property_read_u32(child, "reg", &reg) &&
+-		    reg >= shared->base_addr &&
+-		    reg < shared->base_addr + QCE1204_PORT_NUM)
++		    reg >= base_addr &&
++		    reg < base_addr + QCE1204_PORT_NUM)
+ 			count++;
+ 	}
+ 
+@@ -544,19 +545,18 @@
+  */
+ static int qce1204_pcs_check_hibernate(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *shared_priv;
+ 	bool hibernation, all_hibernate;
+ 	int port_idx, ret, i;
+ 
+-	if (!shared)
++	if (!phydev->shared)
+ 		return -EINVAL;
+ 
+-	shared_priv = (struct qce1204_shared_priv *)shared->priv;
++	shared_priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!shared_priv)
+ 		return -EINVAL;
+ 
+-	port_idx = phydev->mdio.addr - shared->base_addr;
++	port_idx = phydev->mdio.addr - phy_package_get_base_addr(phydev);
+ 	if (port_idx < 0 || port_idx >= QCE1204_PORT_NUM)
+ 		return -EINVAL;
+ 
+@@ -638,13 +638,12 @@
+  */
+ static struct qce1204_shared_clk_data *qce1204_get_shared_clk_data(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *priv;
+ 
+-	if (!shared)
++	if (!phydev->shared)
+ 		return NULL;
+ 
+-	priv = (struct qce1204_shared_priv *)shared->priv;
++	priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!priv)
+ 		return NULL;
+ 
+@@ -658,13 +657,12 @@
+  */
+ static phy_interface_t qce1204_get_package_mode(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *priv;
+ 
+-	if (!shared)
++	if (!phydev->shared)
+ 		return PHY_INTERFACE_MODE_NA;
+ 
+-	priv = (struct qce1204_shared_priv *)shared->priv;
++	priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!priv)
+ 		return PHY_INTERFACE_MODE_NA;
+ 
+@@ -2026,7 +2024,7 @@
+ 
+ int qce1204_phy_channel_get(struct phy_device *phydev)
+ {
+-	return (phydev->mdio.addr - phydev->shared->base_addr + 1);
++	return (phydev->mdio.addr - phy_package_get_base_addr(phydev) + 1);
+ }
+ 
+ /**
+@@ -2119,7 +2117,7 @@
+ 	struct qce1204_shared_clk_data *clk_data;
+ 	int ret;
+ 
+-	if (!phydev->shared || !phydev->shared->np) {
++	if (!phydev->shared || !phy_package_get_node(phydev)) {
+ 		phydev_err(phydev, "No package device node found\n");
+ 		return -EINVAL;
+ 	}
+@@ -2135,7 +2133,7 @@
+ 
+ 	/* Access package information through phydev->shared->np */
+ 	old_of_node = dev->of_node;
+-	dev->of_node = phydev->shared->np;
++	dev->of_node = phy_package_get_node(phydev);
+ 
+ 	/* Initialize clocks and resets using the correct device node */
+ 	ret = qce1204_phy_shared_clk_init(phydev, dev, clk_data);
+@@ -2160,24 +2158,23 @@
+  */
+ static int qce1204_phy_package_mode_probe(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *shared_priv;
+ 	struct device_node *node;
+ 	const char *mode_str;
+ 	int ret;
+ 
+-	if (!shared || !shared->np) {
++	if (!phydev->shared || !phy_package_get_node(phydev)) {
+ 		phydev_err(phydev, "No package device node found\n");
+ 		return -EINVAL;
+ 	}
+ 
+-	shared_priv = (struct qce1204_shared_priv *)shared->priv;
++	shared_priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!shared_priv) {
+ 		phydev_err(phydev, "No shared private data found\n");
+ 		return -EINVAL;
+ 	}
+ 
+-	node = shared->np;
++	node = phy_package_get_node(phydev);
+ 
+ 	/* Parse "qcom,package-mode" property */
+ 	ret = of_property_read_string(node, "qcom,package-mode", &mode_str);
+@@ -2284,14 +2281,13 @@
+ */
+ static int qce1204_phy_sku_probe(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *priv;
+ 	u32 val;
+ 
+-	if (!shared)
++	if (!phydev->shared)
+ 		return -EINVAL;
+ 
+-	priv = (struct qce1204_shared_priv *)shared->priv;
++	priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!priv)
+ 		return -EINVAL;
+ 
+@@ -2341,7 +2337,7 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	shared_priv = (struct qce1204_shared_priv *)phydev->shared->priv;
++	shared_priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 
+ 	/* Allocate private data structure for this PHY */
+ 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+@@ -2408,7 +2404,7 @@
+ #endif
+ 	device_create_file(&phydev->mdio.dev, &dev_attr_snr);
+ 
+-	port_idx = phydev->mdio.addr - phydev->shared->base_addr;
++	port_idx = phydev->mdio.addr - phy_package_get_base_addr(phydev);
+ 	if (port_idx >= 0 && port_idx < QCE1204_PORT_NUM) {
+ 		mutex_lock(&shared_priv->pcs_lock);
+ 		shared_priv->port_active |= BIT(port_idx);
+@@ -2428,20 +2424,19 @@
+ 
+ void qce1204_phy_remove(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *shared_priv;
+ 	int port_idx;
+ 
+ 	device_remove_file(&phydev->mdio.dev, &dev_attr_snr);
+ 
+-	if (!shared)
++	if (!phydev->shared)
+ 		return;
+ 
+-	shared_priv = (struct qce1204_shared_priv *)shared->priv;
++	shared_priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!shared_priv)
+ 		return;
+ 
+-	port_idx = phydev->mdio.addr - shared->base_addr;
++	port_idx = phydev->mdio.addr - phy_package_get_base_addr(phydev);
+ 	if (port_idx < 0 || port_idx >= QCE1204_PORT_NUM)
+ 		return;
+ 
+@@ -2707,7 +2702,7 @@
+ 			 * pcs_assert cache so the short-circuit check sees a consistent
+ 			 * value. The sequence ends with assert(false).
+ 			 */
+-			shared_priv = (struct qce1204_shared_priv *)phydev->shared->priv;
++			shared_priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 			if (shared_priv) {
+ 				mutex_lock(&shared_priv->pcs_lock);
+ 				shared_priv->pcs_assert = false;
+--- a/linux_std/qce1204/qce1204_hwmon.c
++++ b/linux_std/qce1204/qce1204_hwmon.c
+@@ -301,15 +301,14 @@
+ 
+ int qce1204_hwmon_hw_init_once(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *priv;
+ 	u32 slope, czero, msb, lsb;
+ 	int ret;
+ 
+-	if (!shared)
++	if (!phydev->shared)
+ 		return -EINVAL;
+ 
+-	priv = (struct qce1204_shared_priv *)shared->priv;
++	priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!priv)
+ 		return -EINVAL;
+ 
+@@ -351,15 +350,14 @@
+ 
+ int qce1204_hwmon_hw_init(struct phy_device *phydev)
+ {
+-	struct phy_package_shared *shared = phydev->shared;
+ 	struct qce1204_shared_priv *priv;
+ 	u32 slope, czero, index;
+ 	int ret;
+ 
+-	if (!shared)
++	if (!phydev->shared)
+ 		return -EINVAL;
+ 
+-	priv = (struct qce1204_shared_priv *)shared->priv;
++	priv = (struct qce1204_shared_priv *)phy_package_get_priv(phydev);
+ 	if (!priv)
+ 		return -EINVAL;
+ 
+--- a/linux_std/qcom_phy_lib.c
++++ b/linux_std/qcom_phy_lib.c
+@@ -20,7 +20,7 @@
+ static int qcom_phy_pcs_addr_get(struct phy_device *phydev, int offset)
+ {
+ 	if (phydev->shared)
+-		return phydev->shared->base_addr + offset;
++		return phy_package_get_base_addr(phydev) + offset;
+ 
+ 	return phydev->mdio.addr + offset;
+ }
+@@ -352,9 +352,9 @@
+ 
+ 	/* PHY software reset */
+ 	for(channel = 1; channel <= 4; channel++) {
+-		ret = mdiobus_read(phydev->mdio.bus, phydev->shared->base_addr + channel - 1, MII_BMCR);
++		ret = mdiobus_read(phydev->mdio.bus, phy_package_get_base_addr(phydev) + channel - 1, MII_BMCR);
+ 		if (!(ret & BMCR_PDOWN))
+-			mdiobus_modify(phydev->mdio.bus, phydev->shared->base_addr + channel - 1,
++			mdiobus_modify(phydev->mdio.bus, phy_package_get_base_addr(phydev) + channel - 1,
+ 				MII_BMCR, BMCR_RESET, BMCR_RESET);
+ 	}
+ 	/* Set BaseR mode */
+--- a/nss_ext/nss_phy_linux_wrapper.c
++++ b/nss_ext/nss_phy_linux_wrapper.c
+@@ -228,7 +228,7 @@
+ int nss_phy_share_addr_get(struct nss_phy_device *nss_phydev)
+ {
+ 	if (nss_phydev->phydev->shared)
+-		return nss_phydev->phydev->shared->base_addr;
++		return phy_package_get_base_addr(nss_phydev->phydev);
+ 
+ 	return 0;
+ }

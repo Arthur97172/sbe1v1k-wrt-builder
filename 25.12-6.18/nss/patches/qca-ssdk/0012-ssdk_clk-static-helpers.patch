@@ -1,0 +1,44 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ssdk_clk: make three internal helpers static
+
+GCC reports -Wmissing-declarations for these three, which
+-Wno-missing-prototypes does not cover.  They are used only inside
+ssdk_clk.c (46, 8 and 31 references respectively), so give them internal
+linkage:
+
+  src/init/ssdk_clk.c:1271:6: error: no previous declaration for
+    'ssdk_clock_rate_set_and_enable' [-Werror=missing-declarations]
+  src/init/ssdk_clk.c:1312:6: error: no previous declaration for
+    'ssdk_gcc_reset' [-Werror=missing-declarations]
+  src/init/ssdk_clk.c:1477:6: error: no previous declaration for
+    'ssdk_uniphy_clock_enable' [-Werror=missing-declarations]
+
+--- a/src/init/ssdk_clk.c
++++ b/src/init/ssdk_clk.c
+@@ -1268,7 +1268,7 @@
+ }
+ 
+ /* below 3 routines to be used as common */
+-void ssdk_clock_rate_set_and_enable(
++static void ssdk_clock_rate_set_and_enable(
+ 	struct device_node *node, a_uint8_t* clock_id, a_uint32_t rate)
+ {
+ 	struct clk *clk;
+@@ -1309,7 +1309,7 @@
+ 	}
+ }
+ 
+-void ssdk_gcc_reset(struct reset_control *rst, a_uint32_t action)
++static void ssdk_gcc_reset(struct reset_control *rst, a_uint32_t action)
+ {
+ #if defined(SSDK_RAW_CLOCK)
+ 	if (ssdk_reset_control(rst, action))
+@@ -1474,7 +1474,7 @@
+ 		SSDK_INFO("%d set rate %x fail!\n", clock_type, rate);
+ }
+ 
+-void ssdk_uniphy_clock_enable(
++static void ssdk_uniphy_clock_enable(
+ 	a_uint32_t dev_id,
+ 	enum unphy_clk_type clock_type,
+ 	a_bool_t enable)

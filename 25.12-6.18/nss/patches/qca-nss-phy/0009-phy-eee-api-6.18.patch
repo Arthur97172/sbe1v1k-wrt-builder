@@ -1,0 +1,99 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: use the 6.18 phylib EEE configuration API
+
+phylib moved EEE user configuration into phydev->eee_cfg (struct
+eee_config) and replaced the u32 eee_broken_modes with the linkmode
+bitmap phydev->eee_disabled_modes (see include/net/eee.h and
+include/linux/phy.h in 6.18).  qca-nss-phy still used the old fields:
+
+  nss_phy_linux_wrapper.c: phydev->eee_enabled assignment and the
+      eee_support() check;
+  linux_std/qca8084/qca8084.c, linux_std/qca81xx/qca81xx.c: one
+      eee_enabled gate in the 2.5G workaround and the debug output.
+
+The eee_support() rewrite keeps the original semantics: EEE is reported
+as usable only while at least one supported EEE mode is not prohibited
+(the old code compared the u32 broken mask against the EEE capability
+mask; a bitmap cannot express "all of these bits", so the loop tests each
+supported mode directly).  Debug output prints the new bitmap as
+none/set instead of a hex mask.
+
+Classification: portability (kernel API, no behaviour change).
+--- a/nss_ext/nss_phy_linux_wrapper.c
++++ b/nss_ext/nss_phy_linux_wrapper.c
+@@ -329,7 +329,7 @@
+ 
+ int nss_phydev_eee_update(struct nss_phy_device *nss_phydev, u32 adv)
+ {
+-	nss_phydev->phydev->eee_enabled = (adv == 0) ? false:true;
++	nss_phydev->phydev->eee_cfg.eee_enabled = (adv == 0) ? false : true;
+ 
+ 	linkmode_mod_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT,
+ 		nss_phydev->phydev->advertising_eee, adv & EEE_100BASE_T);
+@@ -523,12 +523,19 @@
+ 
+ bool nss_phydev_eee_support(struct nss_phy_device *nss_phydev)
+ {
+-	u32 eee_broken_modes, eee_cap;
++	struct phy_device *phydev = nss_phydev->phydev;
++	int mode;
+ 
+-	eee_broken_modes = nss_phydev->phydev->eee_broken_modes;
+-	eee_cap = linkmode_to_mii_eee_cap1_t(nss_phydev->phydev->supported_eee);
+-	if ((eee_broken_modes & eee_cap) == eee_cap)
+-		return false;
++	/*
++	 * 6.18 keeps the prohibited modes as a linkmode bitmap instead of the
++	 * old u32 eee_broken_modes.  EEE stays usable while at least one
++	 * supported mode is not prohibited.
++	 */
++	for (mode = 0; mode < __ETHTOOL_LINK_MODE_MASK_NBITS; mode++) {
++		if (linkmode_test_bit(mode, phydev->supported_eee) &&
++		    !linkmode_test_bit(mode, phydev->eee_disabled_modes))
++			return true;
++	}
+ 
+-	return true;
++	return false;
+ }
+--- a/linux_std/qca8084/qca8084.c
++++ b/linux_std/qca8084/qca8084.c
+@@ -334,7 +334,7 @@
+ 	if (!priv)
+ 		return 0;
+ 
+-	if (!phydev->eee_enabled)
++	if (!phydev->eee_cfg.eee_enabled)
+ 		return 0;
+ 
+ 	ret = qca8084_debug_reg_read(phydev, QCA8084_DEBUG_ANEG_STAT);
+@@ -804,9 +804,11 @@
+ 	len += scnprintf(buf + len, PAGE_SIZE - len,
+ 		"    %-20s : %s (%d)\n", "interface", phy_modes(phydev->interface), phydev->interface);
+ 	len += scnprintf(buf + len, PAGE_SIZE - len,
+-		"    %-20s : %s\n", "eee_enabled", phydev->eee_enabled ? "true" : "false");
++		"    %-20s : %s\n", "eee_enabled", phydev->eee_cfg.eee_enabled ? "true" : "false");
+ 	len += scnprintf(buf + len, PAGE_SIZE - len,
+-		"    %-20s : 0x%08x\n", "eee_broken_modes", phydev->eee_broken_modes);
++		"    %-20s : %s\n", "eee_disabled_modes",
++		bitmap_empty(phydev->eee_disabled_modes, __ETHTOOL_LINK_MODE_MASK_NBITS) ?
++			"none" : "set");
+ 	len += scnprintf(buf + len, PAGE_SIZE - len,
+ 		"    %-20s : ", "eee_disabled_by_wa");
+ 	if (linkmode_test_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, priv->eee_disabled_by_wa))
+--- a/linux_std/qca81xx/qca81xx.c
++++ b/linux_std/qca81xx/qca81xx.c
+@@ -3051,9 +3051,11 @@
+ 	size += snprintf(buf + size, PAGE_SIZE - size,
+ 		"    %-20s : %s (%d)\n", "interface", phy_modes(phydev->interface), phydev->interface);
+ 	size += snprintf(buf + size, PAGE_SIZE - size,
+-		"    %-20s : %s\n", "eee_enabled", phydev->eee_enabled ? "true" : "false");
++		"    %-20s : %s\n", "eee_enabled", phydev->eee_cfg.eee_enabled ? "true" : "false");
+ 	size += snprintf(buf + size, PAGE_SIZE - size,
+-		"    %-20s : 0x%08x\n", "eee_broken_modes", phydev->eee_broken_modes);
++		"    %-20s : %s\n", "eee_disabled_modes",
++		bitmap_empty(phydev->eee_disabled_modes, __ETHTOOL_LINK_MODE_MASK_NBITS) ?
++			"none" : "set");
+ 
+ 	/* Internal AFE Values (from priv, not reading registers) */
+ 	size += snprintf(buf + size, PAGE_SIZE - size,

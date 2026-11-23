@@ -130,6 +130,17 @@ if [ -d "$PROJ/files" ] && [ -n "$(ls -A "$PROJ/files" 2>/dev/null)" ]; then
 	cp -a "$PROJ/files/." "$BR/files/"
 fi
 
+# NSS（S3a，用户要求对齐 6.12）：把 QSDK 包定义与厂商源码装进装配树。
+# 只编译不安装——seed 不选这些包，mainline PPE 仍是默认数据通路。
+# 厂商源码来自本地 sources/buildroot（或 SBE_NSS_BASE 指定的打平目录）；
+# 找不到时跳过并明确打印，避免 CI 在没有 nss-src 资产时静默失败。
+if [ -n "${SBE_NSS_BASE:-}" ] || [ -d "$ROOT/sources/buildroot/qca/src/nss/base" ]; then
+	echo "[prepare] 安装 NSS 包与厂商源码（S3a）"
+	"$PROJ/nss/install.sh" "$ROOT"
+else
+	echo "[prepare] 跳过 NSS：找不到厂商源码（本地需 sources/buildroot/qca/src/nss，或设 SBE_NSS_BASE）"
+fi
+
 echo "[prepare] 断言上游支持面"
 grep -qx 'KERNEL_PATCHVER:=6.18' "$BR/target/linux/qualcommbe/Makefile" \
 	|| { echo "[prepare] qualcommbe 不是 6.18 内核" >&2; exit 1; }

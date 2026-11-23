@@ -1,0 +1,55 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: make tun encap helpers file-local
+
+  All five are used only inside ppe_drv_tun_encap.c (ref/deref are kref
+  helpers, custom_configure is called from the encap configure path),
+  none is exported and every definition precedes its first use.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_encap.c b/drv/ppe_drv/tun/ppe_drv_tun_encap.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_encap.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_encap.c
+@@ -18,7 +18,7 @@
+  * ppe_drv_tun_encap_hdr_ctrl_entry_free
+  *	 clear header ctrl protomap instance
+  */
+-void ppe_drv_tun_encap_hdr_ctrl_entry_free(struct kref *kref)
++static void ppe_drv_tun_encap_hdr_ctrl_entry_free(struct kref *kref)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 	struct ppe_drv_tun_encap_hdr_ctrl *hdr_ctrl = p->ecap_hdr_ctrl;
+@@ -39,7 +39,7 @@
+  * ppe_drv_tun_encap_hdr_ctrl_ref
+  *	free reference for header ctrl protomap instance
+  */
+-bool ppe_drv_tun_encap_hdr_ctrl_deref(struct kref *kref)
++static bool ppe_drv_tun_encap_hdr_ctrl_deref(struct kref *kref)
+ {
+ 	struct ppe_drv *p __maybe_unused = ppe_drv_gbl;
+ 	ppe_drv_assert(kref_read(kref), "%p: ref count under run for encap header ctrl", p);
+@@ -56,7 +56,7 @@
+  * ppe_drv_tun_encap_hdr_ctrl_ref
+  *	Get reference for header ctrl protomap instance
+  */
+-bool ppe_drv_tun_encap_hdr_ctrl_ref(struct kref *kref)
++static bool ppe_drv_tun_encap_hdr_ctrl_ref(struct kref *kref)
+ {
+ 	kref_get(kref);
+ 	ppe_drv_assert(kref_read(kref), "%p: ref count rollover for encap header ctrl", ppe_drv_gbl);
+@@ -470,7 +470,7 @@
+  * ppe_drv_tun_encap_hdr_ctrl_custom_configure
+  *     Custom tunnel encap header control configuration
+  */
+-bool ppe_drv_tun_encap_hdr_ctrl_custom_configure(struct ppe_drv *p, struct ppe_drv_tun *tun)
++static bool ppe_drv_tun_encap_hdr_ctrl_custom_configure(struct ppe_drv *p, struct ppe_drv_tun *tun)
+ {
+ 	struct ppe_drv_tun_encap_header_ctrl hdr_ctrl = {0};
+ 
+@@ -546,7 +546,7 @@
+  * ppe_drv_tun_encap_free
+  *	Deconfigure EG_XLAT_TUN_CTRL table and free entry
+  */
+-void ppe_drv_tun_encap_free(struct kref *kref)
++static void ppe_drv_tun_encap_free(struct kref *kref)
+ {
+ 	sw_error_t err;
+ 	struct ppe_drv_tun_encap *ptec = container_of(kref, struct ppe_drv_tun_encap, ref);

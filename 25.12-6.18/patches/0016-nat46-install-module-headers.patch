@@ -1,0 +1,28 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nat46: install module headers into staging
+
+qca-nss-ppe builds its tunnel path (PPE_TUN_ENABLE) against the nat46
+module's private headers and includes them as <nat46/nat46-*.h>.  The
+upstream nat46 package builds nat46.ko but never installs those headers,
+so the PPE build cannot find them.  QSDK carries the same hook in
+openwrt-patches/package/kernel/nat46/nat46.mk; this reproduces it for
+OpenWrt 25.12.  Header-only change, no effect on nat46.ko itself.
+
+diff -ruN a/package/kernel/nat46/Makefile b/package/kernel/nat46/Makefile
+--- a/package/kernel/nat46/Makefile
++++ b/package/kernel/nat46/Makefile
+@@ -32,4 +32,14 @@
+ 		modules
+ endef
+ 
++# QSDK's qca-nss-ppe (tunnel path) and qca-nss-ppe-mapt include
++# <nat46/nat46-*.h> from the staging directory.  Upstream nat46 builds the
++# module but does not install its private headers; the QSDK tree adds exactly
++# this hook (openwrt-patches/package/kernel/nat46/nat46.mk).  Keep the same
++# layout: <staging>/usr/include/nat46/<header>.
++define Build/InstallDev
++	$(INSTALL_DIR) $(1)/usr/include/nat46
++	$(CP) $(PKG_BUILD_DIR)/nat46/modules/*.h $(1)/usr/include/nat46/
++endef
++
+ $(eval $(call KernelPackage,nat46))

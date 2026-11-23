@@ -1,0 +1,159 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] edma_v2: port sysctl handlers, vmalloc and callback prototypes to 6.12
+
+Diagnostics:
+
+edma_v2/edma.c:852:19: error: implicit declaration of function 'vzalloc'
+edma_v2/edma.c:867:17: error: implicit declaration of function 'vfree'
+edma_v2/edma.c:1377:6: error: no previous prototype for
+  'edma_configure_mirror_pkt_capture_core'
+edma_v2/edma.c:1589:41: error: initialization of
+  'int (*)(const struct ctl_table *, int, void *, size_t *, loff_t *)'
+  from incompatible pointer type
+  'int (*)(struct ctl_table *, int, void *, size_t *, loff_t *)'
+
+Classes:
+
+1. vzalloc/vfree still exist in mainline 6.12 but edma_v2/edma.c relied on
+   an indirect include (the vendor kernel's vmalloc.h chain).  Include
+   <linux/vmalloc.h> explicitly.  Class: mainline-replaces-API (header
+   hygiene only; no behavioural change).
+
+2. edma_configure_mirror_pkt_capture_core() is only used as the callback
+   passed to ppe_drv_acl_mirror_core_select_register_cb() in the same file,
+   so make it static instead of adding a header entry.
+   Class: mainline-replaces-API (Linux 6.10 -Wmissing-prototypes).
+
+3. Linux 6.10 made the sysctl proc_handler take a const struct ctl_table *.
+   The seven EDMA handlers (fc enable, queue tail drop, RPS, RPS bitmap,
+   hang recovery, vlan append, force crash) are updated in both their
+   definitions and their edma.h/edma_cfg_rx.h declarations.
+
+Only the edma_v2 backend is ported here: it is the one SoC=ipq95xx builds.
+The edma_v3 backend has the same sysctl-handler pattern plus additional
+edma_passthrough_handler/edma_rx_gro_* handlers and a raw ctl_table walk
+at edma_v3/edma.c:3191; it is left untouched, and is UNVERIFIED for 6.12
+until a target selects it.
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma.c b/hal/dp_ops/edma_dp/edma_v2/edma.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma.c
+@@ -24,6 +24,7 @@
+ #include <ppe_drv_port.h>
+ #include <linux/clk.h>
+ #include <linux/cpumask.h>
++#include <linux/vmalloc.h>
+ #include "edma.h"
+ #include "edma_cfg_tx.h"
+ #include "edma_cfg_rx.h"
+@@ -1374,7 +1375,7 @@
+  * edma_configure_mirror_pkt_capture_core()
+  *	Configure capture core for mirrored packets.
+  */
+-void edma_configure_mirror_pkt_capture_core(uint8_t core_id, void *app_data)
++static void edma_configure_mirror_pkt_capture_core(uint8_t core_id, void *app_data)
+ {
+ 	edma_cfg_rx_mcast_qid_to_core_mapping(edma_gbl_ctx, core_id);
+ }
+@@ -2380,7 +2381,7 @@
+  * edma_hang_recovery_handler()
+  *	to trigger recovery API for EDMA hang
+  */
+-int edma_hang_recovery_handler(struct ctl_table *table, int write,
++int edma_hang_recovery_handler(const struct ctl_table *table, int write,
+                 void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -2402,7 +2403,7 @@
+  * edma_vlan_append_handler()
+  *	Add VLAN Info.
+  */
+-int edma_vlan_append_handler(struct ctl_table *table, int write,
++int edma_vlan_append_handler(const struct ctl_table *table, int write,
+                 void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	uint16_t ether_type_0, ether_type_1;
+@@ -2581,7 +2582,7 @@
+  * edma_force_crash_handler()
+  *	Function to trigger crash from EDMA module
+  */
+-int edma_force_crash_handler(struct ctl_table *table, int write,
++int edma_force_crash_handler(const struct ctl_table *table, int write,
+ 				void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.c b/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.c
+@@ -1859,7 +1859,7 @@
+  * Similarly, whenever the free Rx ring descriptor count crosses the X-ON value,
+  * the ring level flow control will be disabled.
+  */
+-int edma_cfg_rx_fc_enable_handler(struct ctl_table *table, int write,
++int edma_cfg_rx_fc_enable_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -1917,7 +1917,7 @@
+  * edma_cfg_rx_queue_tail_drop_handler()
+  *	API to enable/disable queue tail drop configuration
+  */
+-int edma_cfg_rx_queue_tail_drop_handler(struct ctl_table *table, int write,
++int edma_cfg_rx_queue_tail_drop_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -1964,7 +1964,7 @@
+  * edma_cfg_rx_rps()
+  *	API to configure RPS hash mapping for the given number of cores
+  */
+-int edma_cfg_rx_rps(struct ctl_table *table, int write,
++int edma_cfg_rx_rps(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -2001,7 +2001,7 @@
+  * us to distinguish between rps_num_core and rps_bitmap_core as both
+  * are calling the same configure hash function.
+  */
+-int edma_cfg_rx_rps_bitmap(struct ctl_table *table, int write,
++int edma_cfg_rx_rps_bitmap(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.h b/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.h
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.h
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_cfg_rx.h
+@@ -74,13 +74,13 @@
+ void edma_cfg_rx_rings_disable(struct edma_gbl_ctx *egc);
+ void edma_cfg_rx_ring_reset(struct edma_rxdesc_ring *ring);
+ bool edma_cfg_rx_ring_en_mapped_queues(struct edma_gbl_ctx *egc, uint32_t queue_id, uint32_t max_queues, bool enable);
+-int edma_cfg_rx_fc_enable_handler(struct ctl_table *table, int write,
++int edma_cfg_rx_fc_enable_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos);
+ void edma_cfg_rx_page_mode_and_jumbo(struct edma_gbl_ctx *egc);
+-int edma_cfg_rx_queue_tail_drop_handler(struct ctl_table *table, int write,
++int edma_cfg_rx_queue_tail_drop_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos);
+-int edma_cfg_rx_rps(struct ctl_table *table, int write,
++int edma_cfg_rx_rps(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos);
+-int edma_cfg_rx_rps_bitmap(struct ctl_table *table, int write,
++int edma_cfg_rx_rps_bitmap(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos);
+ #endif	/* __EDMA_CFG_RX_H__ */
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma.h b/hal/dp_ops/edma_dp/edma_v2/edma.h
+--- a/hal/dp_ops/edma_dp/edma_v2/edma.h
++++ b/hal/dp_ops/edma_dp/edma_v2/edma.h
+@@ -590,9 +590,9 @@
+ void edma_enable_interrupts(struct edma_gbl_ctx *egc);
+ void edma_disable_interrupts(struct edma_gbl_ctx *egc);
+ void edma_configure_rps_hash_map(struct edma_gbl_ctx *egc);
+-int edma_hang_recovery_handler(struct ctl_table *table, int write, void __user *buffer, size_t *lenp, loff_t *ppos);
+-int edma_vlan_append_handler(struct ctl_table *table, int write, void __user *buffer, size_t *lenp, loff_t *ppos);
+-int edma_force_crash_handler(struct ctl_table *table, int write, void __user *buffer, size_t *lenp, loff_t *ppos);
++int edma_hang_recovery_handler(const struct ctl_table *table, int write, void __user *buffer, size_t *lenp, loff_t *ppos);
++int edma_vlan_append_handler(const struct ctl_table *table, int write, void __user *buffer, size_t *lenp, loff_t *ppos);
++int edma_force_crash_handler(const struct ctl_table *table, int write, void __user *buffer, size_t *lenp, loff_t *ppos);
+ int edma_parse_ring_fc_mapping(const char *filepath);
+ bool edma_configure_fc_group_bm_cfg(uint8_t fc_group);
+ 

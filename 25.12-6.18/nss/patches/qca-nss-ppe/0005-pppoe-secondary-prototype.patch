@@ -1,0 +1,22 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: declare ppe_drv_pppoe_alloc_secondary()
+
+The helper is called from ppe_drv_pppoe_veip_l3_if_attach(), which this
+configuration compiles out, so the function has no caller here but keeps
+external linkage.  Mainline's -Wmissing-prototypes (6.10) rejects it and
+making it static would only trade that for -Wunused-function.
+
+Declare it next to ppe_drv_pppoe_alloc() in the header.  Declaration-only
+change; the function stays available to the VEIP/PON builds that do call
+it.
+diff -ruN a/drv/ppe_drv/ppe_drv_pppoe.h b/drv/ppe_drv/ppe_drv_pppoe.h
+--- a/drv/ppe_drv/ppe_drv_pppoe.h
++++ b/drv/ppe_drv/ppe_drv_pppoe.h
+@@ -39,6 +39,7 @@
+ struct ppe_drv_pppoe *ppe_drv_pppoe_find_session_by_tl_l3_if(struct ppe_drv_tun_l3_if *tl_l3_if);
+ struct ppe_drv_pppoe *ppe_drv_pppoe_find_session(uint16_t session_id, uint8_t *smac);
+ struct ppe_drv_pppoe *ppe_drv_pppoe_alloc(uint16_t session_id, uint8_t *smac);
++struct ppe_drv_pppoe *ppe_drv_pppoe_alloc_secondary(uint16_t session_id, uint8_t *smac);
+ 
+ void ppe_drv_pppoe_entries_free(struct ppe_drv_pppoe *pppoe);
+ struct ppe_drv_pppoe *ppe_drv_pppoe_entries_alloc(void);

@@ -1,0 +1,238 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] edma_v2: drop SKB fast-recycler/fast-xmit use, shim int_pri
+
+Mainline 6.12 has no CONFIG_SKB_RECYCLER, no SFE fast transmit path and
+no dev_fast_xmit_qdisc().  The EDMA v2 HAL reaches into all of them, so
+edma_rx.o and edma_tx.o fail to build:
+
+  edma_rx.c:423: implicit declaration of 'netdev_alloc_skb_fast'
+  edma_rx.c:532/539: 'struct sk_buff' has no member 'fast_recycled'
+  edma_rx.c:963: 'struct sk_buff' has no member 'fast_forwarded'
+  edma_rx.c:965: implicit declaration of 'dev_fast_xmit_qdisc'
+  edma_rx.c:1437/1808: no previous prototype for the capwap helpers
+  edma_rx.c:2126/2334: implicit declaration of 'skb_set_int_pri'
+  edma_rx.c:2181: implicit declaration of 'dev_kfree_skb_list_fast'
+  edma_tx.c:251/936: 'fast_xmit'/'is_from_recycler'/'fast_recycled'
+  edma_tx.c:503: implicit declaration of 'skb_get_int_pri'
+
+Classification:
+
+  * Must shim (QSDK-only ABI absent from mainline):
+      netdev_alloc_skb_fast, skb_set_int_pri/skb_get_int_pri,
+      skb->fast_recycled/fast_forwarded/fast_xmit/is_from_recycler,
+      the capwap helper prototypes.
+
+  * Mainline replacement:
+      dev_kfree_skb_list_fast(&head) -> skb_queue_purge(&head);
+      dev_fast_xmit_qdisc() -> dev_queue_xmit() (see below).
+
+Functionality is reduced, not just silenced:
+
+  - Fast recycle is gone; every completed Tx skb is freed with
+    dev_kfree_skb() and every Rx refill invalidates the buffer.
+  - dev_fast_xmit_qdisc() returned false *without* consuming the skb,
+    and the caller freed it at qdisc_drop.  dev_queue_xmit() always
+    consumes it, so that path now returns directly; keeping the old
+    qdisc_drop fallthrough would double-free.
+  - The EDMA Rx descriptor interrupt priority is no longer carried to
+    the Tx descriptor (no spare sk_buff field; reusing skb->priority
+    would corrupt qdisc classification).  Tx descriptors keep the
+    default priority.  This is a known behavioural gap of the port.
+  - edma_rx_handle_capwap_linear_packets() and
+    edma_rx_get_src_capwap_dev() have no callers outside edma_rx.c and
+    become static.
+
+edma_v3 is not built for this target and is left untouched.
+
+---
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_rx.c b/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
+@@ -527,18 +527,16 @@
+ 		/*
+ 		 * Invalidate skb->data
+ 		 * A73 flush operation does an invalidate operation as well.
+-		 * If the packet is fast transmitted and hence fast recycled,
+-		 * we can be assured that invalidate was already done at the
+-		 * time of previous transmit
+-		 */
+-		if (unlikely(!skb->fast_recycled)) {
+-			edma_dmac_inv_range_no_dsb((void *)skb->data,
+-					      (void *)(skb->data + rx_alloc_size -
+-					      EDMA_RX_SKB_HEADROOM -
+-					      NET_IP_ALIGN));
+-
+-		}
+-		skb->fast_recycled = 0;
++		 *
++		 * The vendor kernel skips this when skb->fast_recycled is
++		 * set, i.e. for a buffer that was fast transmitted and hence
++		 * fast recycled.  Mainline 6.12 has no SKB recycler, so the
++		 * flag can never be set and the invalidate always applies.
++		 */
++		edma_dmac_inv_range_no_dsb((void *)skb->data,
++				      (void *)(skb->data + rx_alloc_size -
++				      EDMA_RX_SKB_HEADROOM -
++				      NET_IP_ALIGN));
+ 
+ 		prod_idx = (prod_idx + 1) & EDMA_RX_RING_SIZE_MASK;
+ 	}
+@@ -962,21 +960,19 @@
+ 	skb->protocol = ethh->h_proto;
+ 	skb->dev = qdisc_dev;
+ 	skb->priority = ppe_drv_get_qos_tag(flow_idx);
+-	skb->fast_forwarded = 1;
+-
+-	if (likely(dev_fast_xmit_qdisc(skb, qdisc_dev, bottom_dev))) {
+-		dev_put(qdisc_dev);
+-		return true;
+-	}
+-
+-	dev_put(qdisc_dev);
+ 
+ 	/*
+-	 * Update failure stats.
++	 * The vendor kernel passes the skb to dev_fast_xmit_qdisc(), which
++	 * returns false without consuming the skb when the qdisc is down or
++	 * has no enqueue op, leaving the caller to free it at qdisc_drop.
++	 * Mainline 6.12 has no fast-qdisc hook, and dev_queue_xmit() always
++	 * consumes the skb (including its own drop accounting), so there is
++	 * nothing left to free here and a second free at qdisc_drop must be
++	 * avoided.
+ 	 */
+-	u64_stats_update_begin(&rx_stats->syncp);
+-	rx_stats->rx_host_qdisc_xmit_fail++;
+-	u64_stats_update_end(&rx_stats->syncp);
++	dev_queue_xmit(skb);
++	dev_put(qdisc_dev);
++	return true;
+ 
+ 	/*
+ 	 * Drop the packet as its modified by PPE and we should not send it back to stack.
+@@ -1434,7 +1430,7 @@
+  * edma_rx_handle_capwap_inear_packets()
+  *	Handle linear packets
+  */
+-void edma_rx_handle_capwap_linear_packets(struct edma_gbl_ctx *egc,
++static void edma_rx_handle_capwap_linear_packets(struct edma_gbl_ctx *egc,
+ 		struct edma_rxdesc_ring *rxdesc_ring,
+ 		struct edma_rxdesc_desc *rxdesc_desc,
+ 		struct sk_buff *skb, struct net_device *dev)
+@@ -1805,7 +1801,7 @@
+  * edma_rx_get_src_capwap_dev()
+  *	Get source port and corresponding net device.
+  */
+-struct net_device *edma_rx_get_src_capwap_dev(struct edma_gbl_ctx *egc,
++static struct net_device *edma_rx_get_src_capwap_dev(struct edma_gbl_ctx *egc,
+ 		struct edma_rx_desc_stats *rxdesc_stats,
+ 		struct edma_rxdesc_desc *rxdesc_desc,
+ 		struct sk_buff *skb)
+@@ -2180,7 +2176,7 @@
+ 		memset(&node->info, 0, sizeof(node->info));
+ 
+ 		if (unlikely(!edma_rx_vp_cb)) {
+-			dev_kfree_skb_list_fast(&tmp);
++			skb_queue_purge(&tmp);
+ 			continue;
+ 		}
+ 
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_tx.c b/hal/dp_ops/edma_dp/edma_v2/edma_tx.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_tx.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_tx.c
+@@ -247,17 +247,14 @@
+ #endif
+ 
+ 			/*
+-			 * Fast-recycle the SKB with a list, if skb is originally allocated
+-			 * from recycler and has been fast trasmitted
++			 * The vendor kernel fast-recycles the completed SKB
++			 * into a list when it came from the recycler and was
++			 * fast transmitted.  Mainline 6.12 has no SKB recycler,
++			 * so fast_xmit and is_from_recycler are never set and
++			 * the plain free path is the only one reachable.
+ 			 */
+-			if (likely(skb->fast_xmit) && likely(skb->is_from_recycler)) {
+-				mem_debug_update_skb(skb);
+-				dev_check_skb_fast_recyclable(skb);
+-				__skb_queue_head(&h, skb);
+-			} else {
+-				mem_debug_update_skb(skb);
+-				dev_kfree_skb(skb);
+-			}
++			mem_debug_update_skb(skb);
++			dev_kfree_skb(skb);
+ 		}
+ 
+ 		cons_idx = ((cons_idx + 1) & EDMA_TX_RING_SIZE_MASK);
+@@ -265,7 +262,7 @@
+ 	}
+ 
+ 	if (likely(!skb_queue_empty(&h))) {
+-		dev_kfree_skb_list_fast(&h);
++		skb_queue_purge(&h);
+ 	}
+ 
+ 	txcmpl_ring->cons_idx = cons_idx;
+@@ -930,14 +927,12 @@
+ 		num_desc_filled++;
+ 
+ 		/*
+-		 * We set fast_recycled flag if packet has taken the
+-		 * SFE fast transmit path, so that any Rx DMA driver
+-		 * that allocates this packet later can avoid
+-		 * an invalidate operation
++		 * The vendor kernel marks the skb fast_recycled when it took
++		 * the SFE fast transmit path, so that a later Rx allocation of
++		 * the same buffer can skip the cache invalidate.  Mainline
++		 * 6.12 has neither the recycler nor the fast transmit path,
++		 * so there is nothing to mark.
+ 		 */
+-		if (likely(skb->fast_xmit) && likely(skb->is_from_recycler)) {
+-			skb->fast_recycled = 1;
+-		}
+ 	} else {
+ 		num_tx_desc_needed = edma_tx_num_descs_for_sg(skb);
+ 
+diff -ruN a/include/nss_dp_dev.h b/include/nss_dp_dev.h
+--- a/include/nss_dp_dev.h
++++ b/include/nss_dp_dev.h
+@@ -46,6 +46,39 @@
+ #define mem_debug_update_skb(skb)		do { } while (0)
+ #define mem_debug_update_skb_list(skb_list)	do { } while (0)
+ #endif
++
++/*
++ * QSDK SKB fast-recycler / fast-transmit ABI.
++ *
++ * The vendor kernel (CONFIG_SKB_RECYCLER) adds fields to struct sk_buff
++ * (fast_recycled, fast_forwarded, fast_xmit, is_from_recycler, int_pri)
++ * and helpers such as netdev_alloc_skb_fast(), dev_fast_xmit_qdisc(),
++ * skb_set_int_pri()/skb_get_int_pri() and dev_kfree_skb_list_fast().
++ * Mainline 6.12 carries none of it, and the buffer flags can never be
++ * set here, so the fast-recycle branches are removed at their call
++ * sites and the two remaining helpers are mapped as follows:
++ *
++ *  - netdev_alloc_skb_fast() allocates with __GFP_RECYCLER on the vendor
++ *    kernel; without a recycler it is a plain netdev_alloc_skb().
++ *  - skb_set_int_pri()/skb_get_int_pri() carry the EDMA Rx descriptor's
++ *    interrupt priority into the Tx descriptor.  struct sk_buff has no
++ *    spare field for it and reusing skb->priority would change qdisc
++ *    classification, so the priority is not propagated and the Tx
++ *    descriptor keeps its default value.  This is a behavioural gap of
++ *    the mainline port, not just a build shim.
++ */
++#ifndef netdev_alloc_skb_fast
++#define netdev_alloc_skb_fast(dev, len)		netdev_alloc_skb(dev, len)
++#endif
++
++static inline void skb_set_int_pri(struct sk_buff *skb, uint8_t int_pri)
++{
++}
++
++static inline uint8_t skb_get_int_pri(const struct sk_buff *skb)
++{
++	return 0;
++}
+ /*
+  * Memory profile detected from kernel bootargs (mem-profile=<value>).
+  * NSS_DP_MEM_PROFILE_HIGH : 1G  (default / no param)

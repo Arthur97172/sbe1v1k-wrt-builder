@@ -1,0 +1,30 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: declare two public port helpers
+
+ppe_drv_port_from_dev_and_ref() and ppe_drv_port_src_profile_set() have
+external linkage and no caller anywhere in the module, so mainline's
+-Wmissing-prototypes (6.10) rejects them.  They cannot be made static:
+a static function with no caller would trip -Wunused-function instead.
+
+Declare both in ppe_drv_port.h next to their siblings.  This is a
+declaration-only change; the functions stay exactly as they were and
+remain available to other PPE modules.
+diff -ruN a/drv/ppe_drv/ppe_drv_port.h b/drv/ppe_drv/ppe_drv_port.h
+--- a/drv/ppe_drv/ppe_drv_port.h
++++ b/drv/ppe_drv/ppe_drv_port.h
+@@ -166,6 +166,7 @@
+ 
+ struct net_device *ppe_drv_port_to_dev(struct ppe_drv_port *pp);
+ struct ppe_drv_port *ppe_drv_port_from_dev(struct net_device *dev);
++struct ppe_drv_port *ppe_drv_port_from_dev_and_ref(struct net_device *dev);
+ struct ppe_drv_port *ppe_drv_port_from_tl_l3_if(struct ppe_drv_tun_l3_if *tl_l3_if);
+ 
+ void ppe_drv_port_mac_addr_set(struct ppe_drv_port *pp, const uint8_t *mac_addr);
+@@ -223,6 +224,7 @@
+ int16_t ppe_drv_port_metadata_to_enq_vp_internal(uint8_t port_metadata);
+ 
+ int ppe_drv_port_src_profile_get_byidx(uint8_t port_idx);
++bool ppe_drv_port_src_profile_set(struct ppe_drv_port *pp, uint8_t src_profile);
+ bool ppe_drv_port_l2_vp_sc_config(struct ppe_drv_port *pp, ppe_drv_sc_t sc, uint32_t phy_port);
+ bool ppe_drv_port_loopback_port_get_info(void);
+ bool ppe_drv_port_l2_vp_sc_reset(struct ppe_drv_port *pp);

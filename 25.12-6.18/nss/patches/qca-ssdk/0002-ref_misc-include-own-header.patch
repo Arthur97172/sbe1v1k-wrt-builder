@@ -1,0 +1,26 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ref_misc: include ref_misc.h so the swconfig ops have prototypes
+
+Linux 6.10 enabled -Wmissing-prototypes and qca-ssdk builds with
+-Werror.  ref_misc.c defines the three qca_ar8327_sw_* swconfig
+callbacks but never includes ref_misc.h, the header that declares them
+(ssdk_init.c does include it).  Include it after <linux/switch.h> so
+struct switch_dev/switch_attr/switch_val are already known.
+
+src/ref/ref_misc.c:47:1: error: no previous prototype for
+  'qca_ar8327_sw_set_max_frame_size' [-Werror=missing-prototypes]
+src/ref/ref_misc.c:90:1: error: no previous prototype for
+  'qca_ar8327_sw_get_max_frame_size' [-Werror=missing-prototypes]
+src/ref/ref_misc.c:123:1: error: no previous prototype for
+  'qca_ar8327_sw_reset_switch' [-Werror=missing-prototypes]
+
+--- a/src/ref/ref_misc.c
++++ b/src/ref/ref_misc.c
+@@ -37,6 +37,7 @@
+ #include <linux/phy.h>
+ #include <linux/netdevice.h>
+ #include "ssdk_plat.h"
++#include "ref_misc.h"
+ #include "ref_vlan.h"
+ #ifdef MP
+ #include <adpt.h>

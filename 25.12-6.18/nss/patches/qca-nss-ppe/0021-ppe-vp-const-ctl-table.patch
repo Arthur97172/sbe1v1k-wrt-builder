@@ -1,0 +1,21 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe-vp: take const ctl_table in the sysctl handler
+
+  Linux 6.8 changed struct ctl_table's proc_handler to
+  int (*)(const struct ctl_table *, int, void *, size_t *, loff_t *).
+  ppe_vp_enable_handler() still takes a mutable pointer, so 6.12 rejects
+  the initializer of nss_ppe_vp_feature[] with
+  -Wincompatible-pointer-types and the VP manager fails to build.
+  proc_dointvec() only reads the table, so const is sufficient.
+
+--- a/drv/ppe_vp/ppe_vp_base.c
++++ b/drv/ppe_vp/ppe_vp_base.c
+@@ -33,7 +33,7 @@
+  *
+  * Only disabled allocation of new VPs. Old VPs are not destroyed.
+  */
+-static int ppe_vp_enable_handler(struct ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *ppos)
++static int ppe_vp_enable_handler(const struct ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+ 	struct ppe_vp_base *pvb = &vp_base;

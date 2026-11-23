@@ -1,0 +1,146 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: use phy_package_shared::base_addr on Linux 6.12
+
+Linux 6.12 no longer exposes struct phy_package_shared::addr; the package
+base address moved to the 'base_addr' member (added upstream in v6.11).
+phy_package_join()/devm_of_phy_package_join() keep the same signature, so
+only the member name changes.
+
+Mechanical rename, 17 occurrences in 5 files.  Only the 25.12/6.12 target
+is affected; the 6.6 build keeps its own copy.
+---
+--- a/linux_std/qca8084/qca8084.c	2026-10-21 04:46:14.861180647 +0000
++++ b/linux_std/qca8084/qca8084.c	2026-10-23 23:09:08.893051192 +0000
+@@ -220,7 +220,7 @@
+ 
+ static int qca8084_phy_index_get(struct phy_device *phydev)
+ {
+-	return (phydev->mdio.addr - phydev->shared->addr + 1);
++	return (phydev->mdio.addr - phydev->shared->base_addr + 1);
+ }
+ 
+ static int qca8084_phy_fifo_reset(struct phy_device *phydev, bool enable)
+--- a/linux_std/qce1204/qce1204.c	2026-10-21 04:46:14.861572007 +0000
++++ b/linux_std/qce1204/qce1204.c	2026-10-23 23:09:08.891820313 +0000
+@@ -236,7 +236,7 @@
+ 	if (!phydev || !phydev->shared)
+ 		return PHY_MAX_ADDR;
+ 
+-	return phydev->shared->addr + QCE1204_SOC_ADDR_OFFSET;
++	return phydev->shared->base_addr + QCE1204_SOC_ADDR_OFFSET;
+ }
+ 
+ static void qce1204_split_addr(u32 regaddr, u16 *reg_low, u16 *reg_mid,
+@@ -331,7 +331,7 @@
+ static int qce1204_pcs_addr_get(struct phy_device *phydev, int offset)
+ {
+ 	if (phydev->shared)
+-		return phydev->shared->addr + offset;
++		return phydev->shared->base_addr + offset;
+ 
+ 	return PHY_MAX_ADDR;
+ }
+@@ -502,9 +502,9 @@
+ /*
+  * Count the number of PHY ports configured in DTS for this package.
+  * Counts available child nodes of the package node whose "reg" value falls
+- * within the valid address range [shared->addr, shared->addr + QCE1204_PORT_NUM).
++ * within the valid address range [shared->base_addr, shared->base_addr + QCE1204_PORT_NUM).
+  * The "reg" property of each child uses the same MDIO address space as
+- * shared->addr, so a direct numeric comparison is valid.
++ * shared->base_addr, so a direct numeric comparison is valid.
+  * Falls back to QCE1204_PORT_NUM if the package node is unavailable, or if the
+  * count is zero or exceeds QCE1204_PORT_NUM.  Note that a DTS repeating a "reg"
+  * value within range is not detected here: it inflates the count above the
+@@ -523,8 +523,8 @@
+ 
+ 	for_each_available_child_of_node_scoped(shared->np, child) {
+ 		if (!of_property_read_u32(child, "reg", &reg) &&
+-		    reg >= shared->addr &&
+-		    reg < shared->addr + QCE1204_PORT_NUM)
++		    reg >= shared->base_addr &&
++		    reg < shared->base_addr + QCE1204_PORT_NUM)
+ 			count++;
+ 	}
+ 
+@@ -556,7 +556,7 @@
+ 	if (!shared_priv)
+ 		return -EINVAL;
+ 
+-	port_idx = phydev->mdio.addr - shared->addr;
++	port_idx = phydev->mdio.addr - shared->base_addr;
+ 	if (port_idx < 0 || port_idx >= QCE1204_PORT_NUM)
+ 		return -EINVAL;
+ 
+@@ -2026,7 +2026,7 @@
+ 
+ int qce1204_phy_channel_get(struct phy_device *phydev)
+ {
+-	return (phydev->mdio.addr - phydev->shared->addr + 1);
++	return (phydev->mdio.addr - phydev->shared->base_addr + 1);
+ }
+ 
+ /**
+@@ -2408,7 +2408,7 @@
+ #endif
+ 	device_create_file(&phydev->mdio.dev, &dev_attr_snr);
+ 
+-	port_idx = phydev->mdio.addr - phydev->shared->addr;
++	port_idx = phydev->mdio.addr - phydev->shared->base_addr;
+ 	if (port_idx >= 0 && port_idx < QCE1204_PORT_NUM) {
+ 		mutex_lock(&shared_priv->pcs_lock);
+ 		shared_priv->port_active |= BIT(port_idx);
+@@ -2441,7 +2441,7 @@
+ 	if (!shared_priv)
+ 		return;
+ 
+-	port_idx = phydev->mdio.addr - shared->addr;
++	port_idx = phydev->mdio.addr - shared->base_addr;
+ 	if (port_idx < 0 || port_idx >= QCE1204_PORT_NUM)
+ 		return;
+ 
+--- a/linux_std/qce1204/qce1204.h	2026-10-21 04:46:14.861950508 +0000
++++ b/linux_std/qce1204/qce1204.h	2026-10-23 23:09:08.890024610 +0000
+@@ -142,7 +142,7 @@
+ 	 * package instead of on every read_status poll.
+ 	 */
+ 	bool incomplete_warned;
+-	/* per-port hibernation state, indexed by (mdio.addr - shared->addr) */
++	/* per-port hibernation state, indexed by (mdio.addr - shared->base_addr) */
+ 	bool port_hibernation[QCE1204_PORT_NUM];
+ 	bool pcs_assert;           /* current PCS ANA soft-reset state (true = asserted) */
+ #if IS_ENABLED(CONFIG_HWMON)
+--- a/linux_std/qcom_phy_lib.c	2026-10-21 04:46:14.861950508 +0000
++++ b/linux_std/qcom_phy_lib.c	2026-10-23 23:09:08.826837357 +0000
+@@ -20,7 +20,7 @@
+ static int qcom_phy_pcs_addr_get(struct phy_device *phydev, int offset)
+ {
+ 	if (phydev->shared)
+-		return phydev->shared->addr + offset;
++		return phydev->shared->base_addr + offset;
+ 
+ 	return phydev->mdio.addr + offset;
+ }
+@@ -352,9 +352,9 @@
+ 
+ 	/* PHY software reset */
+ 	for(channel = 1; channel <= 4; channel++) {
+-		ret = mdiobus_read(phydev->mdio.bus, phydev->shared->addr + channel - 1, MII_BMCR);
++		ret = mdiobus_read(phydev->mdio.bus, phydev->shared->base_addr + channel - 1, MII_BMCR);
+ 		if (!(ret & BMCR_PDOWN))
+-			mdiobus_modify(phydev->mdio.bus, phydev->shared->addr + channel - 1,
++			mdiobus_modify(phydev->mdio.bus, phydev->shared->base_addr + channel - 1,
+ 				MII_BMCR, BMCR_RESET, BMCR_RESET);
+ 	}
+ 	/* Set BaseR mode */
+--- a/nss_ext/nss_phy_linux_wrapper.c	2026-10-21 04:46:14.862247445 +0000
++++ b/nss_ext/nss_phy_linux_wrapper.c	2026-10-23 23:09:08.885820257 +0000
+@@ -228,7 +228,7 @@
+ int nss_phy_share_addr_get(struct nss_phy_device *nss_phydev)
+ {
+ 	if (nss_phydev->phydev->shared)
+-		return nss_phydev->phydev->shared->addr;
++		return nss_phydev->phydev->shared->base_addr;
+ 
+ 	return 0;
+ }

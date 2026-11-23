@@ -1,0 +1,24 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: ipq95xx 打开 CONFIG_SWCONFIG
+
+qca-ssdk 的 src/init/ssdk_init.c 在 IN_SWCONFIG 代码路径里调用
+register_switch()/unregister_switch()，modpost 报：
+
+  ERROR: modpost: "register_switch" [qca-ssdk.ko] undefined!
+  ERROR: modpost: "unregister_switch" [qca-ssdk.ko] undefined!
+
+OpenWrt 的 swconfig 层（drivers/net/phy/swconfig.c）只在
+CONFIG_SWCONFIG=y 时才编进内核；ipq95xx 默认没有任何 swconfig 交换芯片
+驱动，因此该符号没被编出。QSDK 内核始终开启 swconfig，本项目也在
+0002 补丁里为它补了 switch_ext，故在 ipq95xx 的子目标内核配置里显式
+打开 CONFIG_SWCONFIG=y。
+
+分类：配置差异（厂商内核默认值），非代码改动。
+diff -ruN
+--- a/target/linux/qualcommbe/ipq95xx/config-default	2026-10-23 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/ipq95xx/config-default	2026-10-23 00:00:00.000000000 +0000
+@@ -64,3 +64,4 @@
+ # CONFIG_SPMI_HISI3670 is not set
+ CONFIG_SPMI_MSM_PMIC_ARB=y
+ # CONFIG_SPMI_PMIC_CLKDIV is not set
++CONFIG_SWCONFIG=y

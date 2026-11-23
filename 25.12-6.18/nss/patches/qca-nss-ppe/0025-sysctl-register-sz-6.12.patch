@@ -1,0 +1,98 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: register sysctl tables with an explicit entry count on 6.11+
+
+Linux 6.11 changed register_sysctl() to
+
+  #define register_sysctl(path, table) \
+          register_sysctl_sz(path, table, ARRAY_SIZE(table))
+
+so the count now includes the trailing "{}" terminator that QSDK tables
+carry.  sysctl_check_table() then rejects the appended NULL-procname
+entry and registration returns NULL.  In the PPE core module that failure
+runs the init error path, which calls platform_driver_unregister(); the
+resulting ppe_drv_remove() walks half-initialised state and the kernel
+oopses ("Unable to handle kernel access to user memory ... 0x5a9c",
+pc = ppe_drv_get_qdisc_rule_flag) after the
+
+  sysctl table check failed: ppe/ppe_drv/(null) procname is null
+  sysctl table check failed: ppe/ppe_drv/(null) No proc_handler
+
+errors.  This is the boot loop observed on 25.12 (S15 nss load); with
+panic_on_oops=0 the trace was captured on 2026-11-17 (see
+docs/DIAG_RUN_2026-11-16.md).
+
+Fix all three registration sites that ship in ppe_vp / ppe_rule builds:
+ppe_drv (core), ppe_vp (vp_enable), ppe_rfs (mcast_rfs_enable).  Use
+register_sysctl_sz() with ARRAY_SIZE(table) - 1 on kernel 6.11+, keep
+the old call below.  ppe_vp_base.c additionally needs linux/version.h.
+
+Verified CONFIG-only on hardware: load of qca-nss-ppe after the fix is
+recorded in docs/DIAG_RUN_2026-11-16.md section 27.
+
+Signed-off-by: SBE1V1K build <noreply@example.invalid>
+---
+diff -ruN a/drv/ppe_drv/ppe_drv.c b/drv/ppe_drv/ppe_drv.c
+--- a/drv/ppe_drv/ppe_drv.c	2026-11-17 23:02:54.239162311 +0000
++++ b/drv/ppe_drv/ppe_drv.c	2026-11-17 23:02:54.308505695 +0000
+@@ -5220,7 +5220,15 @@
+ 	/*
+ 	 * Register sysctl framework for PPE DRV
+ 	 */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
++	/* 6.11 起 register_sysctl() 取 ARRAY_SIZE(table) 作为条目数，把表尾的
++	 * "{}" 哨兵也算进去；哨兵 procname 为 NULL、无 proc_handler，校验失败
++	 * 导致注册返回 NULL。显式传真实条目数。 */
++	ppe_drv_gbl->ppe_drv_header = register_sysctl_sz("ppe/ppe_drv", ppe_drv_sub,
++			ARRAY_SIZE(ppe_drv_sub) - 1);
++#else
+ 	ppe_drv_gbl->ppe_drv_header = register_sysctl("ppe/ppe_drv", ppe_drv_sub);
++#endif
+ 	if (!ppe_drv_gbl->ppe_drv_header) {
+ 		ppe_drv_warn("sysctl table configuration failed");
+ 		unregister_netdevice_notifier(&nss_ppe_netdevice);
+diff -ruN a/drv/ppe_rule/ppe_rfs/ppe_rfs.c b/drv/ppe_rule/ppe_rfs/ppe_rfs.c
+--- a/drv/ppe_rule/ppe_rfs/ppe_rfs.c	2026-11-17 23:02:54.279172628 +0000
++++ b/drv/ppe_rule/ppe_rfs/ppe_rfs.c	2026-11-17 23:02:54.309676609 +0000
+@@ -587,7 +587,15 @@
+ 
+ 	ppe_drv_wlan_rfs_enable_set(wlan_rfs_enable);
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
++	/* 6.11 起 register_sysctl() 取 ARRAY_SIZE(table) 作为条目数，把表尾的
++	 * "{}" 哨兵也算进去；哨兵 procname 为 NULL、无 proc_handler，校验失败
++	 * 导致注册返回 NULL。显式传真实条目数。 */
++	g_rfs->rfs_hdr = register_sysctl_sz("ppe/ppe_rfs", ppe_rfs_sysctl_tbl,
++			ARRAY_SIZE(ppe_rfs_sysctl_tbl) - 1);
++#else
+ 	g_rfs->rfs_hdr = register_sysctl("ppe/ppe_rfs", ppe_rfs_sysctl_tbl);
++#endif
+ 	if (!g_rfs->rfs_hdr) {
+ 		ppe_rfs_warn("Unable to register ppe_rfs sysctl table\n");
+ 	}
+diff -ruN a/drv/ppe_vp/ppe_vp_base.c b/drv/ppe_vp/ppe_vp_base.c
+--- a/drv/ppe_vp/ppe_vp_base.c	2026-11-17 23:02:54.259182494 +0000
++++ b/drv/ppe_vp/ppe_vp_base.c	2026-11-17 23:02:54.309472198 +0000
+@@ -3,6 +3,7 @@
+  * SPDX-License-Identifier: ISC
+  */
+ 
++#include <linux/version.h>
+ #include "ppe_vp_base.h"
+ #include "ppe_vp_rx.h"
+ 
+@@ -299,7 +300,15 @@
+ 		return -EINVAL;
+ 	}
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
++	/* 6.11 起 register_sysctl() 取 ARRAY_SIZE(table) 作为条目数，把表尾的
++	 * "{}" 哨兵也算进去；哨兵 procname 为 NULL、无 proc_handler，校验失败
++	 * 导致注册返回 NULL。显式传真实条目数。 */
++	pvb->vp_hdr = register_sysctl_sz("ppe/ppe_vp", nss_ppe_vp_feature,
++			ARRAY_SIZE(nss_ppe_vp_feature) - 1);
++#else
+ 	pvb->vp_hdr = register_sysctl("ppe/ppe_vp", nss_ppe_vp_feature);
++#endif
+ 	if (!pvb->vp_hdr) {
+ 		ppe_vp_warn("%px: Unable to register sysctl table for PPE virtual port\n", pvb);
+ 		return -EINVAL;

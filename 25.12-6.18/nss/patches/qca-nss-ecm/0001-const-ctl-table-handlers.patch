@@ -1,0 +1,124 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ecm: take const ctl_table in sysctl handlers
+
+Linux 6.8 changed struct ctl_table's proc_handler to
+int (*)(const struct ctl_table *, int, void *, size_t *, loff_t *).
+The ECM sysctl handlers still take a mutable pointer, so 6.12 rejects
+their initializers with -Wincompatible-pointer-types and
+ecm_sfe_l2.o fails to build.
+
+All of these handlers only read the table, so const is sufficient.
+Same change as qca-nss-ppe/0021 for ppe_vp.
+
+---
+diff -ruN a/examples/ecm_ae_select.c b/examples/ecm_ae_select.c
+--- a/examples/ecm_ae_select.c	2026-10-21 04:46:14.964914555 +0000
++++ b/examples/ecm_ae_select.c	2026-10-24 09:51:11.812496155 +0000
+@@ -646,7 +646,7 @@
+  * ecm_ae_select_test_rule_handler()
+  * 	Sysctl handler for AE select test rule ops
+  */
+-static int ecm_ae_select_test_rule_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_ae_select_test_rule_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	char *buf;
+ 	int count;
+diff -ruN a/examples/ecm_pcc_test.c b/examples/ecm_pcc_test.c
+--- a/examples/ecm_pcc_test.c	2026-10-21 04:46:14.966151814 +0000
++++ b/examples/ecm_pcc_test.c	2026-10-24 09:51:11.812158990 +0000
+@@ -1447,7 +1447,7 @@
+  * ecm_pcc_test_rule_handler()
+  * 	Sysctl handler for PCC test rule operations
+  */
+-static int ecm_pcc_test_rule_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_pcc_test_rule_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	char *buf;
+ 	int count;
+@@ -1483,7 +1483,7 @@
+  * ecm_pcc_test_unregister_handler()
+  * 	Sysctl handler to unregister PCC test classifer
+  */
+-static int ecm_pcc_test_unregister_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_pcc_test_unregister_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	/*
+ 	 * return if the operation is read(cat /proc/sys/net/ecm_pcc_test/unregister)
+@@ -1507,7 +1507,7 @@
+  * ecm_pcc_test_pcc_mirror_en_handler()
+  * 	Sysctl handler for pcc_mirror_en with bounds checking
+  */
+-static int ecm_pcc_test_pcc_mirror_en_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_pcc_test_pcc_mirror_en_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+ 	int current_val;
+diff -ruN a/examples/ecm_sfe_l2.c b/examples/ecm_sfe_l2.c
+--- a/examples/ecm_sfe_l2.c	2026-10-21 04:46:14.966151814 +0000
++++ b/examples/ecm_sfe_l2.c	2026-10-24 09:51:11.811462401 +0000
+@@ -916,7 +916,7 @@
+  * ecm_sfe_l2_defunct_by_port_handler()
+  * 	Proc handler to defunct the ecm rules by giving port numnber
+  */
+-static int ecm_sfe_l2_defunct_by_port_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_sfe_l2_defunct_by_port_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	char *buf;
+ 	int count;
+@@ -954,7 +954,7 @@
+  * ecm_sfe_l2_defunct_by_5tuple_handler()
+  * 	Proc handler to defunct the ecm rules by giving 5 tuple
+  */
+-static int ecm_sfe_l2_defunct_by_5tuple_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_sfe_l2_defunct_by_5tuple_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	char *buf;
+ 	int count;
+@@ -1000,7 +1000,7 @@
+  * ecm_sfe_l2_defunct_by_protocol_handler()
+  * 	Proc handler to defunct connections based on protocol
+  */
+-static int ecm_sfe_l2_defunct_by_protocol_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_sfe_l2_defunct_by_protocol_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	char *buf;
+ 	int count;
+@@ -1100,7 +1100,7 @@
+  * Policy rule must include cmd, ip_ver and direction. It can also include src/dest IP and ports, protocol.
+  * cmd and ip_ver MUST be the first 2 options in the command.
+  */
+-static int ecm_sfe_l2_policy_rule_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_sfe_l2_policy_rule_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	char *buf;
+ 	int count;
+@@ -1136,7 +1136,7 @@
+  * ecm_sfe_l2_wan_name_handler()
+  * 	Writes the WAN interface name to the sysctl node wan_name
+  */
+-static int ecm_sfe_l2_wan_name_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++static int ecm_sfe_l2_wan_name_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int count;
+ 
+diff -ruN a/frontends/ecm_front_end_common.c b/frontends/ecm_front_end_common.c
+--- a/frontends/ecm_front_end_common.c	2026-10-21 04:46:14.967858803 +0000
++++ b/frontends/ecm_front_end_common.c	2026-10-24 09:51:11.813583452 +0000
+@@ -1323,7 +1323,7 @@
+  * ecm_front_end_esp_spi_passthrough_enable_handler()
+  *	Sysctl to enable/disable ESP SPI based passthrough feature.
+  */
+-int ecm_front_end_esp_spi_passthrough_enable_handler(struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
++int ecm_front_end_esp_spi_passthrough_enable_handler(const struct ctl_table *ctl, int write, void *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+ 	int current_value;
+@@ -1654,7 +1654,7 @@
+  * ecm_front_end_unidir_accel_proc_handler()
+  *	Per-direction acceleration sysctl handler.
+  */
+-int ecm_front_end_unidir_accel_proc_handler(struct ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *ppos)
++int ecm_front_end_unidir_accel_proc_handler(const struct ctl_table *ctl, int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+ 

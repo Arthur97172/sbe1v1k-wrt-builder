@@ -1,0 +1,45 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-ssdk: adapt ssdk_init.c to the 6.18 phylib and phylink APIs
+
+Three 6.6 -> 6.18 API changes break ssdk_init.c:
+
+1. struct phy_device lost the flat eee_enabled flag; EEE state now lives
+   in phydev->eee_cfg (struct phy_eee_cfg):
+     src/init/ssdk_init.c: error: 'struct phy_device' has no member named 'eee_enabled'
+2. struct phylink_pcs lost the neg_mode member; negotiation mode is now
+   passed as an argument to pcs_get_state()/pcs_config()/pcs_link_up().
+   Drop the port_priv->phylink_pcs.neg_mode assignment and widen
+   ssdk_pcs_get_state() to the new signature:
+     src/init/ssdk_init.c: error: initialization of 'void (*)(struct phylink_pcs *, unsigned int, struct phylink_link_state *)' from incompatible pointer type
+
+The neg_mode argument is unused: ssdk has always driven autoneg itself in
+its polling task (see the comment in ssdk_pcs_an_restart()).
+--- a/src/init/ssdk_init.c
++++ b/src/init/ssdk_init.c
+@@ -321,7 +321,7 @@
+ 		return;
+ 
+ 	hsl_port_phydev_get(dev_id, port_id, &phydev);
+-	if (phydev && phydev->eee_enabled) {
++	if (phydev && phydev->eee_cfg.eee_enabled) {
+ 		port_eee_cfg.enable = A_TRUE;
+ 		port_eee_cfg.advertisement = FAL_PHY_EEE_ALL_ADV;
+ 		port_eee_cfg.lpi_tx_enable = A_TRUE;
+@@ -1288,7 +1288,8 @@
+ 	/* pcs no need to restart autoneg here as pcs is configured in SSDK polling task */
+ }
+ 
+-static void ssdk_pcs_get_state(struct phylink_pcs *pcs, struct phylink_link_state *state)
++static void ssdk_pcs_get_state(struct phylink_pcs *pcs, unsigned int neg_mode,
++			       struct phylink_link_state *state)
+ {
+ 	sw_error_t rv = SW_OK;
+ 	struct qca_phy_priv *priv = NULL;
+@@ -1414,7 +1415,6 @@
+ 	/* PCS configuration */
+ 	port_priv->phylink_pcs.ops = &ssdk_phylink_pcs_ops;
+ 	port_priv->phylink_pcs.poll = true;
+-	port_priv->phylink_pcs.neg_mode = true;
+ 
+ 	fwnode = of_fwnode_handle(port_priv->np);
+ 

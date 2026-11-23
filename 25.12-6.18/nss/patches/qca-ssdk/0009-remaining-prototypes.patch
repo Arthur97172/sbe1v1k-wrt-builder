@@ -1,0 +1,120 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ssdk_plat, ssdk_init: remaining missing prototypes
+
+File-local helpers referenced only inside their own translation unit get
+internal linkage; the two that other files call (qca_ar8327_phy_linkdown
+from ref_port_ctrl.c, qca_ar8327_hw_init likewise) keep external linkage
+and get a prototype next to the includes.
+
+src/init/ssdk_init.c:560:6: error: no previous prototype for
+  'qca_ar8327_phy_linkdown' [-Werror=missing-prototypes]
+src/init/ssdk_init.c:666:5: error: no previous prototype for
+  'qca_ar8327_hw_init' [-Werror=missing-prototypes]
+src/init/ssdk_init.c:936:1: error: no previous prototype for
+  'qca_phy_mib_work_start' [-Werror=missing-prototypes]
+src/init/ssdk_init.c:957:1: error: no previous prototype for
+  'qca_phy_mib_work_stop' [-Werror=missing-prototypes]
+src/init/ssdk_plat.c:1254:6: error: no previous prototype for
+  'ssdk_dts_port_scheduler_dump' [-Werror=missing-prototypes]
+src/init/ssdk_plat.c:2072:5: error: no previous prototype for
+  'ssdk_uniphy_check_by_socid' [-Werror=missing-prototypes]
+
+This supersedes the phy_linkdown prototype that 0008 placed next to
+ssdk_switch_unregister(), which was below the definition.
+
+--- a/src/init/ssdk_init.c
++++ b/src/init/ssdk_init.c
+@@ -52,6 +52,10 @@
+ #include <linux/reset.h>
+ #include "ssdk_plat.h"
+ #include "fal_uk_if.h"
++
++/* Defined here, called from ref/ref_port_ctrl.c */
++void qca_ar8327_phy_linkdown(a_uint32_t dev_id);
++int qca_ar8327_hw_init(struct qca_phy_priv *priv);
+ /*qca808x_end*/
+ #include "ssdk_clk.h"
+ #include "ssdk_led.h"
+@@ -932,7 +936,7 @@
+ #endif
+ }
+ 
+-int
++static int
+ qca_phy_mib_work_start(struct qca_phy_priv *priv)
+ {
+ 	mutex_init(&priv->mib_lock);
+@@ -953,7 +957,7 @@
+ 	return 0;
+ }
+ 
+-void
++static void
+ qca_phy_mib_work_stop(struct qca_phy_priv *priv)
+ {
+ 	if(!priv)
+@@ -1871,8 +1875,6 @@
+ 	return 0;
+ }
+ 
+-void qca_ar8327_phy_linkdown(a_uint32_t dev_id);
+-
+ static int ssdk_switch_unregister(a_uint32_t dev_id)
+ {
+ 	struct qca_phy_priv *priv = qca_phy_priv_global[dev_id];
+--- a/src/init/ssdk_plat.c
++++ b/src/init/ssdk_plat.c
+@@ -1251,7 +1251,7 @@
+ }
+ 
+ #ifdef IN_QOS
+-void ssdk_dts_port_scheduler_dump(a_uint32_t dev_id)
++static void ssdk_dts_port_scheduler_dump(a_uint32_t dev_id)
+ {
+ 	a_uint32_t i;
+ 	ssdk_dt_portscheduler_cfg *portscheduler_cfg;
+@@ -1284,7 +1284,7 @@
+ 	}
+ }
+ 
+-void ssdk_dts_reserved_scheduler_dump(a_uint32_t dev_id)
++static void ssdk_dts_reserved_scheduler_dump(a_uint32_t dev_id)
+ {
+ 	ssdk_dt_portscheduler_cfg *reserved_cfg;
+ 	ssdk_dt_scheduler_cfg *scheduler_cfg;
+@@ -1319,7 +1319,7 @@
+ 			srcmsg[4], srcmsg[5], srcmsg[6]);
+ }
+ 
+-void ssdk_dts_l0scheduler_dump(a_uint32_t dev_id)
++static void ssdk_dts_l0scheduler_dump(a_uint32_t dev_id)
+ {
+ 	a_uint32_t i;
+ 	ssdk_dt_l0scheduler_cfg *scheduler_cfg;
+@@ -1338,7 +1338,7 @@
+ 	}
+ }
+ 
+-void ssdk_dts_l1scheduler_dump(a_uint32_t dev_id)
++static void ssdk_dts_l1scheduler_dump(a_uint32_t dev_id)
+ {
+ 	a_uint32_t i;
+ 	ssdk_dt_l1scheduler_cfg *scheduler_cfg;
+@@ -1371,7 +1371,7 @@
+ 	"PHY_SFP_SGMII",
+ };
+ 
+-void ssdk_dts_phyinfo_dump(a_uint32_t dev_id)
++static void ssdk_dts_phyinfo_dump(a_uint32_t dev_id)
+ {
+ 	a_uint32_t i, j;
+ 	phy_info_t *phy_info = hsl_phy_info_get(dev_id);
+@@ -2069,7 +2069,7 @@
+ /*qca808x_end*/
+ 
+ #if !defined(MRPPE)
+-int ssdk_uniphy_check_by_socid(a_uint32_t dev_id,
++static int ssdk_uniphy_check_by_socid(a_uint32_t dev_id,
+ 		a_uint32_t index, a_uint32_t mode)
+ {
+ 	int ret = A_TRUE;

@@ -1,0 +1,64 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-ppe: allocate the PPE-DS NAPI dummy netdev with alloc_netdev_dummy()
+
+6.18 made init_dummy_netdev() static in net/core/dev.c; the only exported
+entry point left is alloc_netdev_dummy(sizeof_priv) (EXPORT_SYMBOL_GPL),
+released with free_netdev(). ppe_ds kept the dummy net_device embedded in
+struct ppe_ds and called the old helper:
+
+  drv/ppe_ds/ppe_ds.c:917:17: error: implicit declaration of function 'init_dummy_netdev'
+
+Hold it as a pointer instead: allocate it once per node in
+ppe_ds_wlan_inst_register_arch_mode_wifi7() (the only path that ran the
+old init, guarded by polling_for_idx_update), fail by restoring the
+previous node state, and release it in ppe_ds_wlan_inst_free() before
+dp_ops->free() hands the node's memory back to qca-nss-dp.
+
+Classification: portability (kernel API removal, no behaviour change;
+node->napi_ndev has no other users in this driver).
+
+---
+diff -ruN a/drv/ppe_ds/ppe_ds.c b/drv/ppe_ds/ppe_ds.c
+--- a/drv/ppe_ds/ppe_ds.c
++++ b/drv/ppe_ds/ppe_ds.c
+@@ -915,7 +915,15 @@
+ 		/*
+ 		 * Setup dummy netdev for all the NAPIs associated with this node
+ 		 */
+-		init_dummy_netdev(&node->napi_ndev);
++		node->napi_ndev = alloc_netdev_dummy(0);
++		if (!node->napi_ndev) {
++			ppe_ds_err("Failed to allocate dummy netdev for node %d\n",
++					node->node_cfg_idx);
++			write_lock_bh(&node_cfg->lock);
++			node_cfg->node_state = priv_node_state;
++			write_unlock_bh(&node_cfg->lock);
++			return false;
++		}
+ 
+ 		/*
+ 		 * Init high res timer.
+@@ -1504,6 +1512,11 @@
+ 	 */
+ 	node_id = node->node_cfg_idx;
+ 
++	if (node->napi_ndev) {
++		free_netdev(node->napi_ndev);
++		node->napi_ndev = NULL;
++	}
++
+ 	dp_ops->free(edma_handle);
+ 
+ 	/*
+diff -ruN a/drv/ppe_ds/ppe_ds.h b/drv/ppe_ds/ppe_ds.h
+--- a/drv/ppe_ds/ppe_ds.h
++++ b/drv/ppe_ds/ppe_ds.h
+@@ -155,7 +155,7 @@
+ struct ppe_ds {
+ 	struct napi_struct napi;		/* NAPI structure */
+ 	struct hrtimer timer;			/* HR timer */
+-	struct net_device napi_ndev;		/* Dummy NAPI device */
++	struct net_device *napi_ndev;		/* Dummy NAPI device */
+ 	bool timer_enabled;			/* Timer enabled flag */
+ 	bool en_process_irq;			/* Safe to handle irq */
+ 	struct ppe_ds_wlan_ops *wlan_ops;	/* PPE-DS WLAN operations */

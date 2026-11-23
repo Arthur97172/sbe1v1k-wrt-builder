@@ -1,0 +1,24 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] edma_v2: include edma_dp_vp.h so edma_dp_vp_xmit() has a prototype
+
+edma_v2/edma_dp_vp.c:26:13: error: no previous prototype for 'edma_dp_vp_xmit'
+  [-Werror=missing-prototypes]
+
+Same class as the qca-ssdk "include your own header" fixes: the
+function's declaration lives in edma_dp_vp.h, but the .c file never
+includes it (edma_dp.c gets the prototype indirectly when it takes the
+address for .vp_xmit).  Linux 6.10 turned on -Wmissing-prototypes.
+
+Class: mainline-replaces-API (compiler policy tightened on a genuine
+missing-include bug).
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_dp_vp.c b/hal/dp_ops/edma_dp/edma_v2/edma_dp_vp.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_dp_vp.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_dp_vp.c
+@@ -18,6 +18,7 @@
+ #include "edma_regs.h"
+ #include "edma_debug.h"
+ #include "edma.h"
++#include "edma_dp_vp.h"
+ 
+ /*
+  * edma_dp_vp_xmit()

@@ -1,0 +1,22 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: declare qcom_phy_pcs_modify() prototype
+
+Linux 6.12 builds kernel code with -Wmissing-prototypes (enabled
+upstream in v6.10), and OpenWrt's module build treats warnings as
+errors, so the global function qcom_phy_pcs_modify() defined in
+qcom_phy_lib.c must have a declaration visible in its own translation
+unit.  qcom_phy_pcs_modify_mmd() is already declared in qcom_phy_lib.h;
+add the missing sibling next to it.
+---
+--- a/linux_std/qcom_phy_lib.h	2026-10-21 04:46:14.861950508 +0000
++++ b/linux_std/qcom_phy_lib.h	2026-10-23 23:14:04.030248622 +0000
+@@ -131,6 +131,9 @@
+ int qcom_phy_pcs_write_mmd(struct phy_device *phydev, int addr_offset,
+ 	int devad, u32 regnum, u16 val);
+ 
++int qcom_phy_pcs_modify(struct phy_device *phydev, int addr_offset,
++	u32 regnum, u16 mask, u16 set);
++
+ int qcom_phy_pcs_modify_mmd(struct phy_device *phydev, int addr_offset,
+ 	int devad, u32 regnum, u16 mask, u16 set);
+ 

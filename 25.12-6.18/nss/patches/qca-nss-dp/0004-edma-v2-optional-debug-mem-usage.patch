@@ -1,0 +1,76 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] edma_v2: make the CONFIG_DEBUG_MEM_USAGE include optional
+
+edma_v2/edma_dp.c:17:10: fatal error: linux/debug_mem_usage.h: No such file or directory
+
+edma_dp.c, edma_rx.c and edma_tx.c include the QSDK kernel header
+<linux/debug_mem_usage.h>, which only exists in the vendor tree.  Its
+entire body is gated on CONFIG_DEBUG_MEM_USAGE: when that option is off
+it contributes just the two no-op tracer macros mem_debug_update_skb()
+and mem_debug_update_skb_list(), and the option itself depends on
+vendor-only __wrap_* allocator plumbing that mainline does not have.
+
+Guard the include on CONFIG_DEBUG_MEM_USAGE (which is never set in this
+kernel) and provide the two no-op macros from nss_dp_dev.h, which all
+three files include first.  Class: must-shim (vendor kernel debug
+infrastructure; absent from mainline and not part of the data path).
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_dp.c b/hal/dp_ops/edma_dp/edma_v2/edma_dp.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_dp.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_dp.c
+@@ -14,7 +14,9 @@
+ #include "edma_debug.h"
+ #include "nss_dp_api_if.h"
+ #include "nss_dp_dev.h"
++#ifdef CONFIG_DEBUG_MEM_USAGE
+ #include <linux/debug_mem_usage.h>
++#endif
+ 
+ #if defined(NSS_DP_VP_SUPPORT)
+ #include "edma_dp_vp.h"
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_rx.c b/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_rx.c
+@@ -21,7 +21,9 @@
+ #include "edma_cfg_rx.h"
+ #include "nss_dp_dev.h"
+ #include "syn_dev.h"
++#ifdef CONFIG_DEBUG_MEM_USAGE
+ #include <linux/debug_mem_usage.h>
++#endif
+ 
+ extern nss_dp_vp_rx_cb_t nss_dp_vp_rx_reg_cb;
+ extern struct nss_dp_vp_ctx g_vp_ctx;
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_tx.c b/hal/dp_ops/edma_dp/edma_v2/edma_tx.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_tx.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_tx.c
+@@ -18,7 +18,9 @@
+ #include "edma.h"
+ #include <ppe_drv_sc.h>
+ #include "syn_dev.h"
++#ifdef CONFIG_DEBUG_MEM_USAGE
+ #include <linux/debug_mem_usage.h>
++#endif
+ 
+ #if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
+ extern int syn_ptp_get_tx_hwtstamp_by_id(struct syn_hal_dev *shd,
+diff -ruN a/include/nss_dp_dev.h b/include/nss_dp_dev.h
+--- a/include/nss_dp_dev.h
++++ b/include/nss_dp_dev.h
+@@ -35,6 +35,17 @@
+ 
+ #include "nss_dp_api_if.h"
+ #include "nss_dp_hal_if.h"
++
++/*
++ * QSDK's CONFIG_DEBUG_MEM_USAGE mem-tracer hooks live in the vendor
++ * kernel's <linux/debug_mem_usage.h>.  Mainline 6.12 ships neither that
++ * header nor the __wrap_* allocator plumbing, so the hooks are no-ops
++ * here; the option cannot be enabled on this kernel.
++ */
++#ifndef CONFIG_DEBUG_MEM_USAGE
++#define mem_debug_update_skb(skb)		do { } while (0)
++#define mem_debug_update_skb_list(skb_list)	do { } while (0)
++#endif
+ /*
+  * Memory profile detected from kernel bootargs (mem-profile=<value>).
+  * NSS_DP_MEM_PROFILE_HIGH : 1G  (default / no param)

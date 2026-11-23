@@ -1,0 +1,28 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: avoid fortify false positive on encap free
+
+  ppe_drv_tun_encap_free() recovers the instance with container_of() from
+  its kref and then clears the whole structure.  Under 6.12's
+  FORTIFY_SOURCE the dynamic object size of that recovered pointer is
+  still the 4-byte kref member, so the clear is reported as a field
+  overflow (-Werror=attribute-warning) and the build fails.  The clear
+  covers exactly sizeof(*ptec), so hide the pointer from the optimizer
+  instead of changing the code.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_encap.c b/drv/ppe_drv/tun/ppe_drv_tun_encap.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_encap.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_encap.c
+@@ -556,6 +556,13 @@
+ 		ppe_drv_warn("%p: encap entry delete failed for tunnel index %u", ptec, ptec->tun_idx);
+ 		return;
+ 	}
++	/*
++	 * FORTIFY_SOURCE's dynamic object size tracking keeps the 4-byte
++	 * kref subobject for a pointer recovered with container_of(), so
++	 * clearing the whole instance looks like a field overflow.  Hide the
++	 * recovered pointer from the optimizer; the clear itself is exact.
++	 */
++	OPTIMIZER_HIDE_VAR(ptec);
+ 	memset(ptec, 0, sizeof(*ptec));
+ }
+ 

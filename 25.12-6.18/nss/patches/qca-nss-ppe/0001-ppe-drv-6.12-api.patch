@@ -1,0 +1,284 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: port the PPE core driver to Linux 6.12
+
+qca-nss-ppe's core module (drv/ppe_drv, built with ppe-drv=y)
+compiles with -Werror, so the following 6.12 API changes are fatal:
+
+  ppe_drv.c:3061  platform_driver.remove now returns void (6.11)
+  ppe_drv.c (15x) proc_handler takes const struct ctl_table * (6.10)
+  ppe_drv.c:4161  dsa_slave_dev_check() renamed to dsa_user_dev_check()
+  ppe_drv.c:4406  strlcpy() removed, strscpy() is the replacement
+  ppe_drv.c       -Wmissing-prototypes (6.10): four file-local helpers
+  exception.h     const on a scalar return type is ignored (-Werror)
+
+Classification:
+
+  removed/changed API     platform remove, ctl_table const, strlcpy,
+                          dsa_slave_dev_check
+  mainline equivalent     dsa_user_dev_check(), strscpy()
+  must shim               none; the four helpers get internal linkage
+                          because no caller exists outside ppe_drv.c and
+                          none of them is EXPORT_SYMBOL'd
+
+ppe_drv_l4_checksum_exception_enable() and ppe_drv_mac_lrn_exception_en()
+are also made static: they are only referenced from the local sysctl
+table, and being static they no longer need a prototype.
+
+Only drv/ppe_drv is built by this configuration.  The optional PPE
+submodules (ppe_vp, ppe_qdisc, ppe_tun, ppe_ds, ppe_rule) carry the same
+ctl_table signature and were not compiled or fixed here; their status is
+UNVERIFIED.
+diff -ruN a/drv/ppe_drv/ppe_drv.c b/drv/ppe_drv/ppe_drv.c
+--- a/drv/ppe_drv/ppe_drv.c
++++ b/drv/ppe_drv/ppe_drv.c
+@@ -369,7 +369,7 @@
+  * ppe_drv_sixth_tuple_mode_handler()
+  *	change the sixth mode.
+  */
+-static int ppe_drv_sixth_tuple_mode_handler(struct ctl_table *table, int write,
++static int ppe_drv_sixth_tuple_mode_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret, cur_sixth_tuple_mode;
+@@ -1142,7 +1142,7 @@
+  * ppe_drv_enq_vp_map_to_queue()
+  *	Enqueue VP to queue mapping.
+  */
+-ppe_drv_ret_t ppe_drv_enq_vp_map_to_queue(uint8_t queue_id, int8_t enq_vp, int profile_id)
++static ppe_drv_ret_t ppe_drv_enq_vp_map_to_queue(uint8_t queue_id, int8_t enq_vp, int profile_id)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 	fal_enqueue_cfg_t enqueue_cfg = {0};
+@@ -2066,7 +2066,7 @@
+  * ppe_drv_cpu_port_init()
+  *	Initialize the CPU port.
+  */
+-ppe_drv_ret_t ppe_drv_cpu_port_init(void)
++static ppe_drv_ret_t ppe_drv_cpu_port_init(void)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 	struct ppe_drv_iface *iface;
+@@ -2751,7 +2751,7 @@
+  * ppe_drv_remove()
+  *	remove the ppe driver
+  */
+-static int ppe_drv_remove(struct platform_device *pdev)
++static void ppe_drv_remove(struct platform_device *pdev)
+ {
+ 	struct ppe_drv *p = platform_get_drvdata(pdev);
+ 	int i = 0;
+@@ -2944,8 +2944,6 @@
+ 
+ 	ppe_drv_flow_dump_exit();
+ 	ppe_drv_if_map_exit();
+-
+-	return 0;
+ }
+ 
+ /*
+@@ -3139,7 +3137,7 @@
+  * ppe_drv_if_bm_to_offload_handler()
+  *	API to configure the interface bitmask where the offload is enabled
+  */
+-static int ppe_drv_if_bm_to_offload_handler(struct ctl_table *table, int write,
++static int ppe_drv_if_bm_to_offload_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -3173,7 +3171,7 @@
+  * ppe_drv_disable_port_mtu_check_handler()
+  * 	Set disable port mtu config
+  */
+-static int ppe_drv_disable_port_mtu_check_handler(struct ctl_table *table,
++static int ppe_drv_disable_port_mtu_check_handler(const struct ctl_table *table,
+ 						int write, void __user *buffer,
+ 						size_t *lenp, loff_t *ppos)
+ {
+@@ -3196,7 +3194,7 @@
+  * ppe_drv_l4_checksum_exception_enable()
+  *	API to enable/disable the exception for l4 checksum.
+  */
+-int ppe_drv_l4_checksum_exception_enable(struct ctl_table *table, int write,
++static int ppe_drv_l4_checksum_exception_enable(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -3233,7 +3231,7 @@
+  * ppe_drv_mac_lrn_exception_en()
+  *	API to enable/disable the exception for MAC address learn exception.
+  */
+-int ppe_drv_mac_lrn_exception_en(struct ctl_table *table, int write,
++static int ppe_drv_mac_lrn_exception_en(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -3253,7 +3251,7 @@
+  * ppe_drv_loopback_port_feature_write_handler()
+  *	sysctl handler for loopback port write operation.
+  */
+-static int ppe_drv_loopback_port_feature_write_handler(struct ctl_table *table, int write,
++static int ppe_drv_loopback_port_feature_write_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+@@ -3308,7 +3306,7 @@
+  * ppe_drv_wlan_host_assist_qdisc_en_handler()
+  *	Handler for wlan_host_assist_qdisc_en sysctl
+  */
+-static int ppe_drv_wlan_host_assist_qdisc_en_handler(struct ctl_table *table, int write,
++static int ppe_drv_wlan_host_assist_qdisc_en_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -3348,7 +3346,7 @@
+  * ppe_drv_unknown_dst_rfs_enable_handler()
+  *	Handler for unknown_dst_rfs_enable sysctl
+  */
+-static int ppe_drv_unknown_dst_rfs_enable_handler(struct ctl_table *table, int write,
++static int ppe_drv_unknown_dst_rfs_enable_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+@@ -3382,7 +3380,7 @@
+  * ppe_drv_dot1p_dest_vp_en_handler()
+  *	API to configure the default gemport dest_vp in Dot1p mapper table.
+  */
+-static int ppe_drv_dot1p_dest_vp_en_handler(struct ctl_table *table, int write,
++static int ppe_drv_dot1p_dest_vp_en_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -3424,7 +3422,7 @@
+  *		- Clears BIT(1) and BIT(2) to disable IPsec AH and ESP flow keys
+  *		- Writes the updated configuration back to hardware
+  */
+-static int ppe_drv_ipsec_pass_through_en_handler(struct ctl_table *table, int write,
++static int ppe_drv_ipsec_pass_through_en_handler(const struct ctl_table *table, int write,
+ 		void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	int ret;
+@@ -3495,7 +3493,7 @@
+  * ppe_drv_eth2eth_offload_if_bitmap_handler()
+  * 	Set eth to eth offload with if bitmap config
+  */
+-static int ppe_drv_eth2eth_offload_if_bitmap_handler(struct ctl_table *table,
++static int ppe_drv_eth2eth_offload_if_bitmap_handler(const struct ctl_table *table,
+ 						int write, void __user *buffer,
+ 						size_t *lenp, loff_t *ppos)
+ {
+@@ -3518,7 +3516,7 @@
+  * ppe_drv_static_dbg_level_handler()
+  *	Set static debug level for ppe-driver.
+  */
+-static int ppe_drv_static_dbg_level_handler(struct ctl_table *table,
++static int ppe_drv_static_dbg_level_handler(const struct ctl_table *table,
+ 					int write, void __user *buffer,
+ 					size_t *lenp, loff_t *ppos)
+ {
+@@ -3564,7 +3562,7 @@
+  * ppe_drv_pkt_padding_handler
+  * 	sysctl to enable/disable stripping of packet padding
+  */
+-static int ppe_drv_pkt_padding_handler(struct ctl_table *table,  int write, void __user *buffer, size_t *lenp, loff_t *ppos)
++static int ppe_drv_pkt_padding_handler(const struct ctl_table *table,  int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+ 	fal_pktedit_padding_t padding = { 0 };
+ 	char *start_ch_ptr = NULL;
+@@ -3657,7 +3655,7 @@
+  * ppe_drv_upstream_dev_handler()
+  *      Set upstream device.
+  */
+-static int ppe_drv_upstream_dev_handler(struct ctl_table *table,
++static int ppe_drv_upstream_dev_handler(const struct ctl_table *table,
+ 		int write, void __user *buffer,
+ 		size_t *lenp, loff_t *ppos)
+ {
+@@ -4007,7 +4005,7 @@
+  * ppe_drv_src2uni_handler()
+  *      Set Source Profile to UNI port mapping.
+  */
+-static int ppe_drv_src2uni_handler(struct ctl_table *table,
++static int ppe_drv_src2uni_handler(const struct ctl_table *table,
+ 		int write, void __user *buffer,
+ 		size_t *lenp, loff_t *ppos)
+ {
+@@ -4158,7 +4156,7 @@
+ 						continue;
+ 
+ 					if (!((pp_local->type == PPE_DRV_PORT_PHYSICAL) ||
+-					      ((pp_local->type == PPE_DRV_PORT_VIRTUAL) && dsa_slave_dev_check(pp_local->dev))))
++					      ((pp_local->type == PPE_DRV_PORT_VIRTUAL) && dsa_user_dev_check(pp_local->dev))))
+ 						continue;
+ 
+ 					q_dst.src_profile = src_profile;
+@@ -4231,7 +4229,7 @@
+ 			continue;
+ 
+ 		if (!((pp_local->type == PPE_DRV_PORT_PHYSICAL) ||
+-		      ((pp_local->type == PPE_DRV_PORT_VIRTUAL) && dsa_slave_dev_check(pp_local->dev))))
++		      ((pp_local->type == PPE_DRV_PORT_VIRTUAL) && dsa_user_dev_check(pp_local->dev))))
+ 			continue;
+ 
+ 		q_dst.src_profile = src_profile;
+@@ -4403,8 +4401,8 @@
+ 	}
+ 
+ 	INIT_LIST_HEAD(&map_entry->list);
+-	strlcpy(map_entry->ingress_name, ingress_dev->name, IFNAMSIZ);
+-	strlcpy(map_entry->egress_name, egress_dev->name, IFNAMSIZ);
++	strscpy(map_entry->ingress_name, ingress_dev->name, IFNAMSIZ);
++	strscpy(map_entry->egress_name, egress_dev->name, IFNAMSIZ);
+ 
+ 	ret = ppe_drv_ddr_buffer_resolve_dev(p, &ingress_dev,
+ 			map_entry->ingress_vlan_id, &map_entry->ingress_vlan_cnt,
+@@ -4548,7 +4546,7 @@
+  * 	echo 'flush' : Remove all the entries from the map.
+  * 	echo 'flush <ingress_dev> <egress_dev>' : Removes one specific pair
+  */
+-static int ppe_drv_lpbk_buffer_map_handler(struct ctl_table *table,
++static int ppe_drv_lpbk_buffer_map_handler(const struct ctl_table *table,
+ 		int write, void __user *buffer,
+ 		size_t *lenp, loff_t *ppos)
+ {
+@@ -4713,7 +4711,7 @@
+  * 	echo 1 > /proc/sys/ppe/ppe_drv/ddr_buffer_auto_en (enable)
+  * 	echo 0 > /proc/sys/ppe/ppe_drv/ddr_buffer_auto_en (disable)
+  */
+-static int ppe_drv_ddr_buffer_auto_en_handler(struct ctl_table *table,
++static int ppe_drv_ddr_buffer_auto_en_handler(const struct ctl_table *table,
+ 		int write, void __user *buffer,
+ 		size_t *lenp, loff_t *ppos)
+ {
+diff -ruN a/drv/ppe_drv/ppe_drv_exception.c b/drv/ppe_drv/ppe_drv_exception.c
+--- a/drv/ppe_drv/ppe_drv_exception.c
++++ b/drv/ppe_drv/ppe_drv_exception.c
+@@ -369,7 +369,7 @@
+  * ppe_drv_exception_max()
+  *	Returns number of exception enabled in hardware.
+  */
+-const uint8_t ppe_drv_exception_max()
++uint8_t ppe_drv_exception_max()
+ {
+ 	return sizeof(ppe_drv_exception_list) / sizeof(struct ppe_drv_exception);
+ }
+@@ -378,7 +378,7 @@
+  * ppe_drv_exception_tcpflag_max()
+  *	Returns number of tcp flag exception enabled in hardware.
+  */
+-const uint8_t ppe_drv_exception_tcpflag_max()
++uint8_t ppe_drv_exception_tcpflag_max()
+ {
+ 	return sizeof(ppe_drv_exception_tcpflag_list) / sizeof(struct ppe_drv_exception_tcpflag);
+ }
+diff -ruN a/drv/ppe_drv/ppe_drv_exception.h b/drv/ppe_drv/ppe_drv_exception.h
+--- a/drv/ppe_drv/ppe_drv_exception.h
++++ b/drv/ppe_drv/ppe_drv_exception.h
+@@ -116,6 +116,6 @@
+ extern struct ppe_drv_exception ppe_drv_exception_list[];
+ 
+ int ppe_drv_exception_l4_checksum_enable(void);
+-const uint8_t ppe_drv_exception_max(void);
+-const uint8_t ppe_drv_exception_tcpflag_max(void);
++uint8_t ppe_drv_exception_max(void);
++uint8_t ppe_drv_exception_tcpflag_max(void);
+ void ppe_drv_exception_init(void);

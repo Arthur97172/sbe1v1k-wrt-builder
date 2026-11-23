@@ -1,0 +1,75 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: vlan DSA conduit rename, vmalloc header, static helpers
+
+  dsa_port_to_master()   removed in mainline; the CPU port's "master" is
+                         now called "conduit" and dsa_port_to_conduit()
+                         is the 1:1 replacement (same LAG handling).
+  vzalloc()/vfree()      implicit without <linux/vmalloc.h>; include it.
+  two vp rule helpers    used only inside ppe_drv_vlan.c and not
+                         exported -> static, for -Wmissing-prototypes.
+
+diff -ruN a/drv/ppe_drv/ppe_drv_vlan.c b/drv/ppe_drv/ppe_drv_vlan.c
+--- a/drv/ppe_drv/ppe_drv_vlan.c
++++ b/drv/ppe_drv/ppe_drv_vlan.c
+@@ -5,6 +5,7 @@
+ 
+ #include <linux/etherdevice.h>
+ #include <linux/if_vlan.h>
++#include <linux/vmalloc.h>
+ #ifdef NSS_VLAN_BASED_DSA_SUPPORT
+ #include <net/dsa.h>
+ #include <linux/dsa/8021q.h>
+@@ -201,7 +202,7 @@
+  * ppe_drv_vlan_ingress_rule_action_set_vp()
+  *	Set xlt_rule and xlt_action structure for ingress.
+  */
+-void ppe_drv_vlan_ingress_rule_action_set_vp(fal_vlan_trans_adv_rule_t *xlt_rule,
++static void ppe_drv_vlan_ingress_rule_action_set_vp(fal_vlan_trans_adv_rule_t *xlt_rule,
+ 					fal_vlan_trans_adv_action_t *xlt_action, struct ppe_drv_vlan_xlate_info *info)
+ {
+ 	/*
+@@ -237,7 +238,7 @@
+  * ppe_drv_vlan_egress_rule_action_set_vp()
+  *	Set xlt_rule and xlt_action structure for egress.
+  */
+-void ppe_drv_vlan_egress_rule_action_set_vp(fal_vlan_trans_adv_rule_t *xlt_rule,
++static void ppe_drv_vlan_egress_rule_action_set_vp(fal_vlan_trans_adv_rule_t *xlt_rule,
+ 					fal_vlan_trans_adv_action_t *xlt_action, struct ppe_drv_vlan_xlate_info *info)
+ {
+ 	/*
+@@ -302,7 +303,7 @@
+ 		 */
+ 		dp = dsa_port_from_netdev(iface->dev);
+ 		if (dp) {
+-			base_dev = dsa_port_to_master(dp);
++			base_dev = dsa_port_to_conduit(dp);
+ 		}
+ 	} else if (base_dev && dsa_user_dev_check(base_dev)) {
+ 		/*
+@@ -314,7 +315,7 @@
+ #ifndef NSS_PPE_DSA_QINQ_SUPPORT
+ 		dp = dsa_port_from_netdev(base_dev);
+ 		if (dp) {
+-			base_dev = dsa_port_to_master(dp);
++			base_dev = dsa_port_to_conduit(dp);
+ 		}
+ #endif
+ 	}
+@@ -432,7 +433,7 @@
+ 		 */
+ 		dp = dsa_port_from_netdev(iface->dev);
+ 		if (dp) {
+-			base_dev = dsa_port_to_master(dp);
++			base_dev = dsa_port_to_conduit(dp);
+ 		}
+ 	} else if (base_dev && dsa_user_dev_check(base_dev)) {
+ 		/*
+@@ -444,7 +445,7 @@
+ #ifndef NSS_PPE_DSA_QINQ_SUPPORT
+ 		dp = dsa_port_from_netdev(base_dev);
+ 		if (dp) {
+-			base_dev = dsa_port_to_master(dp);
++			base_dev = dsa_port_to_conduit(dp);
+ 		}
+ #endif
+ 	}

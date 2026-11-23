@@ -1,0 +1,30 @@
+From: sbe1v1k 25.12-6.12 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: replace strlcpy() with strscpy()
+
+strlcpy() was removed from the kernel in v6.8 (commit d26270061ae6
+"string: Remove strlcpy()"); strscpy() is the documented replacement.
+All three call sites ignore the return value, so the different return
+semantics (-E2BIG vs. source length) are irrelevant here.
+---
+--- a/linux_std/clock/qca8k_clk.c	2026-10-21 04:46:14.860238201 +0000
++++ b/linux_std/clock/qca8k_clk.c	2026-10-23 23:15:59.840702860 +0000
+@@ -876,16 +876,16 @@
+ 	char clk_id[64] = {0};
+ 	bool bypass_en = false;
+ 
+-	strlcpy(clk_id, clock_id, sizeof(clk_id));
++	strscpy(clk_id, clock_id, sizeof(clk_id));
+ 
+ 	qca8k_port5_uniphy0_clk_src_get(mdiodev, &bypass_en);
+ 	if (bypass_en == true) {
+ 		if (strncasecmp(clock_id, MHT_MAC5_TX_UNIPHY0_CLK,
+ 					strlen(MHT_MAC5_TX_UNIPHY0_CLK)) == 0)
+-			strlcpy(clk_id, MHT_MAC4_RX_CLK, sizeof(clk_id));
++			strscpy(clk_id, MHT_MAC4_RX_CLK, sizeof(clk_id));
+ 		else if (strncasecmp(clock_id, MHT_MAC5_RX_UNIPHY0_CLK,
+ 					strlen(MHT_MAC5_RX_UNIPHY0_CLK)) == 0)
+-			strlcpy(clk_id, MHT_MAC4_TX_CLK, sizeof(clk_id));
++			strscpy(clk_id, MHT_MAC4_TX_CLK, sizeof(clk_id));
+ 	}
+ 
+ 	clk = qca8k_clk_find(clk_id);

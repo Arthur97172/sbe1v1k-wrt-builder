@@ -1,0 +1,39 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: tun v4 includes its own header
+
+  ppe_drv_tun_v4.c did not include ppe_drv_tun_v4.h, although that header
+  declares the functions this file exports; mainline 6.12 enables
+  -Wmissing-prototypes, so include it (same fix as the pppoe session
+  file).  The two remaining helpers, l2tp_tunnel() and gre_tunnel(), are
+  used only by allow_tunnel_create() below them -> static.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_v4.c b/drv/ppe_drv/tun/ppe_drv_tun_v4.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_v4.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_v4.c
+@@ -20,6 +20,8 @@
+ #include <fal/fal_tunnel.h>
+ #include <fal/fal_port_ctrl.h>
+ #include "ppe_drv_tun.h"
++/* Own exported API: gives the exported functions a visible prototype. */
++#include "ppe_drv_tun_v4.h"
+ #include <net/vxlan.h>
+ 
+ /*
+@@ -198,7 +200,7 @@
+  * ppe_drv_v4_l2tp_tunnel()
+  *	Check if create request for l2tp tunnel.
+  */
+-bool ppe_drv_v4_l2tp_tunnel(struct ppe_drv_tun *ptun, int8_t protocol, uint32_t flow_ident, uint32_t return_ident)
++static bool ppe_drv_v4_l2tp_tunnel(struct ppe_drv_tun *ptun, int8_t protocol, uint32_t flow_ident, uint32_t return_ident)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 
+@@ -219,7 +221,7 @@
+  * ppe_drv_v4_gre_tunnel()
+  *	Check if create request for gretap tunnel.
+  */
+-bool ppe_drv_v4_gre_tunnel(struct ppe_drv_tun *ptun, uint8_t protocol)
++static bool ppe_drv_v4_gre_tunnel(struct ppe_drv_tun *ptun, uint8_t protocol)
+ {
+ 	if (((ptun->th.type == PPE_DRV_TUN_CMN_CTX_TYPE_GRETAP) || (ptun->th.type == PPE_DRV_TUN_CMN_CTX_TYPE_GRETUN)) &&
+ 		(protocol == IPPROTO_GRE)) {

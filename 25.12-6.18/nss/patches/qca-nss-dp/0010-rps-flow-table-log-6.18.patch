@@ -1,0 +1,34 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-dp: index the RPS device flow table with hash_32 for 6.18
+
+6.18 replaced the rps_dev_flow_table mask member with a u8 log (the table
+now holds 1 << log entries and the core picks a slot with
+hash_32(hash, log), see rfs_slot() in net/core/dev.c). nss_dp_main.c
+still reads flow_table->mask:
+
+  nss_dp_main.c:697:54: error: 'struct rps_dev_flow_table' has no member named 'mask'
+
+Use the same hash_32() the core uses so the steering check keeps looking
+at the slot the kernel will actually use. struct rps_sock_flow_table
+still carries its mask, so the sock table access is unchanged.
+
+Classification: portability (kernel API, same slot selection as core).
+--- a/nss_dp_main.c
++++ b/nss_dp_main.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/kernel.h>
++#include <linux/hash.h>
+ #include <linux/module.h>
+ #include <linux/version.h>
+ #include <linux/of.h>
+@@ -694,7 +695,7 @@
+ 	}
+ 
+ 	hash = skb_get_hash(skb);
+-	rxflow = &flow_table->flows[hash & flow_table->mask];
++	rxflow = &flow_table->flows[hash_32(hash, flow_table->log)];
+ 	rxcpu = (uint32_t)rxflow->cpu;
+ 
+ 	sock_flow_table = rcu_dereference(net_hotdata.rps_sock_flow_table);

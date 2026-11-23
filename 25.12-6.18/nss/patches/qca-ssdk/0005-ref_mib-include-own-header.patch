@@ -1,0 +1,74 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ref_mib: include ref_mib.h, declare mib_task, make helpers static
+
+Same class as the ref_misc/ref_tunnel fixes: Linux 6.10 turned on
+-Wmissing-prototypes and qca-ssdk builds with -Werror, but ref_mib.c
+never includes the header that declares the swconfig ops it defines.
+
+ref_mib.h declares the three ops but not qca_ar8327_sw_mib_task(), which
+is defined unconditionally in ref_mib.c and called from ssdk_init.c
+(which carries its own extern); add the declaration to the header so the
+definition has a visible prototype.
+
+The three _qca_ar8327_sw_capture_port_* helpers have no users outside
+ref_mib.c, so give them internal linkage instead of header entries.
+
+src/ref/ref_mib.c:41:1: error: no previous prototype for
+  '_qca_ar8327_sw_capture_port_counter' [-Werror=missing-prototypes]
+src/ref/ref_mib.c:53:1: error: no previous prototype for
+  'qca_ar8327_sw_set_reset_mibs' [-Werror=missing-prototypes]
+src/ref/ref_mib.c:77:1: error: no previous prototype for
+  'qca_ar8327_sw_set_port_reset_mib' [-Werror=missing-prototypes]
+src/ref/ref_mib.c:269:1: error: no previous prototype for
+  'qca_ar8327_sw_get_port_mib' [-Werror=missing-prototypes]
+src/ref/ref_mib.c:469:1: error: no previous prototype for
+  '_qca_ar8327_sw_capture_port_tx_counter' [-Werror=missing-prototypes]
+src/ref/ref_mib.c:480:1: error: no previous prototype for
+  '_qca_ar8327_sw_capture_port_rx_counter' [-Werror=missing-prototypes]
+src/ref/ref_mib.c:490:1: error: no previous prototype for
+  'qca_ar8327_sw_mib_task' [-Werror=missing-prototypes]
+
+--- a/src/ref/ref_mib.c
++++ b/src/ref/ref_mib.c
+@@ -35,9 +35,10 @@
+ #include <linux/netdevice.h>
+ #include "ssdk_plat.h"
+ #include "ref_vlan.h"
++#include "ref_mib.h"
+
+ #if defined(IN_SWCONFIG)
+-int
++static int
+ _qca_ar8327_sw_capture_port_counter(struct switch_dev *dev, int port)
+ {
+     fal_mib_info_t  mib_Info;
+@@ -465,7 +466,7 @@
+ }
+ #endif
+
+-int
++static int
+ _qca_ar8327_sw_capture_port_tx_counter(a_uint32_t dev_id, int port)
+ {
+     fal_mib_info_t  mib_Info;
+@@ -476,7 +477,7 @@
+     return 0;
+ }
+
+-int
++static int
+ _qca_ar8327_sw_capture_port_rx_counter(a_uint32_t dev_id, int port)
+ {
+     fal_mib_info_t  mib_Info;
+--- a/include/ref/ref_mib.h
++++ b/include/ref/ref_mib.h
+@@ -43,6 +43,9 @@
+ 		       						struct switch_val *val);
+
+ #endif
++
++void
++qca_ar8327_sw_mib_task(struct qca_phy_priv *priv);
+ #ifdef __cplusplus
+ }
+ #endif                          /* __cplusplus */

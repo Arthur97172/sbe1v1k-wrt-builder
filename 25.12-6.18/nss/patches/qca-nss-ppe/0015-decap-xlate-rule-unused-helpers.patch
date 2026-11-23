@@ -1,0 +1,34 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: mark unused decap xlate rule helpers
+
+  ppe_drv_tun_decap_xlate_rule_dump() and _ref() have no caller in this
+  build profile (the MAP-T client is not built) and are not exported.
+  Static __maybe_unused preserves the vendor MAP-T path without tripping
+  -Wmissing-prototypes or -Wunused-function.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_decap_xlate_rule.c b/drv/ppe_drv/tun/ppe_drv_tun_decap_xlate_rule.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_decap_xlate_rule.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_decap_xlate_rule.c
+@@ -21,8 +21,12 @@
+ /*
+  * ppe_drv_tun_decap_xlate_rule_dump
+  *	Dump DRV_TUN_MAP_DCAP instance
++ *
++ * Neither helper below has a caller in this build profile (the MAP-T
++ * client is not built) and neither is exported.  Kept for the vendor
++ * MAP-T path, marked unused rather than deleted.
+  */
+-void ppe_drv_tun_decap_xlate_rule_dump(struct ppe_drv_tun_decap_xlate_rule *ptdxrule)
++static void __maybe_unused ppe_drv_tun_decap_xlate_rule_dump(struct ppe_drv_tun_decap_xlate_rule *ptdxrule)
+ {
+ 	sw_error_t err;
+ 	fal_mapt_decap_edit_rule_entry_t m_decap_edit_rule = {0};
+@@ -104,7 +108,7 @@
+  * ppe_drv_tun_decap_xlate_rule_ref
+  *	Take reference of TL MAP LPM action interface instance
+  */
+-void ppe_drv_tun_decap_xlate_rule_ref(struct ppe_drv_tun_decap_xlate_rule *ptdxrule)
++static __maybe_unused void ppe_drv_tun_decap_xlate_rule_ref(struct ppe_drv_tun_decap_xlate_rule *ptdxrule)
+ {
+ 	kref_get(&ptdxrule->ref);
+ 

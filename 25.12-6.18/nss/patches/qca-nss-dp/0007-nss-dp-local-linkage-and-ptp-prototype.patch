@@ -1,0 +1,227 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-dp: give file-local helpers internal linkage, declare
+ syn_ptp_get_tx_hwtstamp_by_id
+
+Linux 6.10 turned on -Wmissing-prototypes and qca-nss-dp builds with
+-Werror, so every global definition without a visible prototype fails.
+The ipq95xx build only includes the edma_v2 HAL, so the affected files
+are the ones below.
+
+Internal linkage (no caller outside the defining file; the edma_v3
+ppeds files carry their own static copies of the same names, so there
+is no cross-object dependency):
+
+  nss_dp_netstandby.c  3 helpers (nss_dp_get_and_register_cb() is
+                       EXPORT_SYMBOL'd, and EXPORT_SYMBOL expands to a
+                       non-static declaration, so it keeps external
+                       linkage and gets a local prototype instead)
+  edma_v2/edma_ppeds.c 13 ppeds ops used only by the local ops table
+  hal/gmac_ops/qcom/qcom_if.c  qcom_get_strset_count, qcom_get_strings
+                       (referenced only from qcom_nss_gmac_hal_ops)
+
+edma_tx.c calls syn_ptp_get_tx_hwtstamp_by_id(), which is defined in
+syn_ptp.c with no header declaration; add it to syn_ptp.h next to the
+other exported PTP entry points.  edma_tx.c keeps its local extern,
+which is now redundant but harmless.
+
+  qcom_if.c:233/252, nss_dp_netstandby.c:38/64/105/260,
+  edma_ppeds.c:852/900/1132/1165/1189/1210/1231/1247/1289/1392/1510/1567/1692,
+  syn_ptp.c:2160: error: no previous prototype [-Werror=missing-prototypes]
+
+---
+diff -ruN a/hal/dp_ops/edma_dp/edma_v2/edma_ppeds.c b/hal/dp_ops/edma_dp/edma_v2/edma_ppeds.c
+--- a/hal/dp_ops/edma_dp/edma_v2/edma_ppeds.c
++++ b/hal/dp_ops/edma_dp/edma_v2/edma_ppeds.c
+@@ -849,7 +849,7 @@
+  * edma_ppeds_rx_handle_irq
+  *	Disable edma interrupt and enable wlan interrupt
+  */
+-irqreturn_t edma_ppeds_rx_handle_irq(int irq, void *ctx)
++static irqreturn_t edma_ppeds_rx_handle_irq(int irq, void *ctx)
+ {
+ 	struct edma_rxdesc_ring *rxdesc_ring = (struct edma_rxdesc_ring *)ctx;
+ 	struct edma_ppeds *ppeds_node =
+@@ -897,7 +897,7 @@
+  * edma_ppeds_inst_register()
+  *	PPE-DS EDMA instance registration API
+  */
+-bool edma_ppeds_inst_register(nss_dp_ppeds_handle_t *ppeds_handle)
++static bool edma_ppeds_inst_register(nss_dp_ppeds_handle_t *ppeds_handle)
+ {
+ 	int ret;
+ 	uint32_t alloc_size;
+@@ -1129,7 +1129,7 @@
+  * edma_ppeds_inst_refill()
+  *	API to fill PPE-DS EDMA RxFill ring
+  */
+-void edma_ppeds_inst_refill(nss_dp_ppeds_handle_t *ppeds_handle, int count)
++static void edma_ppeds_inst_refill(nss_dp_ppeds_handle_t *ppeds_handle, int count)
+ {
+ 	uint32_t num_avail;
+ 	uint32_t headroom = EDMA_RX_SKB_HEADROOM + NET_IP_ALIGN;
+@@ -1162,7 +1162,7 @@
+  * edma_ppeds_get_ppe_queues()
+  *	Get the associated PPE queues with the given instance
+  */
+-bool edma_ppeds_get_ppe_queues(nss_dp_ppeds_handle_t *ppeds_handle, uint32_t *ppe_queue_start)
++static bool edma_ppeds_get_ppe_queues(nss_dp_ppeds_handle_t *ppeds_handle, uint32_t *ppe_queue_start)
+ {
+ 	struct edma_ppeds_drv *drv = &edma_gbl_ctx->ppeds_drv;
+ 	struct edma_ppeds *ppeds_node = container_of(ppeds_handle, struct edma_ppeds, ppeds_handle);
+@@ -1186,7 +1186,7 @@
+  * edma_ppeds_set_tx_prod_idx()
+  *	Set EDMA RX producer idx
+  */
+-void edma_ppeds_set_tx_prod_idx(nss_dp_ppeds_handle_t *ppeds_handle, uint16_t tx_prod_idx)
++static void edma_ppeds_set_tx_prod_idx(nss_dp_ppeds_handle_t *ppeds_handle, uint16_t tx_prod_idx)
+ {
+ 	struct edma_ppeds *ppeds_node = container_of(ppeds_handle, struct edma_ppeds, ppeds_handle);
+ 	uint32_t cons_idx;
+@@ -1207,7 +1207,7 @@
+  * edma_ppeds_set_rx_cons_idx()
+  *	Set EDMA RX consumer idx
+  */
+-void edma_ppeds_set_rx_cons_idx(nss_dp_ppeds_handle_t *ppeds_handle, uint16_t rx_cons_idx)
++static void edma_ppeds_set_rx_cons_idx(nss_dp_ppeds_handle_t *ppeds_handle, uint16_t rx_cons_idx)
+ {
+ 	struct edma_ppeds *ppeds_node = container_of(ppeds_handle, struct edma_ppeds, ppeds_handle);
+ 	uint32_t prod_idx;
+@@ -1228,7 +1228,7 @@
+  * edma_ppeds_get_rx_prod_idx()
+  *	Get EDMA RX producer idx
+  */
+-uint16_t edma_ppeds_get_rx_prod_idx(nss_dp_ppeds_handle_t *ppeds_handle)
++static uint16_t edma_ppeds_get_rx_prod_idx(nss_dp_ppeds_handle_t *ppeds_handle)
+ {
+ 	uint32_t data;
+ 	uint16_t prod_idx;
+@@ -1244,7 +1244,7 @@
+  * edma_ppeds_get_tx_cons_idx()
+  *	Get EDMA TX consumer idx
+  */
+-uint16_t edma_ppeds_get_tx_cons_idx(nss_dp_ppeds_handle_t *ppeds_handle)
++static uint16_t edma_ppeds_get_tx_cons_idx(nss_dp_ppeds_handle_t *ppeds_handle)
+ {
+ 	uint32_t data;
+ 	uint16_t cons_idx;
+@@ -1286,7 +1286,7 @@
+  * edma_ppeds_inst_start()
+  *	PPE-DS EDMA instance start API
+  */
+-int edma_ppeds_inst_start(nss_dp_ppeds_handle_t *ppeds_handle, uint8_t intr_enable,
++static int edma_ppeds_inst_start(nss_dp_ppeds_handle_t *ppeds_handle, uint8_t intr_enable,
+ 				struct nss_ppe_ds_ctx_info_handle *info_hdl)
+ {
+ 	uint32_t data;
+@@ -1389,7 +1389,7 @@
+  * edma_ppeds_inst_stop()
+  *	PPE-DS EDMA instance stop API
+  */
+-void edma_ppeds_inst_stop(nss_dp_ppeds_handle_t *ppeds_handle, uint8_t intr_enable,
++static void edma_ppeds_inst_stop(nss_dp_ppeds_handle_t *ppeds_handle, uint8_t intr_enable,
+ 				struct nss_ppe_ds_ctx_info_handle *info_hdl)
+ {
+ 	uint32_t data;
+@@ -1507,7 +1507,7 @@
+  * edma_ppeds_inst_free()
+  *	PPE-DS EDMA instance free API
+  */
+-void edma_ppeds_inst_free(nss_dp_ppeds_handle_t *ppeds_handle)
++static void edma_ppeds_inst_free(nss_dp_ppeds_handle_t *ppeds_handle)
+ {
+ 	struct edma_ppeds_drv *drv = &edma_gbl_ctx->ppeds_drv;
+ 	struct edma_ppeds *ppeds_node = container_of(ppeds_handle, struct edma_ppeds, ppeds_handle);
+@@ -1564,7 +1564,7 @@
+  * edma_ppeds_inst_alloc()
+  *	PPE-DS EDMA instance allocation API
+  */
+-nss_dp_ppeds_handle_t *edma_ppeds_inst_alloc(const struct nss_dp_ppeds_cb *ops, size_t priv_size)
++static nss_dp_ppeds_handle_t *edma_ppeds_inst_alloc(const struct nss_dp_ppeds_cb *ops, size_t priv_size)
+ {
+ 	struct edma_ppeds *ppeds_node;
+ 	struct edma_ppeds_wifi7_cfg *ppeds_node_cfg;
+@@ -1689,7 +1689,7 @@
+  * edma_ppeds_service_status_update()
+  *	Set/Unset EDMA ring usage service and notify NAPI done.
+  */
+-void edma_ppeds_service_status_update(nss_dp_ppeds_handle_t *ppeds_handle, bool enable)
++static void edma_ppeds_service_status_update(nss_dp_ppeds_handle_t *ppeds_handle, bool enable)
+ {
+ 	struct edma_ppeds *ppeds_node = container_of(ppeds_handle, struct edma_ppeds, ppeds_handle);
+ 	if (enable) {
+diff -ruN a/hal/gmac_ops/qcom/qcom_if.c b/hal/gmac_ops/qcom/qcom_if.c
+--- a/hal/gmac_ops/qcom/qcom_if.c
++++ b/hal/gmac_ops/qcom/qcom_if.c
+@@ -230,7 +230,7 @@
+  * qcom_get_strset_count()
+  *	Get string set count for ethtool operations
+  */
+-int32_t qcom_get_strset_count(struct nss_gmac_hal_dev *nghd, int32_t sset)
++static int32_t qcom_get_strset_count(struct nss_gmac_hal_dev *nghd, int32_t sset)
+ {
+ 	struct net_device *netdev = nghd->netdev;
+ 
+@@ -249,7 +249,7 @@
+  * qcom_get_strings()
+  *	Get strings
+  */
+-int32_t qcom_get_strings(struct nss_gmac_hal_dev *nghd, int32_t sset,
++static int32_t qcom_get_strings(struct nss_gmac_hal_dev *nghd, int32_t sset,
+ 						uint8_t *data)
+ {
+ 	struct net_device *netdev = nghd->netdev;
+diff -ruN a/hal/gmac_ops/syn/xgmac/syn_ptp.h b/hal/gmac_ops/syn/xgmac/syn_ptp.h
+--- a/hal/gmac_ops/syn/xgmac/syn_ptp.h
++++ b/hal/gmac_ops/syn/xgmac/syn_ptp.h
+@@ -148,6 +148,8 @@
+ int syn_ptp_init(struct syn_hal_dev *shd, struct platform_device *pdev);
+ void syn_ptp_cleanup(struct syn_hal_dev *shd);
+ int syn_ptp_get_ts_info(struct syn_hal_dev *shd, struct ethtool_ts_info *info);
++int syn_ptp_get_tx_hwtstamp_by_id(struct syn_hal_dev *shd, u16 pkt_id,
++				  struct skb_shared_hwtstamps *shhwtstamps);
+ int syn_ptp_hwtstamp_set(void *hal_ctx, struct ifreq *ifr);
+ int syn_ptp_hwtstamp_get(void *hal_ctx, struct ifreq *ifr);
+ 
+diff -ruN a/nss_dp_netstandby.c b/nss_dp_netstandby.c
+--- a/nss_dp_netstandby.c
++++ b/nss_dp_netstandby.c
+@@ -30,12 +30,20 @@
+ 
+ struct nss_dp_netstandby_gbl_ctx standby_gbl_ctx;
+ 
++/*
++ * nss_dp_get_and_register_cb() is exported to the netstandby module
++ * (see EXPORT_SYMBOL below), so it cannot be static.  Declare it here
++ * so the definition has a visible prototype on kernels with
++ * -Wmissing-prototypes.
++ */
++int nss_dp_get_and_register_cb(struct netstandby_reg_info *info);
++
+ #if defined(NSS_DP_IPQ53XX) || defined(NSS_DP_IPQ54XX)
+ /*
+  * nss_dp_netstandby_is_switch_connected()
+  *	Check if switch is connected
+  */
+-bool nss_dp_netstandby_is_switch_connected(struct nss_dp_netstandby_gbl_ctx *gbl_ctx)
++static bool nss_dp_netstandby_is_switch_connected(struct nss_dp_netstandby_gbl_ctx *gbl_ctx)
+ {
+ 	struct nss_dp_global_ctx *ctx = gbl_ctx->ctx;
+ 	struct nss_dp_dev *dp_priv;
+@@ -61,7 +69,7 @@
+  * nss_dp_netstandby_exit_standby()
+  *	Exit standby API()
+  */
+-int nss_dp_netstandby_exit_standby(void *app_data, struct netstandby_exit_info *exit_info)
++static int nss_dp_netstandby_exit_standby(void *app_data, struct netstandby_exit_info *exit_info)
+ {
+ 	struct nss_dp_netstandby_gbl_ctx *gbl_ctx = (struct nss_dp_netstandby_gbl_ctx *)app_data;
+ 	sw_error_t sw_err;
+@@ -102,7 +110,7 @@
+  * nss_dp_netstandby_enter_standby()
+  *	Enter standby API()
+  */
+-int nss_dp_netstandby_enter_standby(void *app_data, struct netstandby_entry_info *entry_info)
++static int nss_dp_netstandby_enter_standby(void *app_data, struct netstandby_entry_info *entry_info)
+ {
+ 	struct nss_dp_netstandby_gbl_ctx *gbl_ctx = (struct nss_dp_netstandby_gbl_ctx *)app_data;
+ 	struct nss_dp_global_ctx *ctx = gbl_ctx->ctx;

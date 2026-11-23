@@ -1,0 +1,73 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: make flow dump helpers file-local
+
+  All seven are used only inside ppe_drv_flow_dump.c, are not exported and
+  are defined before their first use, so internal linkage is exact.  The
+  header only exposes ppe_drv_flow_dump_init()/exit().
+
+diff -ruN a/drv/ppe_drv/ppe_drv_flow_dump.c b/drv/ppe_drv/ppe_drv_flow_dump.c
+--- a/drv/ppe_drv/ppe_drv_flow_dump.c
++++ b/drv/ppe_drv/ppe_drv_flow_dump.c
+@@ -37,7 +37,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_flow_dump_write_reset(struct ppe_drv_flow_dump_instance *fdi, char *prefix)
++static int ppe_drv_flow_dump_write_reset(struct ppe_drv_flow_dump_instance *fdi, char *prefix)
+ {
+ 	int result;
+ 
+@@ -61,7 +61,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_flow_dump_prefix_add(struct ppe_drv_flow_dump_instance *fdi, char *prefix)
++static int ppe_drv_flow_dump_prefix_add(struct ppe_drv_flow_dump_instance *fdi, char *prefix)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -88,7 +88,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_flow_dump_prefix_index_add(struct ppe_drv_flow_dump_instance *fdi, uint32_t index)
++static int ppe_drv_flow_dump_prefix_index_add(struct ppe_drv_flow_dump_instance *fdi, uint32_t index)
+ {
+ 	int pxsz;
+ 	int pxremain;
+@@ -113,7 +113,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_flow_dump_prefix_remove(struct ppe_drv_flow_dump_instance *fdi)
++static int ppe_drv_flow_dump_prefix_remove(struct ppe_drv_flow_dump_instance *fdi)
+ {
+ 	int pxsz;
+ 
+@@ -131,7 +131,7 @@
+  *
+  * Returns 0 on success
+  */
+-int ppe_drv_flow_dump_write(struct ppe_drv_flow_dump_instance *fdi, char *name, char *fmt, ...)
++static int ppe_drv_flow_dump_write(struct ppe_drv_flow_dump_instance *fdi, char *name, char *fmt, ...)
+ {
+ 	int remain;
+ 	char *ptr;
+@@ -173,7 +173,7 @@
+  * ppe_flow_dump_v6_get()
+  *	Prepare a connection message for ipv6
+  */
+-int ppe_flow_dump_v6_get(struct ppe_drv_flow_dump_instance *fdi, struct list_head *conn_head)
++static int ppe_flow_dump_v6_get(struct ppe_drv_flow_dump_instance *fdi, struct list_head *conn_head)
+ {
+ 	int result;
+ 
+@@ -561,7 +561,7 @@
+  * ppe_flow_dump_v4_get()
+  *	Prepare a connection message for ipv4
+  */
+-int ppe_flow_dump_v4_get(struct ppe_drv_flow_dump_instance *fdi, struct list_head *conn_head)
++static int ppe_flow_dump_v4_get(struct ppe_drv_flow_dump_instance *fdi, struct list_head *conn_head)
+ {
+ 	int result;
+ 

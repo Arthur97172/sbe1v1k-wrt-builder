@@ -1,0 +1,22 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qca81xx: make local_loopback_get() static
+
+Linux 6.10 enabled -Wmissing-prototypes and OpenWrt builds modules with
+-Werror.  qca81xx_phy_local_loopback_get() has no prototype in any header
+and is only used to fill the PHY ops table in the same file, exactly like
+its static sibling qca81xx_phy_local_loopback_set().
+
+nss_ext/qca81xx_phy.c:83:5: error: no previous prototype for
+  'qca81xx_phy_local_loopback_get' [-Werror=missing-prototypes]
+
+--- a/nss_ext/qca81xx_phy.c
++++ b/nss_ext/qca81xx_phy.c
+@@ -80,7 +80,7 @@
+ 	return 0;
+ }
+
+-int qca81xx_phy_local_loopback_get(struct nss_phy_device *nss_phydev,
++static int qca81xx_phy_local_loopback_get(struct nss_phy_device *nss_phydev,
+ 	u32 *enable)
+ {
+ 	int ret;

@@ -1,0 +1,87 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: 导出 br_fdb_delete_by_netdev 供 qca-ssdk 使用
+
+qca-ssdk 的 src/ref/ref_acl.c:246 在 ACL 重定向后调用
+br_fdb_delete_by_netdev() 删除网桥 FDB 表项。这是 QSDK 内核自己加的
+非 static 辅助函数，主线 6.12 没有；厂商实现依赖的 br_port_get_check_rcu()
+主线也没有，无法原样搬移。
+
+本补丁在 net/bridge/br_fdb.c 中新增该函数（持 RTNL 后调用主线现成的
+br_fdb_delete()，vid==0 时它本来就会遍历端口的全部 VLAN），并在
+include/linux/if_bridge.h 增加声明与 !CONFIG_BRIDGE 的 -EINVAL 桩。
+
+分类：必须 shim（厂商内核 ABI），实现走主线等价路径。
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0501-net-bridge-export-br_fdb_delete_by_netdev.patch b/target/linux/qualcommbe/patches-6.18/0501-net-bridge-export-br_fdb_delete_by_netdev.patch
+--- a/target/linux/qualcommbe/patches-6.18/0501-net-bridge-export-br_fdb_delete_by_netdev.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0501-net-bridge-export-br_fdb_delete_by_netdev.patch	2026-11-22 23:48:12.422678996 +0000
+@@ -0,0 +1,70 @@
++net: bridge: export br_fdb_delete_by_netdev for qca-ssdk
++
++QSDK's kernel carries a non-static br_fdb_delete_by_netdev() used by
++qca-ssdk to drop the bridge FDB entry when an ACL rule redirects a flow:
++
++  src/ref/ref_acl.c:246: br_fdb_delete_by_netdev(eth_dev, entry->src_mac.uc, 0);
++
++Mainline 6.12 has no such helper.  The vendor implementation walks the
++port's VLAN list under RCU through br_port_get_check_rcu(), an API that
++mainline does not have either, so carrying it verbatim would need a second
++shim.  This patch instead takes RTNL and calls the mainline deletion path
++br_fdb_delete() with ndm/extack NULL and a throwaway notified flag; that
++function already selects the port (or bridge) from the net_device and, for
++vid == 0, walks every VLAN of the port, which is the behaviour qca-ssdk
++relies on.
++
++The header gains a declaration under CONFIG_BRIDGE and an -EINVAL stub
++for the !CONFIG_BRIDGE case, matching the surrounding helpers.
++
++Classification: must-shim (vendor kernel ABI); implemented through the
++mainline equivalent br_fdb_delete().
++
++diff -ruN a/include/linux/if_bridge.h b/include/linux/if_bridge.h
++--- a/include/linux/if_bridge.h
+++++ b/include/linux/if_bridge.h
++@@ -191,6 +191,8 @@
++ 				    const unsigned char *addr,
++ 				    __u16 vid);
++ void br_fdb_clear_offload(const struct net_device *dev, u16 vid);
+++int br_fdb_delete_by_netdev(struct net_device *dev,
+++			    const unsigned char *addr, u16 vid);
++ bool br_port_flag_is_set(const struct net_device *dev, unsigned long flag);
++ u8 br_port_get_stp_state(const struct net_device *dev);
++ clock_t br_get_ageing_time(const struct net_device *br_dev);
++@@ -207,6 +209,12 @@
++ {
++ }
++ 
+++static inline int br_fdb_delete_by_netdev(struct net_device *dev,
+++					  const unsigned char *addr, u16 vid)
+++{
+++	return -EINVAL;
+++}
+++
++ static inline bool
++ br_port_flag_is_set(const struct net_device *dev, unsigned long flag)
++ {
++--- a/net/bridge/br_fdb.c
+++++ b/net/bridge/br_fdb.c
++@@ -1481,6 +1481,20 @@
++ 	return err;
++ }
++
+++int br_fdb_delete_by_netdev(struct net_device *dev,
+++			    const unsigned char *addr, u16 vid)
+++{
+++	bool notified = false;
+++	int err;
+++
+++	rtnl_lock();
+++	err = br_fdb_delete(NULL, NULL, dev, addr, vid, &notified, NULL);
+++	rtnl_unlock();
+++
+++	return err;
+++}
+++EXPORT_SYMBOL_GPL(br_fdb_delete_by_netdev);
+++
++ int br_fdb_sync_static(struct net_bridge *br, struct net_bridge_port *p)
++ {
++ 	struct net_bridge_fdb_entry *f, *tmp;

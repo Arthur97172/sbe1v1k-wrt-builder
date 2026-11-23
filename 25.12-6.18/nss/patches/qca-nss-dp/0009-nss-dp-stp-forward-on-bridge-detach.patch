@@ -1,0 +1,88 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-dp: restore PPE STP forwarding when a dp port leaves a bridge
+
+When a dp port is taken out of a bridge (live port role switch, 6.12),
+net/bridge/br_if.c del_nbp() first calls br_stp_disable_port(), which
+sends SWITCHDEV_ATTR_ID_PORT_STP_STATE = BR_STATE_DISABLED (deferred)
+and is applied before netdev_upper_dev_unlink(). nss-dp maps that to
+fal_stp_port_state_set(..., FAL_STP_DISABLED), which programs
+CST_STATE = 0 for the PPE port. As a standalone interface the port then
+never receives another STP transition, so PPE ingress filtering ("STG
+ingress filtering drop", drop code 115) silently discards every frame
+received on it: link stays up and the PHY accepts frames, but nothing
+reaches EDMA/the CPU.
+
+Catch NETDEV_CHANGEUPPER on dp netdevs: when a bridge master is
+unlinked, restore BR_STATE_FORWARDING (which also drops the slow
+protocol filter) so the port can receive again as a standalone port.
+
+The netdevice notifier is registered/unregistered together with the
+switchdev notifiers.
+
+Signed-off-by: SBE1V1K build <noreply@example.invalid>
+---
+diff -ruN a/nss_dp_switchdev.c b/nss_dp_switchdev.c
+--- a/nss_dp_switchdev.c
++++ b/nss_dp_switchdev.c
+@@ -548,6 +548,41 @@
+ #endif /* NSS_DP_SW_BR_OPS */
+ 
+ /*
++ * nss_dp_netdev_event()
++ *	Handle netdevice events for NSS data plane ports.
++ */
++static int nss_dp_netdev_event(struct notifier_block *unused,
++			       unsigned long event, void *ptr)
++{
++	struct netdev_notifier_changeupper_info *info;
++	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
++	struct nss_dp_dev *dp_priv;
++
++	if ((event != NETDEV_CHANGEUPPER) || !nss_dp_is_phy_dev(dev))
++		return NOTIFY_DONE;
++
++	info = ptr;
++	if (info->linking || !netif_is_bridge_master(info->upper_dev))
++		return NOTIFY_DONE;
++
++	/*
++	 * The bridge core disables the port's STP state before unlinking it
++	 * (br_stp_disable_port() sends SWITCHDEV_ATTR_ID_PORT_STP_STATE =
++	 * DISABLED, then netdev_upper_dev_unlink()). A standalone port never
++	 * receives another STP transition, so PPE ingress filtering would
++	 * drop every frame received on it. Restore forwarding.
++	 */
++	dp_priv = netdev_priv(dev);
++	nss_dp_stp_state_set(dp_priv, BR_STATE_FORWARDING);
++
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block nss_dp_netdev_notifier = {
++	.notifier_call = nss_dp_netdev_event,
++};
++
++/*
+  * nss_dp_switchdev_cleanup()
+  *      Cleanup switch dev
+  */
+@@ -558,6 +593,7 @@
+         }
+ 
+         unregister_switchdev_blocking_notifier(&nss_dp_switchdev_notifier);
++	unregister_netdevice_notifier(&nss_dp_netdev_notifier);
+ 
+ 	if (nss_dp_sw_ev_nb) {
+ 		unregister_switchdev_notifier(nss_dp_sw_ev_nb);
+@@ -593,6 +629,11 @@
+ 		}
+ 	}
+ 
++	err = register_netdevice_notifier(&nss_dp_netdev_notifier);
++	if (err) {
++		netdev_dbg(dev, "%px:Failed to register netdevice notifier\n", dev);
++	}
++
+ 	switch_init_done = true;
+ }
+ #endif

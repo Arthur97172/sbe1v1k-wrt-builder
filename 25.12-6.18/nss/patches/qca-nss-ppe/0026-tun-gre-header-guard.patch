@@ -1,0 +1,30 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-ppe: fix GRE program parser header guard mismatch
+
+The #ifndef guard spells _PPE_DRV_TUN_PRGM_PRSR__GRE_H_ (two underscores
+before GRE) but #define and the trailing comment use a single one. GCC
+15 enables -Wheader-guard by default and the 6.18 build promotes it to an
+error:
+
+  drv/ppe_drv/tun/ppe_drv_tun_prgm_prsr_gre.h:16: error: header guard '_PPE_DRV_TUN_PRGM_PRSR__GRE_H_' followed by '#define' of a different macro [-Werror=header-guard]
+
+Align #define and the comment with the #ifndef spelling. The guard is
+file-local, so any consistent spelling is fine.
+
+Classification: portability (compiler warning, no behaviour change).
+--- a/drv/ppe_drv/tun/ppe_drv_tun_prgm_prsr_gre.h
++++ b/drv/ppe_drv/tun/ppe_drv_tun_prgm_prsr_gre.h
+@@ -14,11 +14,11 @@
+  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  */
+ #ifndef _PPE_DRV_TUN_PRGM_PRSR__GRE_H_
+-#define _PPE_DRV_TUN_PRGM_PRSR_GRE_H_
++#define _PPE_DRV_TUN_PRGM_PRSR__GRE_H_
+ 
+ /*
+  * GRE tunnel Program Parser configure/deconfigure functions
+  */
+ bool ppe_drv_tun_prgm_prsr_gre_configure(struct ppe_drv_tun_prgm_prsr *program_parser);
+ bool ppe_drv_tun_prgm_prsr_gre_deconfigure(struct ppe_drv_tun_prgm_prsr *program_parser);
+-#endif /* _PPE_DRV_TUN_PRGM_PRSR_GRE_H_ */
++#endif /* _PPE_DRV_TUN_PRGM_PRSR__GRE_H_ */

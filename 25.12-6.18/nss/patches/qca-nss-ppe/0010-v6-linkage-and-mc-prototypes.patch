@@ -1,0 +1,51 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: v6 linkage and multicast prototypes
+
+  Mirror of the v4 change: the three *_conn_fill helpers are file-local,
+  the three multicast entry points stay external and get declarations.
+
+diff -ruN a/drv/ppe_drv/ppe_drv_v6.c b/drv/ppe_drv/ppe_drv_v6.c
+--- a/drv/ppe_drv/ppe_drv_v6.c
++++ b/drv/ppe_drv/ppe_drv_v6.c
+@@ -357,7 +357,7 @@
+  * ppe_drv_v6_rfs_conn_fill()
+  *	Populate single direction flow object rule.
+  */
+-ppe_drv_ret_t ppe_drv_v6_rfs_conn_fill(struct ppe_drv_v6_rule_create *create,  struct ppe_drv_top_if_rule *top_if,
++static ppe_drv_ret_t ppe_drv_v6_rfs_conn_fill(struct ppe_drv_v6_rule_create *create,  struct ppe_drv_top_if_rule *top_if,
+ 				       struct ppe_drv_v6_conn *cn, enum ppe_drv_conn_type flow_type, bool ppe_iface_chk_needed)
+ {
+ 	struct ppe_drv_v6_connection_rule *conn = &create->conn_rule;
+@@ -554,7 +554,7 @@
+  * ppe_drv_v6_priority_conn_fill()
+  *	Populate single direction flow object rule.
+  */
+-ppe_drv_ret_t ppe_drv_v6_priority_conn_fill(struct ppe_drv_v6_rule_create *create, struct ppe_drv_v6_conn *cn,
++static ppe_drv_ret_t ppe_drv_v6_priority_conn_fill(struct ppe_drv_v6_rule_create *create, struct ppe_drv_v6_conn *cn,
+ 				   enum ppe_drv_conn_type flow_type)
+ {
+ 	struct ppe_drv_v6_connection_rule *conn = &create->conn_rule;
+@@ -882,7 +882,7 @@
+  * ppe_drv_v6_policer_conn_fill()
+  *	Populate single direction flow object rule.
+  */
+-ppe_drv_ret_t ppe_drv_v6_policer_conn_fill(struct ppe_drv_v6_rule_create *create, struct ppe_drv_top_if_rule *top_if,
++static ppe_drv_ret_t ppe_drv_v6_policer_conn_fill(struct ppe_drv_v6_rule_create *create, struct ppe_drv_top_if_rule *top_if,
+ 				       struct ppe_drv_v6_conn *cn, enum ppe_drv_conn_type flow_type)
+ {
+ 	struct ppe_drv_v6_connection_rule *conn = &create->conn_rule;
+diff -ruN a/drv/ppe_drv/ppe_drv_v6.h b/drv/ppe_drv/ppe_drv_v6.h
+--- a/drv/ppe_drv/ppe_drv_v6.h
++++ b/drv/ppe_drv/ppe_drv_v6.h
+@@ -1068,3 +1068,11 @@
+ struct ppe_drv_flow *ppe_drv_v6_flow_hash_tuple_find(struct ppe_drv_v6_5tuple *tuple, struct hlist_head *head_tbl);
+ struct ppe_drv_flow *ppe_drv_v6_flow_hash_tuple_find_by_dev(struct ppe_drv_v6_5tuple *tuple,
+ 		struct hlist_head *head_tbl, struct net_device *dev);
++
++/*
++ * Multicast rule entry points.  No in-tree caller in this build profile,
++ * but the vendor ABI keeps them external for the multicast client.
++ */
++ppe_drv_ret_t ppe_drv_v6_mc_create(struct ppe_drv_v6_rule_create *create);
++ppe_drv_ret_t ppe_drv_v6_mc_update(struct ppe_drv_v6_rule_create *update);
++ppe_drv_ret_t ppe_drv_v6_mc_destroy(struct ppe_drv_v6_rule_destroy *destroy);

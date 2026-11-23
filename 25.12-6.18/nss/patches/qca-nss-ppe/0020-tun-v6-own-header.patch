@@ -1,0 +1,19 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: tun v6 includes its own header
+
+  Same as the v4 file: ppe_drv_tun_v6.c exports ten functions declared in
+  ppe_drv_tun_v6.h but never included it, so 6.12's
+  -Wmissing-prototypes rejects every definition.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_v6.c b/drv/ppe_drv/tun/ppe_drv_tun_v6.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_v6.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_v6.c
+@@ -16,6 +16,8 @@
+ 
+ #include <ppe_drv/ppe_drv.h>
+ #include "ppe_drv_tun.h"
++/* Own exported API: gives the exported functions a visible prototype. */
++#include "ppe_drv_tun_v6.h"
+ #include <ppe_drv_iface.h>
+ #include <exports/ppe_drv_tun_public.h>
+ #include <fal/fal_tunnel.h>

@@ -1,0 +1,70 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-nss-phy: nss_phy_linux.c on the 6.18 phylib API
+
+nss_phy_linux.c (the PHY driver wrapper) still used three APIs that 6.18
+removed:
+
+  phydev->eee_broken_modes / phydev->eee_enabled
+	EEE user state moved to phydev->eee_cfg and the broken-mode mask
+	became the phydev->eee_disabled_modes linkmode bitmap.
+	nss_phy_eee_status_init() keeps the old semantics: EEE is disabled
+	when every supported EEE mode is disabled (an empty supported set
+	counts as disabled, as the u32 cover test did), or when the PHY is
+	one of the chips whose EEE is turned off manually.
+
+  phy_driver_register() / phy_driver_unregister()
+	6.18 only exports the array forms.  Register the single nss PHY
+	driver with phy_drivers_register(&nss_phy_driver, 1, ...) and
+	unregister it with phy_drivers_unregister(&nss_phy_driver, 1).
+
+Classification: portability (kernel API, no behaviour change).
+--- a/nss_ext/nss_phy_linux.c
++++ b/nss_ext/nss_phy_linux.c
+@@ -476,17 +476,25 @@
+ 
+ static int nss_phy_eee_status_init(struct phy_device *phydev)
+ {
+-	u32 eee_cap = linkmode_to_mii_eee_cap1_t(phydev->supported_eee);
++	int mode;
+ 
+ 	/* for qca81xx and qca8084, the eee_enabled is enabled by phy structure,
+ 	for qca807x, qca8081, qca803x and qca833x, the eee_enabled is disabled here
+-	manually */
+-	if (((phydev->eee_broken_modes & eee_cap) == eee_cap) ||
++	manually.  EEE is only kept when at least one supported mode is not in
++	the 6.18 eee_disabled_modes bitmap (the empty set counts as disabled,
++	like the old eee_broken_modes cover test). */
++	for (mode = 0; mode < __ETHTOOL_LINK_MODE_MASK_NBITS; mode++) {
++		if (linkmode_test_bit(mode, phydev->supported_eee) &&
++		    !linkmode_test_bit(mode, phydev->eee_disabled_modes))
++			break;
++	}
++
++	if (mode == __ETHTOOL_LINK_MODE_MASK_NBITS ||
+ 		nss_phydev_id_compare(phydev, QCA8075_PHY, QCA807X_MASK) ||
+ 		nss_phydev_id_compare(phydev, QCA8081_PHY, QCA_PHY_EXACT_MASK) ||
+ 		nss_phydev_id_compare(phydev, QCA8033_PHY, QCA803X_MASK) ||
+ 		nss_phydev_id_compare(phydev, QCA8337_PHY_V4, QCA8337_PHY_MASK))
+-		phydev->eee_enabled = false;
++		phydev->eee_cfg.eee_enabled = false;
+ 
+ 	return 0;
+ }
+@@ -842,7 +850,7 @@
+ 		return ret;
+ 	}
+ 
+-	ret = phy_driver_register(&nss_phy_driver, THIS_MODULE);
++	ret = phy_drivers_register(&nss_phy_driver, 1, THIS_MODULE);
+ 	if (!ret) {
+ 		pr_info("nss phy driver register successfully\n");
+ 	} else {
+@@ -863,7 +871,7 @@
+ 
+ static void __exit nss_phy_module_exit(void)
+ {
+-	phy_driver_unregister(&nss_phy_driver);
++	phy_drivers_unregister(&nss_phy_driver, 1);
+ 	phy_unregister_fixup_for_uid(QCA_PHY_ID, QCA_PHY_MASK);
+ 	platform_driver_unregister(&nss_phy_platform_driver);
+ 	nss_phy_debugfs_remove();

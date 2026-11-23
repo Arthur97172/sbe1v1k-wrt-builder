@@ -1,0 +1,23 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qca8084_pinctrl: make clk_gate_set() static
+
+Linux 6.10 enabled -Wmissing-prototypes for all C sources, and OpenWrt
+builds kernel modules with -Werror.  qca8084_pinctrl_clk_gate_set() has
+no prototype in qca8084_pinctrl.h and is only referenced from
+qca8084_pinctrl_hw_init() in the same translation unit, so give it
+internal linkage instead of adding a header declaration.
+
+nss_ext/qca8084_pinctrl.c:276:5: error: no previous prototype for
+  'qca8084_pinctrl_clk_gate_set' [-Werror=missing-prototypes]
+
+--- a/nss_ext/qca8084_pinctrl.c
++++ b/nss_ext/qca8084_pinctrl.c
+@@ -273,7 +273,7 @@
+  * 3) PINs Init
+  *
+  ****************************************************************************/
+-int qca8084_pinctrl_clk_gate_set(struct nss_phy_device *nss_phydev,
++static int qca8084_pinctrl_clk_gate_set(struct nss_phy_device *nss_phydev,
+ 	u32 gate_en)
+ {
+ 	int ret = 0;

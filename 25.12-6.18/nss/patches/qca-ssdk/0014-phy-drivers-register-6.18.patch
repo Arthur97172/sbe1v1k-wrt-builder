@@ -1,0 +1,34 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-ssdk: register the SFP PHY driver with the 6.18 array API
+
+6.18 removed phy_driver_register() and phy_driver_unregister(); only the
+array forms phy_drivers_register()/phy_drivers_unregister() are exported.
+sfp_phy.c still calls the single-driver versions:
+
+  src/hsl/phy/sfp_phy.c:691: error: implicit declaration of function 'phy_driver_register'; did you mean 'phy_drivers_register'?
+
+Register the one sfp_phy_driver through the array form (count 1), which
+is exactly what the removed wrapper did.
+
+Classification: portability (kernel API, no behaviour change).
+
+--- a/src/hsl/phy/sfp_phy.c
++++ b/src/hsl/phy/sfp_phy.c
+@@ -688,7 +688,7 @@
+ 	int ret = 0;
+ 	if(sfp_phy_drv_registered == A_FALSE)
+ 	{
+-		ret = phy_driver_register(&sfp_phy_driver, THIS_MODULE);
++		ret = phy_drivers_register(&sfp_phy_driver, 1, THIS_MODULE);
+ 		sfp_phy_drv_registered = A_TRUE;
+ 	}
+ 	return ret;
+@@ -698,7 +698,7 @@
+ {
+ 	if (sfp_phy_drv_registered == A_TRUE)
+ 	{
+-		phy_driver_unregister(&sfp_phy_driver);
++		phy_drivers_unregister(&sfp_phy_driver, 1);
+ 		sfp_phy_drv_registered = A_FALSE;
+ 	}
+ }

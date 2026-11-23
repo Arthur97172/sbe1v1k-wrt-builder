@@ -1,0 +1,48 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: custom program helper linkage
+
+  _dref() and _get_free_index() are called from within this file only
+  (definitions precede the call sites) -> static.
+  _ref() and _config_exists() have no caller at all in this build profile
+  and are not exported -> static __maybe_unused, kept for the vendor
+  custom-program path.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_custom.c b/drv/ppe_drv/tun/ppe_drv_tun_custom.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_custom.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_custom.c
+@@ -42,7 +42,7 @@
+  * ppe_drv_tun_custom_prgm_udf_dref
+  *      custom program udf deref
+  */
+-bool ppe_drv_tun_custom_prgm_udf_dref(struct ppe_drv_tun_prgm_prsr_custom_prgm_udf *pgm_udf, int index)
++static bool ppe_drv_tun_custom_prgm_udf_dref(struct ppe_drv_tun_prgm_prsr_custom_prgm_udf *pgm_udf, int index)
+ {
+ 	ppe_drv_assert(kref_read(&pgm_udf->ref), "ref count under run for prgm udf index: %d", index);
+ 
+@@ -59,7 +59,7 @@
+  * ppe_drv_tun_custom_prgm_udf_ref
+  *      custom program udf ref
+  */
+-void ppe_drv_tun_custom_prgm_udf_ref(struct ppe_drv_tun_prgm_prsr_custom_prgm_udf *pgm_udf, int index)
++static __maybe_unused void ppe_drv_tun_custom_prgm_udf_ref(struct ppe_drv_tun_prgm_prsr_custom_prgm_udf *pgm_udf, int index)
+ {
+ 	kref_get(&pgm_udf->ref);
+ 
+@@ -71,7 +71,7 @@
+  * ppe_drv_tun_custom_prgm_udf_get_free_index
+  *     Get free instance of custom program udf
+  */
+-int ppe_drv_tun_custom_prgm_udf_get_free_index(struct ppe_drv_tun_prgm_prsr *pgm)
++static int ppe_drv_tun_custom_prgm_udf_get_free_index(struct ppe_drv_tun_prgm_prsr *pgm)
+ {
+ 	int index = 0;
+ 	struct ppe_drv_tun_prgm_prsr_custom_prgm_udf *pgm_udf;
+@@ -98,7 +98,7 @@
+  * ppe_drv_tun_custom_prgm_udf_config_exists
+  *     Check if custom program udf configuration exists
+  */
+-int ppe_drv_tun_custom_prgm_udf_config_exists(struct ppe_drv_tun_prgm_prsr *pgm, struct ppe_drv_tun_prgm_prsr_prgm_udf *udf)
++static __maybe_unused int ppe_drv_tun_custom_prgm_udf_config_exists(struct ppe_drv_tun_prgm_prsr *pgm, struct ppe_drv_tun_prgm_prsr_prgm_udf *udf)
+ {
+ 	struct ppe_drv_tun_prgm_prsr_prgm_udf *prsr_udf = NULL;
+ 	struct ppe_drv_tun_prgm_prsr_custom_prgm_udf *cust_udf = NULL;

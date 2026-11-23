@@ -1,0 +1,103 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ssdk: replace strlcpy() with strscpy()
+
+Linux 6.8 removed strlcpy() from <linux/string.h>; 6.12 only keeps
+strlcat().  qca-ssdk compiles ref_uci.c and shell_io.c into the KSLIB
+kernel module and still calls strlcpy() in 12 places.  Every call site
+ignores the return value, so strscpy(), which is present in 6.12 and has
+the same bounded-copy behaviour, is a drop-in replacement.
+
+src/ref/ref_uci.c:15392: error: implicit declaration of function 'strlcpy'
+src/shell_lib/shell_io.c:1074: error: implicit declaration of function 'strlcpy'
+
+--- a/src/ref/ref_uci.c	2026-10-23 23:26:04.426543586 +0000
++++ b/src/ref/ref_uci.c	2026-10-23 23:26:04.469282512 +0000
+@@ -15389,8 +15389,8 @@
+         }
+ 
+         if(i<len) {
+-		strlcpy(module, name, i+1);
+-		strlcpy(cmd, p, COMMAND_NAME_MAX_LEN);
++		strscpy(module, name, i+1);
++		strscpy(cmd, p, COMMAND_NAME_MAX_LEN);
+ 		return 0;
+         }
+ 
+--- a/src/shell_lib/shell_io.c	2026-10-23 23:26:04.434282187 +0000
++++ b/src/shell_lib/shell_io.c	2026-10-23 23:26:04.487282679 +0000
+@@ -1071,16 +1071,16 @@
+ 	if(buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X'))
+ 	{
+ 		if(!fmt)
+-			strlcpy(fmt_tmp, "%x", sizeof(fmt_tmp));
++			strscpy(fmt_tmp, "%x", sizeof(fmt_tmp));
+ 		else
+ 		{
+ 			if(strspn(fmt, "%lLxXhH") != strlen(fmt))
+ 				return SW_BAD_VALUE;
+ 			if(fmt[0] == '%' && ((fmt[1] == 'l' || fmt[1] == 'L') &&
+ 				(fmt[2] == 'l' || fmt[2] == 'L')))
+-				strlcpy(fmt_tmp, "%llx", sizeof(fmt_tmp));
++				strscpy(fmt_tmp, "%llx", sizeof(fmt_tmp));
+ 			else
+-				strlcpy(fmt_tmp, fmt, sizeof(fmt_tmp));
++				strscpy(fmt_tmp, fmt, sizeof(fmt_tmp));
+ 		}
+ 	}
+ 	else
+@@ -1088,16 +1088,16 @@
+ 		if(strspn(buf, "1234567890") != strlen(buf))
+ 			return SW_BAD_VALUE;
+ 		if(!fmt)
+-			strlcpy(fmt_tmp, "%d", sizeof(fmt_tmp));
++			strscpy(fmt_tmp, "%d", sizeof(fmt_tmp));
+ 		else
+ 		{
+ 			if(strspn(fmt, "%lLdD") != strlen(fmt))
+ 				return SW_BAD_VALUE;
+ 			if(fmt[0] == '%' && ((fmt[1] == 'l' || fmt[1] == 'L') &&
+ 				(fmt[2] == 'l' || fmt[2] == 'L')))
+-				strlcpy(fmt_tmp, "%lld", sizeof(fmt_tmp));
++				strscpy(fmt_tmp, "%lld", sizeof(fmt_tmp));
+ 			else
+-				strlcpy(fmt_tmp, fmt, sizeof(fmt_tmp));
++				strscpy(fmt_tmp, fmt, sizeof(fmt_tmp));
+ 		}
+ 	}
+ 	if(sscanf(buf, fmt_tmp, arg_val) != 1)
+@@ -2879,7 +2879,7 @@
+         return SW_OK;
+     }
+ 
+-    strlcpy(tmp_str, cmdstr, sizeof(tmp_str));
++    strscpy(tmp_str, cmdstr, sizeof(tmp_str));
+     tmp = (void *) strsep(&cmdstr, ",");
+     while (tmp)
+     {
+@@ -5368,7 +5368,7 @@
+ 
+ 		/* Initialize act_bitmap to all zeros */
+ 		aos_mem_zero(entry.act_bitmap, sizeof(entry.act_bitmap));
+-		strlcpy(tmp_str, cmd, sizeof(tmp_str));
++		strscpy(tmp_str, cmd, sizeof(tmp_str));
+ 
+ 		str1 = tmp_str;
+ 
+@@ -12299,7 +12299,7 @@
+ 						break;
+ 					}
+ 					/* copy 8 chars from cmd */
+-					strlcpy(cmd_word, cmd, sizeof(cmd_word));
++					strscpy(cmd_word, cmd, sizeof(cmd_word));
+ 					sscanf(cmd_word, "%x", &entry.key[words]);
+ 					cmd += 8;
+ 				}
+@@ -14057,7 +14057,7 @@
+ 						break;
+ 					}
+ 					/* copy 2 chars from cmd */
+-					strlcpy(cmd_byte, cmd, sizeof(cmd_byte));
++					strscpy(cmd_byte, cmd, sizeof(cmd_byte));
+ 					sscanf(cmd_byte, "%hhx",
+ 						&(entry.pkt_header.pkt_header_data[bytes]));
+ 					cmd += 2;

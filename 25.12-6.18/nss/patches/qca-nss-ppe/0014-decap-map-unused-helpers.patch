@@ -1,0 +1,46 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: mark unused decap map helpers
+
+  ppe_drv_tun_decap_map_entry_dump(), _ref() and _get_rule_id() have no
+  caller in this build profile and are not exported: the MAP-T client
+  (qca-nss-ppe-mapt) is not part of the port.  They become static
+  __maybe_unused so the vendor MAP-T path is preserved for when it is
+  enabled, instead of being deleted or left as -Wmissing-prototypes
+  errors.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun_decap_map.c b/drv/ppe_drv/tun/ppe_drv_tun_decap_map.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun_decap_map.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun_decap_map.c
+@@ -21,8 +21,13 @@
+ /*
+  * ppe_drv_tun_decap_map_dump
+  *	Dump MAP decap entry instance
++ *
++ * None of the three helpers below has a caller in this build profile and
++ * none is exported: the MAP-T client (qca-nss-ppe-mapt) is not built.
++ * They stay static and are marked __maybe_unused rather than deleted, so
++ * the vendor MAP-T path is preserved for when it is enabled.
+  */
+-void ppe_drv_tun_decap_map_entry_dump(struct ppe_drv_tun_decap *ptdcm)
++static void __maybe_unused ppe_drv_tun_decap_map_entry_dump(struct ppe_drv_tun_decap *ptdcm)
+ {
+ 	fal_mapt_decap_entry_t fmde = {0};
+ 	sw_error_t err;
+@@ -99,7 +104,7 @@
+  * ppe_drv_tun_decap_map_ref
+  *	Take reference of  MAP tunnel entry instance
+  */
+-void ppe_drv_tun_decap_map_ref(struct ppe_drv_tun_decap *ptdcm)
++static __maybe_unused void ppe_drv_tun_decap_map_ref(struct ppe_drv_tun_decap *ptdcm)
+ {
+ 	kref_get(&ptdcm->ref);
+ 
+@@ -111,7 +116,7 @@
+  * ppe_drv_tun_decap_map_get_rule_index
+  *	Return MAP tunnel rule id
+  */
+-uint8_t ppe_drv_tun_decap_map_get_rule_id(struct ppe_drv_tun_decap *ptdcm)
++static __maybe_unused uint8_t ppe_drv_tun_decap_map_get_rule_id(struct ppe_drv_tun_decap *ptdcm)
+ {
+ 	return ptdcm->rule_id;
+ }

@@ -1,0 +1,25 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: declare vsi fdb learning helpers in vsi header
+
+  The two helpers keep external linkage (the vendor ABI exposes them to the
+  MAP-T client), but no in-tree caller exists in this build profile, so
+  -Wmissing-prototypes needs a visible declaration.
+
+diff -ruN a/drv/ppe_drv/ppe_drv_vsi.h b/drv/ppe_drv/ppe_drv_vsi.h
+--- a/drv/ppe_drv/ppe_drv_vsi.h
++++ b/drv/ppe_drv/ppe_drv_vsi.h
+@@ -75,6 +75,14 @@
+ 
+ struct ppe_drv_vsi *ppe_drv_vsi_alloc(enum ppe_drv_vsi_type type);
+ 
++/*
++ * No in-tree caller in this build profile, but the vendor API is
++ * intentionally external linkage (the MAP-T client uses it), so the
++ * prototypes belong here rather than making the helpers static.
++ */
++void ppe_drv_vsi_fdb_learning_disable(struct ppe_drv_vsi *vsi);
++void ppe_drv_vsi_fdb_learning_enable(struct ppe_drv_vsi *vsi);
++
+ void ppe_drv_vsi_entries_free(struct ppe_drv_vsi *vsi);
+ struct ppe_drv_vsi *ppe_drv_vsi_entries_alloc(void);
+ bool ppe_drv_vsi_remap_entries(struct ppe_drv_vsi *vsi, struct ppe_drv_vsi *br_vsi);

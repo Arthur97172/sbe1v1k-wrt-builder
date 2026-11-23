@@ -1,0 +1,20 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] ref_tunnel: include ref_tunnel.h so parse_tunnel() has a prototype
+
+Same class as the ref_misc fix: ref_tunnel.c defines parse_tunnel()
+(also called from ref_uci.c through ref_tunnel.h) but never includes
+its own header, which trips -Wmissing-prototypes on 6.10+.
+
+src/ref/ref_tunnel.c:272:5: error: no previous prototype for
+  'parse_tunnel' [-Werror=missing-prototypes]
+
+--- a/src/ref/ref_tunnel.c
++++ b/src/ref/ref_tunnel.c
+@@ -12,6 +12,7 @@
+ #include <linux/switch.h>
+ #include "sw.h"
+ #include "ref_uci.h"
++#include "ref_tunnel.h"
+
+ static const char *tunnel_intf[] = {
+ 	"intf_id",

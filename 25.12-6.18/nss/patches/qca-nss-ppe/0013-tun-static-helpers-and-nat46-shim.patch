@@ -1,0 +1,118 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] nss-ppe: tun file-local helpers and nat46 xlate shim
+
+  eight helpers        used only inside ppe_drv_tun.c, defined before the
+                       call sites, none exported -> static.
+  xlate_4_to_6/6_to_4  QSDK's nat46 (2022-09-19) exports these for the
+                       MAP-T data path; OpenWrt 25.12 ships nat46
+                       2025-04-23, which no longer has the API.  The
+                       port already treats MAP-T as absent (dev_is_mapt()
+                       is false and the mapt client is not built), so the
+                       lookup answers "no pair", the same result as an
+                       unconfigured nat46 instance.
+
+diff -ruN a/drv/ppe_drv/tun/ppe_drv_tun.c b/drv/ppe_drv/tun/ppe_drv_tun.c
+--- a/drv/ppe_drv/tun/ppe_drv_tun.c
++++ b/drv/ppe_drv/tun/ppe_drv_tun.c
+@@ -32,6 +32,29 @@
+ 
+ #include <ppe_drv_sc.h>
+ 
++/*
++ * QSDK 14.x builds against its own nat46 (2022-09-19), which exports
++ * xlate_4_to_6() / xlate_6_to_4() for the MAP-T data path.  OpenWrt
++ * 25.12 ships nat46 2025-04-23, whose translation API no longer exists
++ * (the module exports nothing).  MAP-T is not part of this port: the
++ * dev_is_mapt() check is a false shim and the MAP-T client
++ * (qca-nss-ppe-mapt) is not built, so no flow can reach these lookups.
++ * Answering "no translation pair" is the same answer an unconfigured
++ * nat46 instance gives, and keeps the failure path intact.  If MAP-T
++ * support is added later, QSDK's nat46 must be used instead.
++ */
++static inline int xlate_4_to_6(struct net_device *dev, struct iphdr *hdr4,
++		uint16_t sport, uint16_t dport, void *v6saddr, void *v6daddr)
++{
++	return 0;
++}
++
++static inline int xlate_6_to_4(struct net_device *dev, struct ipv6hdr *ip6h,
++		uint16_t proto, __u32 *pv4saddr, __u32 *pv4daddr)
++{
++	return 0;
++}
++
+ static bool ppe_drv_tun_configure_internal(uint16_t port_num, struct ppe_drv_tun_cmn_ctx *pth, void *add_cb, void *del_cb);
+ 
+ /*
+@@ -425,7 +448,7 @@
+  * ppe_drv_tun_port_encap_disable
+  * 	Disable encapsulation on tunnel virtual port
+  */
+-bool ppe_drv_tun_port_encap_disable(struct ppe_drv_port *pp)
++static bool ppe_drv_tun_port_encap_disable(struct ppe_drv_port *pp)
+ {
+ 	sw_error_t err;
+ 	fal_vport_state_t vp_state = {0};
+@@ -459,7 +482,7 @@
+  * ppe_drv_tun_port_deconfigure
+  * 	Deconfigure tunnel specific configuration in port
+  */
+-bool ppe_drv_tun_port_reset_physical_port(struct ppe_drv_port *pp)
++static bool ppe_drv_tun_port_reset_physical_port(struct ppe_drv_port *pp)
+ {
+ 	sw_error_t err;
+ 	uint32_t v_port = FAL_PORT_ID(FAL_PORT_TYPE_VPORT, pp->port);
+@@ -477,7 +500,7 @@
+  * ppe_drv_base_port_get
+  * 	Get base port associated with the xmit port
+  */
+-uint8_t ppe_drv_tun_xmit_port_get(uint8_t xmit_port)
++static uint8_t ppe_drv_tun_xmit_port_get(uint8_t xmit_port)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 
+@@ -655,7 +678,7 @@
+  * ppe_drv_tun_pppoe_tl_l3_if_get
+  * Get the tl_l3_if associated with pppoe instance
+  */
+-struct ppe_drv_tun_l3_if *ppe_drv_tun_pppoe_tl_l3_if_get(struct ppe_drv_tun *ptun, struct ppe_drv_pppoe *pppoe)
++static struct ppe_drv_tun_l3_if *ppe_drv_tun_pppoe_tl_l3_if_get(struct ppe_drv_tun *ptun, struct ppe_drv_pppoe *pppoe)
+ {
+ 	struct ppe_drv_tun_l3_if *ptun_l3_if;
+ 	struct ppe_drv *p = ppe_drv_gbl;
+@@ -685,7 +708,7 @@
+  * ppe_drv_tun_port_tl_l3_if_get
+  * Get the tl_l3_if associated with port
+  */
+-struct ppe_drv_tun_l3_if *ppe_drv_tun_port_tl_l3_if_get(struct ppe_drv_tun *ptun, uint16_t xmit_port)
++static struct ppe_drv_tun_l3_if *ppe_drv_tun_port_tl_l3_if_get(struct ppe_drv_tun *ptun, uint16_t xmit_port)
+ {
+ 	struct ppe_drv_tun_l3_if *ptun_l3_if;
+ 	struct ppe_drv *p = ppe_drv_gbl;
+@@ -735,7 +758,7 @@
+  * ppe_drv_tun_decap_xmitport_cfg_set
+  *	Port DECAP Configuration setup
+  */
+-bool ppe_drv_tun_decap_xmitport_cfg_set(struct ppe_drv_tun *ptun, uint16_t xmit_port,
++static bool ppe_drv_tun_decap_xmitport_cfg_set(struct ppe_drv_tun *ptun, uint16_t xmit_port,
+ 					struct ppe_drv_tun_cmn_ctx_l2 *l2_hdr, uint16_t tl_l3_if_idx)
+ {
+ 
+@@ -1212,7 +1235,7 @@
+  *  ppe_drv_tun_v6_conn_tun_del
+  *	delete all connections corresponding to tunnel
+  */
+-void ppe_drv_tun_v6_conn_tun_del(struct ppe_drv_tun *ptun)
++static void ppe_drv_tun_v6_conn_tun_del(struct ppe_drv_tun *ptun)
+ {
+ 	struct ppe_drv_comm_stats *comm_stats;
+ 	struct ppe_drv *p = ppe_drv_gbl;
+@@ -1282,7 +1305,7 @@
+  *  ppe_drv_tun_v4_conn_tun_del
+  *	Delete all instances of connections corresponding to tunnel
+  */
+-void ppe_drv_tun_v4_conn_tun_del(struct ppe_drv_tun *ptun)
++static void ppe_drv_tun_v4_conn_tun_del(struct ppe_drv_tun *ptun)
+ {
+ 	struct ppe_drv *p = ppe_drv_gbl;
+ 	struct ppe_drv_v4_conn_flow *pcf, *pcr;
