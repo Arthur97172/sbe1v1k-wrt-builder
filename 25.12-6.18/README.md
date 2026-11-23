@@ -7,7 +7,7 @@
 |---|---|---|
 | 上游 | `openwrt-25.12` 分支，6.12 | `main`，`KERNEL_PATCHVER:=6.18` |
 | 设备定义 | 本项目的 `spectrum_sbe1v1k`（补丁） | 上游原生 `askey_sbe1v1k` |
-| 数据通路 | QSDK NSS（qca-ssdk/dp/ppe/ecm） | S1 用上游 mainline PPE；**S3 移植 NSS，目标对齐** |
+| 数据通路 | QSDK NSS（qca-ssdk/dp/ppe/ecm） | 两个设备变体：mainline PPE（兜底）+ QSDK NSS（`-nss`，S3d） |
 | 无线固件 | 项目打包的厂商 blob（QCN92XX/hw1.0） | 上游 ath12k 固件 + `ipq-wifi-askey_sbe1v1k`，校准从 `0:ART` 提取 |
 | 网口角色 | eth1（2.5G）=WAN，其余=LAN | 相同：port@5（2.5G）=WAN，port@3/4/6=LAN（补丁 0001） |
 | 项目 overlay | `files/` + 多个补丁 | 分阶段移植（S2/S4） |
@@ -36,8 +36,8 @@
 - 插件栈（2026-11-22 按用户要求对齐 25.12-6.12）：18 个插件、官方 LuCI
   页/WireGuard、工具与运行时全部写入种子与 `build/thirdparty-pins.conf`；
   `fetch-plugins.sh --dry-run` 18 个仓库全部 same、`check-packages.sh seed`
-  107 项 PASS。与 6.12 的差异只在不存在的 QSDK 组件（qca-ssdk-shell、
-  sbe-wifi-firmware、NSS 包）。
+  107 项 PASS。与 6.12 的差异只在 `sbe-wifi-firmware`（6.18 用上游固件）；
+  QSDK 组件从 S3d 起随镜像提供（见下条）。
 - 首启默认（S2 先行移植，2026-11-22 按用户要求）：`files/etc/uci-defaults/`
   里的 `99-allow-luci-wan`（WAN tcp 80/443 ACCEPT）与 `99-allow-ssh-wan`
   （WAN tcp 22 ACCEPT），语义与 6.12 的 `sbe1v1k-defaults` 相同；脚本按 755
@@ -71,10 +71,18 @@
     板名门控、rc.d 链接、时区脚本断言；本机构建 PASS，**PASS=36 FAIL=0**。
     镜像哈希与内容级取证见 `docs/S2-BANNER-WIFI-2026-11-22.md`（设备
     **NOT TESTED**）。
+- **S3d NSS 数据通路（2026-11-23 本机构建 PASS，设备 NOT TESTED）**：
+  两个设备变体——mainline PPE（无后缀，兜底）与 QSDK NSS（`-nss`，补丁
+  0031 的 DTB `/delete-node/ &qcom_ppe;` 换 ess-switch/EDMA/dp）。kconfig
+  choice 一次只能选一个设备，`scripts/ci/build-images.sh` 顺序跑两遍；
+  `verify-image.sh` 对两镜像各自断言，**PASS=128 FAIL=0**（包反查各
+  119/0/0）。详见 `docs/NSS-PORT-ASSESSMENT-2026-11-22.md` §5；设备侧
+  （nss-load、`/sys/ssdk`、加速计数）留 S3e，需单独批准。
 - CI（S5，2026-11-22）：`.github/workflows/build-25.12-6.18.yml` 与
   `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、configure
-  三道包反查、world 构建、`verify-image.sh` 静态校验、发布 3 个资产到
-  本次运行专属 Release；`plugin_mode` 可选手动触发时用 `pinned` 复现旧镜像。
+  三道包反查、`build-images.sh world` 两遍构建、`verify-image.sh` 双镜像
+  静态校验、发布 6 个资产（两变体各 3 个）到本次运行专属 Release；
+  `plugin_mode` 可选手动触发时用 `pinned` 复现旧镜像。
   首次运行结果以 Actions 页为准。
 - 任何刷机、重启、连接路由器或远程验证都需要用户单独批准。
 
@@ -99,14 +107,19 @@
 ├── patches/                                     # 装配时按序应用、可重复
 │   ├── 0001-qualcommbe-sbe1v1k-swap-port5-port6-labels.patch
 │   ├── 0002-wifi-scripts-pin-radio-numbering-by-band.patch
-│   └── 0003-qualcommbe-sbe1v1k-distinct-mac-per-port.patch
+│   ├── 0003-qualcommbe-sbe1v1k-distinct-mac-per-port.patch
+│   ├── 0031-qualcommbe-add-sbe1v1k-nss-dts.patch     # NSS 板级 DTS（删 mainline PPE 节点）
+│   ├── 0032-qualcommbe-add-sbe1v1k-nss-device.patch  # NSS 设备定义与 DEVICE_PACKAGES
+│   ├── 0033-qualcommbe-ipq95xx-nss-board-network.patch # 02_network 按设备树分支
+│   └── 0034-qualcommbe-qca808x-drop-qca8084-for-nss.patch # 6.18 内置 qca8084 抢名
 └── scripts/
     ├── ci/prepare-tree.sh                       # 克隆 main + 钉 feed + 插件装配
     ├── ci/fetch-plugins.sh                      # 18 插件按最新 tag 安装
     ├── ci/check-packages.sh                     # seed/index/config/db 反查
-    ├── ci/verify-image.sh                       # 产物静态校验 + 包反查
+    ├── ci/build-images.sh                       # 两个设备顺序各跑一遍 make
+    ├── ci/verify-image.sh                       # 两镜像各自静态校验 + 包反查
     ├── render-overlay.sh                        # files/ → 装配树 + banner 版本替换
-    └── local/build-image.sh                     # 本地构建入口
+    └── local/build-image.sh                     # 本地构建入口（走 build-images.sh）
 ```
 
 ## 插件与构建时跟新
@@ -130,8 +143,14 @@
 ```sh
 cd /home/arthur/claude/sbe1v1k-build
 SBE_CI=1 25.12-6.18/scripts/ci/prepare-tree.sh      # 一次性装配
-25.12-6.18/scripts/local/build-image.sh world       # 编译 + 校验
+25.12-6.18/scripts/local/build-image.sh world       # 两个设备各编一遍 + 校验
 ```
+
+设备变体是 kconfig choice：一次 world 只出一个设备，两个都写 `=y` 时后者
+静默覆盖前者。`local/build-image.sh` 因此调用 `scripts/ci/build-images.sh`，
+**先 NSS、后 mainline 顺序跑两遍**，每遍 defconfig 后断言设备选择真的生效；
+第二遍基本增量（包都已编过，只重出 DTB/FIT 与镜像）。种子默认选中 NSS，
+单独跑 make 时也以 NSS 为准。
 
 本机网络有两个已知坑（CI 不受影响）：`cdn.kernel.org`/`ftp.gnu.org` 等镜像
 会挂死（`download.pl` 等的 curl 永不超时），`proxy.golang.org` 会被代理重置。
@@ -148,7 +167,7 @@ GOPROXY='https://goproxy.cn,https://mirrors.aliyun.com/goproxy,direct' \
 
 装配树落在 `sources/buildroot-25.12-6.18/`，产物在
 `bin/targets/qualcommbe/ipq95xx/`（文件名带上游版本前缀，均含
-`askey_sbe1v1k`）。
+`askey_sbe1v1k`；NSS 变体带 `-nss` 后缀）。
 
 ## 固定版本
 
@@ -162,13 +181,17 @@ GOPROXY='https://goproxy.cn,https://mirrors.aliyun.com/goproxy,direct' \
 
 ## 产物与验证
 
-`verify-image.sh` 断言：sysupgrade tar 含 `kernel`/`root`；FIT 里嵌着
-`Askey SBE1V1K` / `askey,sbe1v1k` / `config@rtq7300t-rev0`；root 是
-squashfs；`openwrt_release` 目标为 `qualcommbe/ipq95xx`；解包后的 apk
-数据库按 `build/required-packages.txt` 逐包反查（插件、工具、必禁项）。
+`verify-image.sh` 对**两个镜像各自断言**：sysupgrade tar 含 `kernel`/`root`；
+FIT 里嵌着 `Spectrum SBE1V1K` / `askey,sbe1v1k` / `config@rtq7300t-rev0`；
+数据通路按 FIT 判别——mainline 含 `qcom,ipq9574-ppe`，NSS 不含该节点而含
+`qcom,ess-switch-ipq95xx`/`qcom,nss-dp`；root 是 squashfs；`openwrt_release`
+目标为 `qualcommbe/ipq95xx`；解包后的 apk 数据库按 `build/required-packages.txt`
+逐包反查（插件、工具、NSS 模块、必禁项），并校验 NSS overlay（`nss-board`
+判据、`nss.conf`、装载/角色脚本与 rc.d 链接、`nss-board || exit 0` 门控）。
 设备侧：启动、网口角色、LAN→WAN 转发、LuCI、风扇/LED、2.4G/5G 已在 B 机
-S1b 验证（`docs/S1B-DEVICE-TEST-2026-11-22.md`）；6G 信道未启用、NSS 加速
-尚未移植，均不得据静态校验声称可用。重启复验与 WiFi 客户端关联未做。
+S1b 验证（`docs/S1B-DEVICE-TEST-2026-11-22.md`）；6G 信道未启用、NSS 变体
+设备行为未验证（S3e，需单独批准），均不得据静态校验声称可用。重启复验与
+WiFi 客户端关联未做。
 
 ## 规则
 

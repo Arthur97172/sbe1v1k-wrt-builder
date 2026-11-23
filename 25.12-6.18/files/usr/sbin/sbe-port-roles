@@ -1,0 +1,393 @@
+#!/bin/sh
+#
+# 端口角色收敛：/etc/config/sbe_ports 的 main.wan_port = eth0 | eth1 | none。
+#
+# 本平台没有 DSA，LAN/WAN 的硬件隔离只有一处：qca-ssdk 的「端口基于 VLAN」
+# 成员表（每口一个「可转发到」位图；CPU 口除外，它保持驱动默认值）。因此角色
+# 切换必须同时改三处，缺一处就出现「软件 WAN 变了、芯片里 WAN 与 LAN 仍 L2
+# 直通、绕过防火墙」的状态：
+#
+#   1) SSDK 成员表（本脚本先做，回读校验通过才继续）；
+#   2) UCI：br-lan 的 ports 与 wan/wan6 的 device/auto（netifd 按它建接口）；
+#   3) /etc/board.json 的 network 段（只影响 LuCI 端口面板与 config_generate）。
+#
+# 注意：本芯片走 APPE，开机时 qca_hppe_fdb_hw_init 把每口成员表写成全 1
+# （平面表，无隔离）；DTS 的 switch_lan_bmp/wan_bmp 不会落到硬件，必须由
+# 本脚本显式写入。
+#
+# eth0-lan-attach 在 attach() 里读同一个角色；角色为 eth0 时它不再把 eth0
+# 挂进 br-lan（eth0 此时归 netifd，作 WAN）。
+#
+# 角色语义（SSDK 口：3=qca8075 eth2，4=qca8075 eth3，5=QCA8081 eth1，
+# 6=RTL8261N eth0；CPU 口 0 不写——APPE 默认全 1 已覆盖路由所需）：
+#
+#   eth1（默认）：lan=0x58 wan=0x20 -> p3 0x51 p4 0x49 p5 0x01 p6 0x19
+#                eth1（2.5G）WAN；eth0/eth2/eth3 LAN
+#   eth0        ：lan=0x38 wan=0x40 -> p3 0x31 p4 0x29 p5 0x19 p6 0x01
+#                eth0（10G）WAN；eth1/eth2/eth3 LAN
+#   none        ：lan=0x78 wan=0x00 -> p3 0x71 p4 0x69 p5 0x59 p6 0x39
+#                无 WAN；四个口全在 LAN
+#
+# 失败语义（重要）：先写硬件表并回读，成功后才改 UCI。ssdk_sh 不可用或
+# 回读不符时直接失败退出，UCI 保持原样——宁可角色不生效，也不要软硬不一致。
+#
+# 用法：
+#   sbe-port-roles apply          按 UCI 角色收敛；不重载网络（开机 S19 用）
+#   sbe-port-roles live           apply 后断/挂 eth0 并重载 network、firewall
+#   sbe-port-roles status         打印角色、SSDK 成员表与 UCI 状态
+#   sbe-port-roles set <role>     写 sbe_ports.main.wan_port 后按 live 收敛
+
+SBE_CONF=sbe_ports
+DEFAULT_ROLE=eth1
+TAG=sbe-port-roles
+
+log() { logger -t "$TAG" "$*" 2>/dev/null; }
+say() { printf '%s\n' "$*"; log "$*"; }
+die() { say "错误：$*"; exit 1; }
+
+usage() {
+	printf '%s\n' \
+		"用法：sbe-port-roles [apply|live|status|set <eth0|eth1|none>]" \
+		"  apply   按 sbe_ports.main.wan_port 收敛（开机 S19；不重载网络）" \
+		"  live    apply 并断/挂 eth0、重载 network 与 firewall" \
+		"  status  打印当前角色、SSDK 成员表与 UCI 状态" \
+		"  set R   写入角色后按 live 收敛"
+}
+
+read_role() {
+	local r
+	r=$(uci -q get "$SBE_CONF.main.wan_port" 2>/dev/null)
+	case "$r" in
+	eth0 | eth1 | none) printf '%s' "$r" ;;
+	'') printf '%s' "$DEFAULT_ROLE" ;;
+	*)
+		log "wan_port='$r' 非法，回落到 $DEFAULT_ROLE"
+		printf '%s' "$DEFAULT_ROLE"
+		;;
+	esac
+}
+
+table_for() {
+	case "$1" in
+	eth0) SSDK_PORTS="3:0x31 4:0x29 5:0x19 6:0x01" ;;
+	eth1) SSDK_PORTS="3:0x51 4:0x49 5:0x01 6:0x19" ;;
+	none) SSDK_PORTS="3:0x71 4:0x69 5:0x59 6:0x39" ;;
+	esac
+}
+
+# member get 的输出形如 "[Member Port Bitmap]:0x51"（api_desc + 通用 PBMP
+# 打印）。抓最后一处匹配，转小写便于比较。
+ssdk_member_get() {
+	ssdk_sh portVlan member get "$1" 2>/dev/null |
+		sed -n 's/.*Member Port Bitmap\]:[[:space:]]*\(0[xX][0-9a-fA-F]*\).*/\1/p' |
+		tail -n 1 | tr 'A-FX' 'a-fx'
+}
+
+ssdk_program() {
+	local role=$1 spec port want got
+
+	table_for "$role"
+	for spec in $SSDK_PORTS; do
+		port=${spec%%:*}
+		want=${spec#*:}
+		if ! ssdk_sh portVlan member update "$port" "$want" >/dev/null 2>&1; then
+			say "ssdk_sh portVlan member update $port $want 失败"
+			return 1
+		fi
+		got=$(ssdk_member_get "$port")
+		# 按数值比较：ssdk_sh 把 1 打成 "0x1"，目标写作 "0x01"，字符串比较会误判。
+		if [ -z "$got" ] || [ "$((got))" -ne "$((want))" ]; then
+			say "端口 $port 成员表回读 ${got:-<读不到>}，期望 $want"
+			return 1
+		fi
+	done
+	ssdk_sh fdb entry flush 0 >/dev/null 2>&1 || log "fdb entry flush 0 失败（非致命）"
+	log "SSDK 成员表已按 $role 写入并回读校验通过"
+	return 0
+}
+
+# 25.12 内核不带 devtmpfs，/dev 由 procd 的 makedev 规则补；若 switch_ssdk
+# 的 misc 节点没被建出来（模块装载与 makedev 的先后不保证），按内核报告的
+# major:minor 补一次。幂等；建不出来就返回 1，由 ssdk_sh 自己报错。
+ensure_ssdk_dev() {
+	local dev
+
+	[ -e /dev/switch_ssdk ] && return 0
+	[ -r /sys/class/misc/switch_ssdk/dev ] || return 1
+	dev=$(cat /sys/class/misc/switch_ssdk/dev 2>/dev/null)
+	[ -n "$dev" ] || return 1
+	mknod -m 660 /dev/switch_ssdk c "${dev%%:*}" "${dev##*:}" 2>/dev/null \
+		|| return 1
+	log "补建 /dev/switch_ssdk（misc $dev）"
+	return 0
+}
+
+# 读回四个物理口并与角色目标值数值比较；任一读不到或不符即返回 1。
+ssdk_table_matches() {
+	local role=$1 spec port got
+
+	command -v ssdk_sh >/dev/null 2>&1 || return 1
+	ensure_ssdk_dev || return 1
+	table_for "$role"
+	for spec in $SSDK_PORTS; do
+		port=${spec%%:*}
+		got=$(ssdk_member_get "$port")
+		[ -n "$got" ] && [ "$((got))" -eq "$(( ${spec#*:} ))" ] || return 1
+	done
+	return 0
+}
+
+ssdk_apply() {
+	local role=$1 force=$2
+
+	# 本芯片开机后成员表是驱动写的全 1 平面表（见文件头），DTS 位图不会
+	# 落到硬件，所以只有读回已是目标表才能跳过写入。
+	if [ "$force" != 1 ] && ssdk_table_matches "$role"; then
+		log "角色 $role 的成员表已是目标值，跳过 SSDK 写入"
+		return 0
+	fi
+	if ! command -v ssdk_sh >/dev/null 2>&1; then
+		say "ssdk_sh 不存在（镜像未打包 qca-ssdk-shell），无法设置硬件成员表"
+		return 1
+	fi
+	ensure_ssdk_dev || log "/dev/switch_ssdk 不存在且无法补建（qca-ssdk 未装载？）"
+	if ssdk_program "$role"; then
+		return 0
+	fi
+	say "按 $DEFAULT_ROLE 恢复硬件表（尽力）"
+	ssdk_program "$DEFAULT_ROLE" || log "恢复默认成员表也失败"
+	return 1
+}
+
+brlan_section() {
+	uci -q show network 2>/dev/null |
+		sed -n "s/^network\.\([^.][^.]*\)\.name='br-lan'\$/\1/p" | head -n 1
+}
+
+uci_interfaces() {
+	uci -q show network 2>/dev/null | sed -n 's/^network\.\([^.=][^=]*\)=interface$/\1/p'
+}
+
+# 返回 0 = 未变，1 = 已改。
+uci_set_brlan_ports() {
+	local sec=$1 want=$2 cur p
+	cur=$(uci -q get "network.$sec.ports" 2>/dev/null)
+	[ "$cur" = "$want" ] && return 0
+	uci -q delete "network.$sec.ports" 2>/dev/null
+	for p in $want; do
+		uci -q add_list "network.$sec.ports=$p"
+	done
+	return 1
+}
+
+# 凡 device 是 eth0/eth1 的接口节跟随角色；none 时置 auto=0 但保留
+# proto/账号/密码。pppoe 的 wan6 用 device='@wan'，只做 none 的停用。
+# 返回 0 = 未变，1 = 已改。
+uci_sync_wan() {
+	local role=$1 iface dev target changed=0
+
+	case "$role" in
+	eth0) target=eth0 ;;
+	eth1) target=eth1 ;;
+	none) target=none ;;
+	esac
+	for iface in $(uci_interfaces); do
+		dev=$(uci -q get "network.$iface.device" 2>/dev/null)
+		case "$dev" in
+		eth0 | eth1)
+			if [ "$target" = none ]; then
+				[ "$(uci -q get "network.$iface.auto" 2>/dev/null)" = 0 ] ||
+					{ uci -q set "network.$iface.auto=0" && changed=1; }
+			else
+				if [ "$dev" != "$target" ]; then
+					uci -q set "network.$iface.device=$target" && changed=1
+				fi
+				if [ "$(uci -q get "network.$iface.auto" 2>/dev/null)" = 0 ]; then
+					uci -q delete "network.$iface.auto" && changed=1
+				fi
+			fi
+			;;
+		'@wan' | '@pppoe-wan')
+			if [ "$target" = none ] &&
+				[ "$(uci -q get "network.$iface.auto" 2>/dev/null)" != 0 ]; then
+				uci -q set "network.$iface.auto=0" && changed=1
+			fi
+			;;
+		esac
+	done
+	return $changed
+}
+
+desired_lan_ports() {
+	case "$1" in
+	eth0) printf '%s\n' "eth1 eth2 eth3" ;;
+	none) printf '%s\n' "eth0 eth1 eth2 eth3" ;;
+	*) printf '%s\n' "eth0 eth2 eth3" ;;
+	esac
+}
+
+desired_wan_dev() {
+	case "$1" in
+	eth0 | eth1) printf '%s' "$1" ;;
+	*) printf '' ;;
+	esac
+}
+
+norm_ports() { tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' '; }
+
+# 0 = board.json 与角色一致；1 = 需要重建。无法核对（缺 jsonfilter 或文件）
+# 时按一致处理，避免无谓地删重建。
+board_matches() {
+	local role=$1 dev want got
+	[ -f /etc/board.json ] || return 1
+	command -v jsonfilter >/dev/null 2>&1 || return 0
+	dev=$(jsonfilter -i /etc/board.json -e '@.network.wan.device' 2>/dev/null)
+	[ "$dev" = "$(desired_wan_dev "$role")" ] || return 1
+	want=$(desired_lan_ports "$role" | norm_ports)
+	got=$(jsonfilter -i /etc/board.json -e '@.network.lan.ports[*]' 2>/dev/null | norm_ports)
+	[ "$got" = "$want" ] || return 1
+	return 0
+}
+
+# board.json 由 /bin/board_detect 从 board.d 生成，而 board.d 只认「文件不存在」
+# 才写，所以先备份再删、重建成功后删除备份；失败还原。整个文件都是 board.d
+# 的确定性输出（同一套脚本、同一份 /tmp/sysinfo），重建不会丢字段。
+board_sync() {
+	local role=$1
+	board_matches "$role" && return 0
+	if ! command -v jsonfilter >/dev/null 2>&1; then
+		log "无 jsonfilter，跳过 board.json 同步（只影响 LuCI 端口面板）"
+		return 0
+	fi
+	[ -f /etc/board.json ] || return 0
+	cp -f /etc/board.json /tmp/board.json.sbe-prev || return 1
+	rm -f /etc/board.json
+	if /bin/board_detect && board_matches "$role"; then
+		rm -f /tmp/board.json.sbe-prev
+		log "board.json 网络段已按角色 $role 重建"
+		return 0
+	fi
+	if [ -s /tmp/board.json.sbe-prev ]; then
+		mv -f /tmp/board.json.sbe-prev /etc/board.json
+	fi
+	log "board.json 重建失败，已还原上一份（只影响 LuCI 端口面板）"
+	return 1
+}
+
+live_reload() {
+	local role=$1
+	if [ "$role" = eth0 ]; then
+		if [ "$(basename "$(readlink -f /sys/class/net/eth0/master 2>/dev/null)" 2>/dev/null)" = br-lan ]; then
+			ip link set dev eth0 nomaster 2>/dev/null && log "eth0 已从 br-lan 摘除"
+		fi
+	fi
+	/etc/init.d/network reload >/dev/null 2>&1 || log "network reload 失败"
+	/etc/init.d/firewall reload >/dev/null 2>&1 || log "firewall reload 失败"
+	if [ "$role" != eth0 ] && [ -x /usr/sbin/eth0-lan-attach ]; then
+		/usr/sbin/eth0-lan-attach attach >/dev/null 2>&1 &
+	fi
+}
+
+apply_role() {
+	local role=$1 force=$2 brsec want_ports changed=0
+
+	ssdk_apply "$role" "$force" ||
+		die "SSDK 成员表未能收敛到 $role；UCI 保持不变（避免软硬不一致）"
+
+	brsec=$(brlan_section)
+	[ -n "$brsec" ] || die "network 配置里找不到 br-lan device 节"
+
+	case "$role" in
+	eth1) want_ports="eth2 eth3" ;;
+	*) want_ports="eth1 eth2 eth3" ;;
+	esac
+	uci_set_brlan_ports "$brsec" "$want_ports" || changed=1
+	uci_sync_wan "$role" || changed=1
+
+	if [ "$changed" = 1 ]; then
+		uci -q commit network || die "uci commit network 失败"
+		log "network UCI 已更新：br-lan ports='$want_ports'"
+	fi
+
+	board_sync "$role" || log "board.json 网络段未同步（只影响 LuCI 端口面板显示）"
+
+	[ "$force" = 1 ] && live_reload "$role"
+	return 0
+}
+
+do_status() {
+	local role=$1 brsec iface dev port
+
+	brsec=$(brlan_section)
+	printf 'wan_port=%s\n' "$role"
+	printf 'br-lan ports=%s\n' "${brsec:+$(uci -q get "network.$brsec.ports")}"
+	for iface in $(uci_interfaces); do
+		dev=$(uci -q get "network.$iface.device" 2>/dev/null)
+		case "$dev" in
+		eth0 | eth1 | '@wan' | '@pppoe-wan')
+			printf '%s device=%s auto=%s\n' "$iface" "$dev" \
+				"$(uci -q get "network.$iface.auto" 2>/dev/null)"
+			;;
+		esac
+	done
+	if command -v ssdk_sh >/dev/null 2>&1; then
+		for port in 3 4 5 6; do
+			printf 'ssdk port%s member=%s\n' "$port" "$(ssdk_member_get "$port")"
+		done
+	else
+		printf 'ssdk_sh 不可用\n'
+	fi
+	if board_matches "$role"; then
+		printf 'board.json 与角色一致\n'
+	else
+		printf 'board.json 与角色不一致（LuCI 端口面板会显示旧角色）\n'
+	fi
+}
+
+do_set() {
+	local role=$1
+	case "$role" in
+	eth0 | eth1 | none) ;;
+	*)
+		printf '非法角色：%s\n' "${role:-<空>}" >&2
+		usage
+		exit 2
+		;;
+	esac
+	# uci set 对该版本 uci 只在配置文件已存在时生效：文件不存在时直接
+	# "Entry not found"（-q 吞掉后只剩 rc=1），必须先建空文件。
+	[ -f "/etc/config/$SBE_CONF" ] || touch "/etc/config/$SBE_CONF" ||
+		die "无法创建 /etc/config/$SBE_CONF"
+	uci -q get "$SBE_CONF.main" >/dev/null 2>&1 || uci -q set "$SBE_CONF.main=$SBE_CONF"
+	uci -q set "$SBE_CONF.main.wan_port=$role" || die "写 $SBE_CONF 失败"
+	uci -q commit "$SBE_CONF" || die "commit $SBE_CONF 失败"
+	say "角色已写入 $SBE_CONF.main.wan_port=$role"
+	apply_role "$role" 1
+}
+
+# mainline 镜像上 SSDK 不装载、成员表不存在：整个脚本不适用（两个镜像共用
+# rootfs，判据见 nss-board）。
+/usr/lib/sbe1v1k/nss-board || {
+	printf '%s\n' 'sbe-port-roles：本镜像是 mainline 数据通路，端口角色由 board.d 管理' >&2
+	exit 1
+}
+
+case "${1:-apply}" in
+apply)
+	role=$(read_role)
+	say "端口角色：$role"
+	apply_role "$role" 0
+	;;
+live)
+	role=$(read_role)
+	say "端口角色：$role（live 生效）"
+	apply_role "$role" 1
+	;;
+status) do_status "$(read_role)" ;;
+set) do_set "${2:-}" ;;
+-h | --help | help) usage ;;
+*)
+	usage
+	exit 2
+	;;
+esac

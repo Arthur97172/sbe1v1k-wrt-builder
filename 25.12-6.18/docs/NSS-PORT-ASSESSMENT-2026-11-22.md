@@ -192,7 +192,7 @@ NSS 包**只编译不安装**，任何一步失败都不影响现有可启动镜
 defconfig 丢弃），验证后恢复原 `.config`。本阶段验证即按此法（备份
 `/tmp/config.before-s3c`），完成后已恢复。
 
-## 5. S3d 方案：NSS DTS 与设备配置（未实施，下一步）
+## 5. S3d 结果：NSS DTS 与设备配置（2026-11-23，已实施）
 
 6.18 上游的板级 DTS（`target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts`，
 含 mainline PPE 节点 `qcom_ppe`、真实 PHY/MDIO 接线，S1b 真机 PASS）是硬件
@@ -225,6 +225,98 @@ mainline PPE 节点已删；设备侧（nss-load 日志、`/sys/ssdk`、加速�
 首启网络不启动——diag/fallback 档（tier=wired/off）与 6.12 的
 budget 回退机制原样移植，作为刷机兜底。
 
+### 5.1 实际落地（2026-11-23 实施，与上面的预方案相比有三处偏离）
+
+**两个设备、一份 rootfs。** 设备变体 `Device/askey_sbe1v1k-nss`
+（补丁 0032）与 mainline `Device/askey_sbe1v1k` 同目标、同一份包选择与
+overlay（`DEVICE_PACKAGES` 取并集；两份 rootfs 内容等价，由各自一遍构建
+产出），烧哪份 DTB 决定数据通路。这样做的原因：运行时件（nss-load、
+sbe-port-roles、eth0-lan-attach、sbe-lan-mac、uci-defaults）无法在两个
+rootfs 之间按设备区分，共用后由唯一判据——设备树——把关：
+
+- mainline DTB 里 `ethernet@3a000000`（qcom PPE）节点在场；
+  NSS DTB 由补丁 0031 的 `/delete-node/ &qcom_ppe;` 删除该节点。
+- 新增 `/usr/lib/sbe1v1k/nss-board`（3 行）：节点在场则 exit 1。
+- `init.d/nss`（S15）、`sbe-port-roles`（S19）、`sbe-lan-mac`（S19）、
+  `eth0-lan-attach` 与首启脚本 `99-spectrum-eth0-unmanaged-lan` 全部以
+  `nss-board` 门控；`nss-load` 自身也拒绝在 mainline 上运行
+  （board.d/02_network 早于 S15 运行，那时只能用 DTB 判别，所以同一判据）。
+- mainline 镜像里 NSS kmod 也在但不会被装载；`kmod-qcom-ppe` 因此在
+  seed 里保持 `=y`（与 6.12 树不同，那边可以关）。
+
+**qca8084 重名是 6.18 的真问题，不是“上游已无冲突”。** 6.18.64 的
+qualcommbe 目标 `CONFIG_QCA808X_PHY=y`，`drivers/net/phy/qcom/qca808x.c`
+注册了 "Qualcomm QCA8084" libphy 驱动，与 QSDK qca8084-phy.ko 抢名 -16，
+整条 ssdk→ppe→dp/sfe/ecm 装载链失败（与 6.12 的 patches/0030 同一故障）。
+补丁 0034（内层 0515）照 6.12 的修法：只删 `qca808x_driver[]` 里的
+QCA8084 条目，保留 QCA8081 厂商驱动（genphy 下 2.5G 假链路），四个失去
+引用的入口函数标 `__maybe_unused`（`CONFIG_WERROR=y`）。
+
+**DTS 构建路径**：板级 DTS 放 `target/linux/qualcommbe/dts/`
+（`DEVICE_DTS_DIR := ../dts`），NSS SoC 级节点在 `dts/ipq9574-nss.dtsi`
+（575 行，6.12 裁剪）。2.5G/10G 口的 PHY 复位 GPIO 沿用板文件
+（tlmm 60/52），ess-switch 端口调度表与 6.12 一致
+（lan_bmp 0x38 / wan 0x40，APPE 下不生效只是让 ssdk 有表可读）。
+
+### 5.2 补丁与文件清单
+
+| 补丁 | 内容 |
+|---|---|
+| 0031 | 新增 `dts/ipq9574-nss.dtsi` 与 `dts/ipq9570-sbe1v1k-nss.dts`（含 `/delete-node/ &qcom_ppe;`，去掉 hog 注释块与 mainline PPE 引用） |
+| 0032 | `image/ipq95xx.mk` 增加 `Device/askey_sbe1v1k-nss`（VARIANT NSS、DEVICE_DTS `ipq9570-sbe1v1k-nss`、KERNEL_LOADADDR 0x42200000、NSS 包集） |
+| 0033 | `board.d/02_network` 的 `askey,sbe1v1k` 分支按 DTB 分流：mainline 用 `lan1 lan2 lan3`/`wan`，NSS 按 `sbe_ports.main.wan_port` 给 eth* 角色 |
+| 0034 | 内核 `patches-6.18/0515`（上面的 qca8084 条目删除） |
+
+运行期 overlay（`files/`，全部随 rootfs 进两个镜像、靠 `nss-board` 门控）：
+`etc/nss.conf`（首镜像 `tier=wired`，budget=3）、`etc/init.d/nss`（S15）、
+`usr/sbin/nss-load`、`usr/sbin/sbe-port-roles` + `init.d`（S19）、
+`usr/sbin/eth0-lan-attach` + `init.d` + 两个 hotplug 处理器、
+`init.d/sbe-lan-mac`（S19）、`uci-defaults/99-spectrum-eth0-unmanaged-lan`、
+`rc.d` 三个符号链接。`nss-load`/`sbe-port-roles`/`eth0-lan-attach`/
+`sbe-lan-mac`/`99-spectrum-*` 与 6.12 同源拷贝后再加门控。
+
+`verify-image.sh` 改为两镜像形态：各一份 sysupgrade/initramfs；mainline FIT
+必须含 `qcom,ipq9574-ppe`，NSS FIT 必须含 `qcom,ess-switch-ipq95xx`/
+`qcom,nss-dp` 且不含 `qcom,ipq9574-ppe`；两份 root 各自解包，逐项断言
+overlay、NSS 服务门控与 required 包清单（不比较两份 root 的字节一致性：
+它们来自各自的一遍构建，内容等价但不是同一文件）。
+
+设备侧仍是 **NOT TESTED**：NSS 镜像首启若 EDMA/交换机拓扑不符，预期是
+网口不亮；兜底为 wire 档 + budget 回退（与 6.12 同机制），恢复路径见
+`docs/` 恢复模式流程。真机验证（nss-load 日志、`/sys/ssdk`、加速计数）
+留 S3e，需用户单独批准。
+
+### 5.3 两遍构建与静态校验（2026-11-23 本机，S3d 判据达成）
+
+**设备选择是 kconfig choice。** 两个设备符号同时 `=y` 时 kconfig 只保留
+最后一个（`override: ... changes choice state`），前一个根本不进镜像图——
+最初 seed 两个都写，结果 mainline 产物停留在旧时间戳、verify 大面积 FAIL。
+落地方式：seed 默认只写 `askey_sbe1v1k-nss=y`，新增
+`scripts/ci/build-images.sh` 以 seed 为基线用 sed 改设备符号后**顺序跑两遍**
+（先 NSS、后 mainline），每遍 defconfig 后断言
+`CONFIG_TARGET_PROFILE` 真的是对应设备；`scripts/local/build-image.sh` 与
+CI workflow 都改走这个脚本。
+
+**增量细节。** 每个包的配置戳文件名编码 `PKG_CONFIG_DEPENDS` 的取值
+（`include/package.mk` 的 `confvar`），改 `.config` 内容不会按 mtime 触发
+全树重配；但脚本仍避免无谓改写：种子文本写盘、defconfig 之后再与旧
+`.config` 比较，内容相同就恢复 mtime。实测第二遍（mainline）只重出
+DTB/FIT/squashfs，两遍合计约 5 分钟。
+
+**结果**：`scripts/ci/build-images.sh world` EXIT=0，NSS 镜像 02:49、
+mainline 02:52 产出；`verify-image.sh` **PASS=128 FAIL=0**，两份 root 的
+apk 数据库反查各 119/0/0。sysupgrade 哈希：
+
+```
+387edcc01f227a0bdf93c9da3cc7174f9e54ec833f2e1494a68f5ee33cbb9d4a  ...-nss-squashfs-sysupgrade.bin
+0cf335d2c47dfa32407cb00631fa5992293bdf5d501e97dd22d6d2b33728fe67  ...askey_sbe1v1k-squashfs-sysupgrade.bin
+```
+
+两个 manifest 都含 `kmod-qca-ssdk-nohnat`、`kmod-qca-nss-dp|ppe|ppe-ds|
+ppe-vp|ppe-rule|ppe-ath-clients|ppe-bridge-mgr|ppe-vlan-mgr|sfe|
+ecm-standard` 与 `qca-ssdk-shell`；mainline 镜像里这些模块不会被装载
+（`nss-board` 门控）。GCC 15 编 qca-ssdk-shell 的 C23 语义问题见 §6 第 8 条。
+
 ## 6. 已知难点（按 6.12 踩坑记录预判）
 
 1. **`register_sysctl` 哨兵**（6.11+ 宏计入 `{}` 尾部哨兵）：6.12 用
@@ -237,10 +329,19 @@ budget 回退机制原样移植，作为刷机兜底。
    6.12 的 PCS 时钟父节点经验（[[nsscc-port5-pcs-clock-parents]]）。
 5. **`netdev_ops` 签名**：`ndo_start_xmit` 返回 `netdev_tx_t` 不变，但
    `ndo_change_mtu`、`ndo_ioctl` 等在新版本有变化。
-6. **qca8084 重名**（6.12 的 0030）：6.18 上游已无 qca8084 内置驱动冲突，
-   但要复核 ssdk 是否还会注册同名 PHY。
+6. **qca8084 重名**（6.12 的 0030）：**6.18 同样存在**——6.18.64 的
+   qualcommbe 目标 `CONFIG_QCA808X_PHY=y` 内置注册 "Qualcomm QCA8084"，
+   与 QSDK 模块抢名 -16；已由补丁 0034（内层 0515）照 6.12 修法解决
+   （§5.1）。
 7. **DMA 池对齐**：QSDK 的 NSS 缓冲池与 6.18 的 `dma_alloc_coherent`
    行为差异（[[ath12k-reserved-dma-pool-order-alignment]] 是 WiFi 侧同类问题）。
+8. **GCC 15 的 C23 语义**（S3d 构建实测）：25.12 main 的工具链是 gcc-15.3.0，
+   默认 `-std=gnu23`，`sw_error_t (*f)()` 这类老式函数指针原型被解释为
+   “零参数”，qca-ssdk-shell（用户态 ssdk_sh）因此大面积报
+   `too many arguments to function`。6.12 树用 gcc-14 不受影响。修法：
+   `nss/packages/qca-ssdk-shell/Makefile` 给厂商构建传
+   `CFLAGS="$(TARGET_CFLAGS) -std=gnu17"`，不改厂商源码。内核模块
+   （ssdk/dp/ppe/sfe/ecm）走内核自己的 gnu11 编译选项，不受此影响。
 
 ## 7. 不做的事
 

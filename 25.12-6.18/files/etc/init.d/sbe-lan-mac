@@ -1,0 +1,73 @@
+#!/bin/sh /etc/rc.common
+#
+# 板级 MAC 固定（LAN 侧）。
+#
+# qca-nss-dp 只从 DT 取 MAC：GMAC1/GMAC2（eth0/eth1）由 bootloader 通过
+# local-mac-address 注入（f4:52:46:9d:db:20/21），GMAC3/GMAC4（eth2/eth3）
+# 没有，驱动退化为 eth_hw_addr_random()——本地管理位为 1 的随机 MAC，每次
+# 启动都变（dmesg: "GMAC3/GMAC4 Invalid MAC@ - using …"）。br-lan 默认继承
+# 端口里数值最小的 MAC，随机值多数时候小于 eth0 的 f4:…，于是 br-lan 的
+# MAC、fe80:: 链路本地地址每次重启都跟着变。
+#
+# 这里用 eth0 的稳定 MAC 派生 eth2/eth3 = 基址 +2/+3（即延续厂商序列
+# …:22/…:23），在 netifd 建桥之前写回；eth0 随后被 eth0-lan-attach 挂进
+# br-lan，桥的 MAC 自动收敛到数值最小的 f4:…:20，跨重启恒定。
+#
+# S19：晚于 nss(S15，qca-nss-dp 的装载点)、早于 network(S20，建 br-lan)。
+# NSS 档位为 off 时这些 netdev 不存在，脚本安静跳过。
+#
+# 只在当前 MAC 是随机本地管理 MAC 时才改写：将来 bootloader 或 DT 开始给
+# GMAC3/4 注入全局 MAC 时，这里自动让位，不做覆盖。
+
+START=19
+
+log() {
+	logger -t sbe-lan-mac "$*"
+}
+
+# 48 位 MAC 加法：mac_add <aa:bb:cc:dd:ee:ff> <n>
+mac_add() {
+	local hex v
+	hex=$(printf '%s' "$1" | tr -d ':')
+	v=$((0x$hex))
+	v=$((v + $2))
+	printf '%02x:%02x:%02x:%02x:%02x:%02x' \
+		$(( (v >> 40) & 255 )) $(( (v >> 32) & 255 )) \
+		$(( (v >> 24) & 255 )) $(( (v >> 16) & 255 )) \
+		$(( (v >> 8) & 255 )) $(( v & 255 ))
+}
+
+pin_one() {
+	local dev=$1 want=$2 cur first
+	[ -e "/sys/class/net/$dev/address" ] || return 0
+	cur=$(cat "/sys/class/net/$dev/address")
+	[ "$cur" = "$want" ] && return 0
+	first=${cur%%:*}
+	if [ $((0x$first & 2)) -ne 2 ]; then
+		log "$dev 的 MAC $cur 不是随机本地管理地址，保持不动"
+		return 0
+	fi
+	if ip link set dev "$dev" address "$want"; then
+		log "$dev: $cur -> $want"
+	else
+		log "$dev: 设置 $want 失败（当前 $cur）"
+	fi
+}
+
+start() {
+	local base
+	# mainline 镜像的 eth2/eth3 是 lan2/lan3，MAC 由 6.18 设备树 nvmem 给出
+	# （补丁 0003），不需要这里派生；两个镜像共用 rootfs，所以先判通路。
+	/usr/lib/sbe1v1k/nss-board || return 0
+	if [ ! -e /sys/class/net/eth0/address ]; then
+		log "eth0 不存在（NSS dp 未装载），跳过"
+		return 0
+	fi
+	base=$(cat /sys/class/net/eth0/address)
+	pin_one eth2 "$(mac_add "$base" 2)"
+	pin_one eth3 "$(mac_add "$base" 3)"
+}
+
+stop() {
+	return 0
+}

@@ -1,0 +1,368 @@
+#!/bin/sh
+# 25.12-6.18 NSS 数据通路分层装载器（自 25.12-6.12 原样移植）。
+#
+# 背景：25.12 上 QSDK NSS 栈不再自动装载/自动启动（AUTOLOAD 与 START 都已
+# 移除，见 25.12-6.12 树的 docs/NSS_AUTOLOAD_OFF.md）。各层由本脚本按档位
+# 显式装载，目的是把启动故障定位到具体一层（ssdk / dp / ppe / ecm）。
+#
+# mainline 镜像与 NSS 镜像共用 rootfs：mainline 镜像上本脚本拒绝工作
+# （qca-ssdk 会和 mainline PPE 驱动抢 0x3a000000），判据见 nss-board。
+#
+# 用法：
+#   nss-load status           # 当前档位、计数器、各层模块/接口状态
+#   nss-load load wired       # ssdk + dp（默认档位）
+#   nss-load load full        # wired + ppe + ecm
+#   nss-load load sdk|dp|ppe|ecm|sfe   # 单层，供逐层定位
+#   nss-load commit           # 标记本次启动已存活，清零启动计数器
+#   nss-load tier <name>      # 修改 /etc/nss.conf 的 tier（下次启动生效）
+#   nss-load stop ecm|sfe     # 只停 ECM/SFE；不回退 ppe/dp/ssdk（见下）
+#
+# 不做 rmmod qca-nss-ppe / qca-nss-dp / qca-ssdk：QSDK 的 ppe_drv_remove()
+# 路径在卸载时出过 oops（参照项目已记录），要回退请直接 reboot。
+#
+# 所有动作都写 logger 与 /sbe-boot-trace/events.log（overlay，断电后可读）。
+
+TRACE=/sbe-boot-trace
+CONF=/etc/nss.conf
+STATE=${NSS_STATE_DIR:-$TRACE}
+COUNTER=$STATE/nss-boots
+
+log() {
+	echo "nss-load: $*"
+	logger -t nss-load "$*" 2>/dev/null
+	[ -x /usr/sbin/sbe-boot-trace ] && /usr/sbin/sbe-boot-trace event "nss-load: $*"
+	return 0
+}
+
+load_config() {
+	tier=wired
+	fallback=wired
+	budget=3
+	[ -f "$CONF" ] && . "$CONF"
+}
+
+init_state() {
+	if ! mkdir -p "$STATE" 2>/dev/null || [ ! -w "$STATE" ]; then
+		STATE=/tmp
+		COUNTER=$STATE/nss-boots
+	fi
+}
+
+counter_get() {
+	local n=
+	[ -f "$COUNTER" ] && n=$(cat "$COUNTER" 2>/dev/null)
+	case $n in
+		''|*[!0-9]*) n=0 ;;
+	esac
+	echo "$n"
+}
+
+counter_set() {
+	echo "$1" > "$COUNTER" 2>/dev/null
+}
+
+budget_bump() {
+	local n
+	n=$(counter_get)
+	n=$((n + 1))
+	counter_set "$n"
+	echo "$n"
+}
+
+underscored() {
+	echo "$1" | tr '-' '_'
+}
+
+module_loaded() {
+	[ -d "/sys/module/$(underscored "$1")" ]
+}
+
+# 返回 0=已装载/装载成功，1=装载失败，2=本镜像没装这个模块（跳过）
+load_one() {
+	local m=$1 u ko rc
+	u=$(underscored "$m")
+	module_loaded "$m" && { log "  $m already loaded"; return 0; }
+	ko="/lib/modules/$(uname -r)/$m.ko"
+	[ -f "$ko" ] || { log "  SKIP $m: $ko not installed"; return 2; }
+	log "  modprobe $m"
+	modprobe "$m" 2>&1 | while IFS= read -r rc; do log "  modprobe: $rc"; done
+	if module_loaded "$m"; then
+		log "  $m loaded"
+		return 0
+	fi
+	log "  FAIL $m did not load"
+	dmesg 2>/dev/null | tail -n 20 | while IFS= read -r rc; do log "  dmesg: $rc"; done
+	return 1
+}
+
+stage_sdk() {
+	local rc=0 waited=0 r
+	log "stage sdk: begin (uptime $(cut -d' ' -f1 /proc/uptime 2>/dev/null))"
+	load_one qca-ssdk
+	case $? in
+	0)
+		# 等价于 /etc/init.d/qca-ssdk 的等待：SSDK 初始化完成后才有 /sys/ssdk。
+		# 那个脚本的其余部分（chip WAR、ssdk_sh 读 chip id）在本镜像里要么
+		# 全被注释、要么 ssdk_sh 没装，所以不调用它，只做这个等待。
+		while [ ! -d /sys/ssdk ] && [ "$waited" -lt 10 ]; do
+			sleep 1
+			waited=$((waited + 1))
+		done
+		if [ -d /sys/ssdk ]; then
+			log "stage sdk: /sys/ssdk present after ${waited}s"
+		else
+			log "stage sdk: warning: /sys/ssdk absent after 10s (SSDK init incomplete)"
+		fi
+		log "stage sdk: done"
+		;;
+	2)
+		log "stage sdk: skipped (module not installed)"
+		;;
+	*)
+		rc=1
+		;;
+	esac
+	return $rc
+}
+
+stage_dp() {
+	local rc=0 r
+	log "stage dp: begin (uptime $(cut -d' ' -f1 /proc/uptime 2>/dev/null))"
+	module_loaded qca_ssdk || log "stage dp: warning: qca-ssdk not loaded"
+	# 本镜像里 qca-nss-dp 的 modinfo 是 depends=qca-ssdk,qca-nss-ppe（dp 引用
+	# ppe_drv_* 符号），modprobe 无论如何都会把 ppe 带进来。这里显式先装，
+	# 事件日志才能把 ppe probe 与 dp probe 分开。
+	load_one qca-nss-ppe
+	r=$?
+	[ $r -eq 1 ] && rc=1
+	if [ $rc -eq 0 ]; then
+		load_one qca-nss-dp
+		case $? in
+		0)
+			if [ -x /etc/init.d/qca-nss-dp ]; then
+				log "stage dp: /etc/init.d/qca-nss-dp start"
+				/etc/init.d/qca-nss-dp start
+			fi
+			log "stage dp: done"
+			;;
+		2)
+			log "stage dp: skipped (module not installed)"
+			;;
+		*)
+			rc=1
+			;;
+		esac
+	else
+		log "stage dp: FAIL (dependency qca-nss-ppe)"
+	fi
+	return $rc
+}
+
+stage_ppe() {
+	local m rc=0 r
+	log "stage ppe: begin (uptime $(cut -d' ' -f1 /proc/uptime 2>/dev/null))"
+	module_loaded qca_nss_dp || log "stage ppe: warning: qca-nss-dp not loaded"
+	for m in qca-nss-ppe qca-nss-ppe-ds qca-nss-ppe-vp qca-nss-ppe-rule \
+	         qca-nss-ppe-vlan qca-nss-ppe-bridge-mgr qca-nss-ppe-ath-clients; do
+		load_one "$m"
+		r=$?
+		[ $r -eq 1 ] && rc=1
+	done
+	if [ "$rc" -eq 0 ] && module_loaded qca-nss-ppe; then
+		[ -x /etc/init.d/qca-nss-ppe-bridge-mgr ] && {
+			log "stage ppe: /etc/init.d/qca-nss-ppe-bridge-mgr start"
+			/etc/init.d/qca-nss-ppe-bridge-mgr start
+		}
+		[ -x /etc/init.d/qca-nss-ppe-ds ] && {
+			# 只做 PPEDS 的 IRQ affinity；它本来就没有 START，从未随启动跑过。
+			log "stage ppe: /etc/init.d/qca-nss-ppe-ds start"
+			/etc/init.d/qca-nss-ppe-ds start
+		}
+		log "stage ppe: done"
+	elif [ "$rc" -eq 0 ]; then
+		log "stage ppe: skipped (qca-nss-ppe not installed)"
+	else
+		log "stage ppe: FAIL"
+	fi
+	return $rc
+}
+
+stage_ecm() {
+	log "stage ecm: begin (uptime $(cut -d' ' -f1 /proc/uptime 2>/dev/null))"
+	module_loaded qca_nss_ppe || log "stage ecm: warning: qca-nss-ppe not loaded"
+	[ -x /etc/init.d/qca-nss-ecm ] || { log "stage ecm: FAIL no /etc/init.d/qca-nss-ecm"; return 1; }
+	/etc/init.d/qca-nss-ecm start
+	if [ -d /sys/module/ecm ]; then
+		log "stage ecm: done"
+		return 0
+	fi
+	log "stage ecm: FAIL ecm module absent"
+	dmesg 2>/dev/null | tail -n 20 | while IFS= read -r line; do log "  dmesg: $line"; done
+	return 1
+}
+
+stage_sfe() {
+	local rc=0
+	log "stage sfe: begin (uptime $(cut -d' ' -f1 /proc/uptime 2>/dev/null))"
+	load_one qca-nss-sfe
+	case $? in
+	0)
+		if [ -x /etc/init.d/shortcut-fe ]; then
+			log "stage sfe: /etc/init.d/shortcut-fe start"
+			/etc/init.d/shortcut-fe start
+		fi
+		log "stage sfe: done"
+		;;
+	2)
+		log "stage sfe: skipped (module not installed)"
+		;;
+	*)
+		rc=1
+		;;
+	esac
+	return $rc
+}
+
+do_load() {
+	local rc=0
+	case $1 in
+	sdk) stage_sdk || rc=1 ;;
+	dp) stage_dp || rc=1 ;;
+	ppe) stage_ppe || rc=1 ;;
+	ecm) stage_ecm || rc=1 ;;
+	sfe) stage_sfe || rc=1 ;;
+	wired) stage_sdk || rc=1; stage_dp || rc=1 ;;
+	full) stage_sdk || rc=1; stage_dp || rc=1; stage_ppe || rc=1; stage_ecm || rc=1 ;;
+	*)
+		log "unknown stage '$1' (sdk|dp|ppe|ecm|sfe|wired|full)"
+		return 1
+		;;
+	esac
+	return $rc
+}
+
+do_boot() {
+	local n
+	load_config
+	init_state
+	n=$(budget_bump)
+	if [ "$tier" != off ] && [ -n "$budget" ] && [ "$n" -gt "$budget" ]; then
+		log "boot #$n exceeds budget $budget: using fallback tier '$fallback'"
+		tier=$fallback
+	fi
+	log "boot #$n: tier=$tier value=$tier fallback=$fallback budget=$budget"
+	case $tier in
+	off)
+		log "tier off: no NSS module loaded"
+		;;
+	*)
+		do_load "$tier" && log "boot #$n: tier $tier loaded" \
+			|| log "boot #$n: tier $tier INCOMPLETE (see stages above)"
+		;;
+	esac
+	# 300 秒存活即视为本次启动成功；崩溃时这个子进程随内核一起消失。
+	( sleep 300; /usr/sbin/nss-load commit ) >/dev/null 2>&1 &
+}
+
+do_commit() {
+	local n
+	load_config
+	init_state
+	n=$(counter_get)
+	counter_set 0
+	log "commit: tier=$tier survived; boot counter reset (was $n)"
+}
+
+do_status() {
+	local m line
+	load_config
+	init_state
+	echo "config: $CONF"
+	echo "  tier=$tier fallback=$fallback budget=$budget"
+	echo "  boot counter: $(counter_get) (file $COUNTER)"
+	echo "modules:"
+	for m in qca-ssdk qca-nss-dp qca-nss-ppe qca-nss-ppe-ds qca-nss-ppe-vp \
+	         qca-nss-ppe-rule qca-nss-ppe-vlan qca-nss-ppe-bridge-mgr \
+	         qca-nss-ppe-ath-clients ecm qca-nss-sfe shortcut_fe_cm; do
+		if module_loaded "$m"; then
+			echo "  $m: loaded"
+		elif [ -f "/lib/modules/$(uname -r)/$m.ko" ]; then
+			echo "  $m: not loaded"
+		else
+			echo "  $m: not installed"
+		fi
+	done
+	echo "interfaces:"
+	ip -o link show 2>/dev/null | sed 's/^/  /'
+	echo "paths:"
+	for m in /sys/ssdk /sys/kernel/debug/ecm /proc/sys/ppe; do
+		[ -e "$m" ] && echo "  $m: present" || echo "  $m: absent"
+	done
+	echo "recent nss-load events:"
+	if [ -f "$TRACE/events.log" ]; then
+		grep 'nss-load' "$TRACE/events.log" 2>/dev/null | tail -n 20 | sed 's/^/  /'
+	else
+		echo "  (no $TRACE/events.log)"
+	fi
+}
+
+do_stop() {
+	case $1 in
+	ecm)
+		[ -x /etc/init.d/qca-nss-ecm ] && /etc/init.d/qca-nss-ecm stop
+		log "stop ecm: done (ppe/dp/ssdk 保留，回退请 reboot)"
+		;;
+	sfe)
+		[ -x /etc/init.d/shortcut-fe ] && /etc/init.d/shortcut-fe stop
+		log "stop sfe: done"
+		;;
+	*)
+		log "stop 只支持 ecm|sfe；rmmod ppe/dp/ssdk 有 ppe_drv_remove oops 风险，请 reboot"
+		return 1
+		;;
+	esac
+}
+
+do_set_tier() {
+	local name=$1
+	case $name in
+	sdk|dp|ppe|ecm|sfe|wired|full|off) ;;
+	*) log "tier 取值必须是 sdk|dp|ppe|ecm|sfe|wired|full|off"; return 1 ;;
+	esac
+	[ -f "$CONF" ] || echo "# nss-load: created by nss-load tier" > "$CONF"
+	if grep -q '^tier=' "$CONF"; then
+		sed -i "s/^tier=.*/tier=$name/" "$CONF"
+	else
+		echo "tier=$name" >> "$CONF"
+	fi
+	tier=$name
+	log "tier set to $name in $CONF (下次启动生效；立即生效请 nss-load load $name)"
+}
+
+usage() {
+	cat <<EOF
+用法: nss-load <命令> [参数]
+  status                 当前档位、启动计数器、各层模块与接口状态
+  load <stage>           stage: sdk|dp|ppe|ecm|sfe|wired|full
+  boot                   启动用：读 /etc/nss.conf，按档位装载（S15 自动调用）
+  commit                 标记本次启动成功，清零启动计数器
+  tier <name>            修改 /etc/nss.conf 的 tier（下次启动生效）
+  stop ecm|sfe           只停 ECM/SFE（rmmod ppe/dp/ssdk 有 oops 风险，请 reboot）
+EOF
+}
+
+/usr/lib/sbe1v1k/nss-board || {
+	echo "nss-load: 本镜像是 mainline 数据通路（mainline PPE 节点仍在），NSS 栈不适用" >&2
+	exit 1
+}
+
+cmd=${1:-status}
+case $cmd in
+status) do_status ;;
+load|run) do_load "${2:-wired}" ;;
+boot) do_boot ;;
+commit) do_commit ;;
+tier) do_set_tier "${2:-wired}" ;;
+stop) do_stop "${2:-}" ;;
+*) usage; exit 1 ;;
+esac

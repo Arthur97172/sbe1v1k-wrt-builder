@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+#
+# eth0 的桥成员关系在 netifd 之外维护（与 24.10 相同的机制）。主路径是
+# hotplug.d/iface（netifd 的 lan 事件）与 hotplug.d/net（内核 netdev 事件），
+# 这里只常驻一个 netlink 监听兜底：桥被重建而没有 iface 事件时补挂。
+#
+# 启动顺序保持 23：晚于 network(20)，br-lan 此时已经存在，首次挂接不需要等。
+START=23
+STOP=88
+USE_PROCD=1
+
+start_service() {
+	# mainline 镜像（共用 rootfs）不需要常驻监听：eth0 是 netifd 直接持有
+	# 的 lan1，没有 RTL8261N 假环回问题。
+	/usr/lib/sbe1v1k/nss-board || return 0
+	procd_open_instance monitor
+	procd_set_param command /usr/sbin/eth0-lan-attach monitor
+	procd_set_param respawn 3600 5 5
+	procd_set_param stderr 1
+	procd_close_instance
+}

@@ -1,0 +1,58 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: ipq95xx 按数据通路区分 SBE1V1K 的 LAN/WAN 端口
+
+askey,sbe1v1k 现在对应两个数据通路：mainline 镜像保留上游 PPE 节点
+（soc@0/ethernet@3a000000），接口名是 lan1/lan2/lan3 + wan；NSS 镜像
+在 0031 里删掉了该节点，接口名是 dp 的 eth0..eth3。本脚本早于
+nss-load 运行，不能靠接口是否存在判断，只能看设备树：
+
+- 有 ethernet@3a000000：维持上游 "lan1 lan2 lan3"/"wan"；
+- 没有：按 25.12-6.12 补丁 0023 的角色逻辑写 ethN。默认 eth1
+  （dp2，QCA8081 2.5G，port 5）为 WAN，eth0（dp1，RTL8261N 10G，
+  port 6）、eth2、eth3 为 LAN；sbe_ports.main.wan_port 可把 WAN
+  换到 eth0（10G）或去掉 WAN（"none"，四口全 LAN）。运行期切换仍由
+  /usr/sbin/sbe-port-roles（S19）处理，这里只在 board.json 不存在时
+  生成初值。
+
+eth0 列进 LAN 集合只是为了让 board.json/LuCI 端口面板显示四个口；
+netifd 不拥有它，99-spectrum-eth0-unmanaged-lan 会把它从 br-lan
+摘回去，再由 /usr/sbin/eth0-lan-attach 从 netifd 之外挂桥。
+
+Status: 静态检查，设备侧 NOT TESTED。
+--- a/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network	2026-11-23 02:01:36.664133221 +0000
++++ b/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network	2026-11-23 02:02:49.069082422 +0000
+@@ -15,7 +15,33 @@
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2" "wan"
+ 		;;
+ 	askey,sbe1v1k)
+-		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "wan"
++		# Two data paths share this board name.  The mainline image keeps
++		# the upstream PPE node (soc@0/ethernet@3a000000) and its naming
++		# script (lan1/wan); the NSS image (/delete-node/ &qcom_ppe, see
++		# patch 0031) has no such node and uses dp ethN names with the
++		# NSS port roles instead.  This script runs before nss-load, so
++		# the device tree is the only reliable discriminator here.
++		if [ -e /proc/device-tree/soc@0/ethernet@3a000000 ]; then
++			ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "wan"
++		else
++			# NSS: eth1 (dp2, QCA8081 2.5G, port 5) is WAN by default;
++			# eth0 (dp1, RTL8261N 10G, port 6), eth2 and eth3 are LAN.
++			# Same role switch as 25.12-6.12 patch 0023: sbe_ports.main.
++			# wan_port may move WAN to eth0 or remove it ("none").
++			local wan_port
++			wan_port=$(uci -q get sbe_ports.main.wan_port 2>/dev/null)
++			case "$wan_port" in
++			eth0)
++				ucidef_set_interfaces_lan_wan "eth1 eth2 eth3" "eth0"
++				;;
++			none)
++				ucidef_set_interface_lan "eth1 eth2 eth3 eth0"
++				;;
++			*)
++				ucidef_set_interfaces_lan_wan "eth2 eth3 eth0" "eth1"
++				;;
++			esac
++		fi
+ 		;;
+ 	linksys,ln6001)
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"

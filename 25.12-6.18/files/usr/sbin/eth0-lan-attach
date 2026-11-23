@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# 维护 eth0（dp1，RTL8261N 10G）与 br-lan 的成员关系，但**不让 netifd 拥有
+# eth0**：netifd 在应用 LAN 地址变更时会把端口 tear down，RTL8261N/dp1 会因此
+# 进入假 10G 环回（24.10-6.6 真机上的定案；本文件与其逐行为同一实现）。
+# 本脚本只从外部补桥成员，除了必要时把 eth0 up 起来之外不碰接口状态。
+#
+# 模式：
+#   attach   有界重试的一次性挂接（hotplug 钩子与开机时调用）
+#   monitor  netlink 事件循环兜底（procd 常驻；hotplug 漏掉的路径由它补）
+#
+# 角色：sbe_ports.main.wan_port=eth0 时 eth0 是 WAN（归 netifd），本脚本
+# 不再挂桥。角色读 UCI 而不是 /var/run 开关，跨重启有效；该判断必须放在
+# attach() 里，hotplug 与 monitor 三个入口才能全部覆盖。
+#
+# 退出机制：touch /var/run/eth0-lan-attach.disabled 之后 attach 不再动手，
+# 手工接管桥成员（测试、排查）时不会被脚本抢回去；/var 是 tmpfs，重启即失效。
+
+DISABLE=/var/run/eth0-lan-attach.disabled
+
+log() { logger -t eth0-lan-attach "$*" 2>/dev/null; }
+
+master() {
+	basename "$(readlink -f /sys/class/net/eth0/master 2>/dev/null)" 2>/dev/null
+}
+
+attach() {
+	# mainline 镜像（共用 rootfs）不需要这个 helper：那里 eth0 就是 lan1，
+	# 由 netifd 直接持有，没有 RTL8261N 假环回问题。安静地视为已完成。
+	/usr/lib/sbe1v1k/nss-board || return 0
+	[ -e "$DISABLE" ] && return 0
+	[ "$(uci -q get sbe_ports.main.wan_port 2>/dev/null)" = "eth0" ] && return 0
+	[ -e /sys/class/net/eth0 ] || return 1
+	[ -e /sys/class/net/br-lan ] || return 1
+
+	# 角色回切时 netifd 会把 eth0 置成 admin down，而它可能仍是 br-lan
+	# 成员；如果先判「已在桥里」就早退，eth0 会一直 DOWN。up 必须幂等地
+	# 放在早退之前。
+	ip link set dev eth0 up 2>/dev/null
+	[ "$(master)" = "br-lan" ] && return 0
+
+	ip link set dev eth0 master br-lan 2>/dev/null
+	if [ "$(master)" = "br-lan" ]; then
+		log "attached eth0 to br-lan"
+		return 0
+	fi
+	return 1
+}
+
+case "${1:-attach}" in
+attach)
+	# hotplug 触发点可能略早于 br-lan 就绪，给几秒有界重试；调用方必须后台
+	# 执行，避免拖慢 hotplug-call 里的其它脚本。
+	i=0
+	while [ "$i" -lt 5 ]; do
+		attach && exit 0
+		i=$((i + 1))
+		sleep 1
+	done
+	log "could not attach eth0 to br-lan"
+	exit 1
+	;;
+monitor)
+	# 主路径是 hotplug.d/{iface,net}；这里兜住"桥重建但没有 iface 事件"
+	# 的情况。ip-full 的 ip monitor 逐条 flush，管道读取不会积压。
+	attach
+	ip monitor link | while read -r line; do
+		case "$line" in
+		*br-lan* | *eth0*) attach ;;
+		esac
+	done
+	log "ip monitor exited"
+	;;
+*)
+	echo "usage: $0 {attach|monitor}" >&2
+	exit 2
+	;;
+esac

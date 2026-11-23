@@ -1,0 +1,18 @@
+#!/bin/sh /etc/rc.common
+#
+# 端口角色收敛（sbe_ports.main.wan_port），见 /usr/sbin/sbe-port-roles。
+#
+# START=19 的依据（24.10）：qca-ssdk 在 S16 装载、qca-nss-dp 在 S18，network
+# 在 S20 —— S19 晚于 SSDK 初始化（成员表可写）、早于 netifd 建接口（UCI 的
+# br-lan ports / wan device 直接生效，不需要 reload）。SSDK 表与 UCI 不一致
+# 时脚本自己拒绝改 UCI（见脚本头注释），所以这里不会把启动卡住：失败只记
+# 日志，rcS 继续。
+#
+# mainline 镜像上 SSDK 不装载，本服务整体跳过（两个镜像共用 rootfs）。
+
+START=19
+
+start() {
+	/usr/lib/sbe1v1k/nss-board || return 0
+	/usr/sbin/sbe-port-roles apply
+}

@@ -57,11 +57,15 @@ ifndef CONFIG_TOOLCHAIN_BIN_PATH
 CONFIG_TOOLCHAIN_BIN_PATH=$(TOOLCHAIN_DIR)/bin
 endif
 
+# 厂商 shell 代码是 2010 年代的 C：函数指针表全部写成 `sw_error_t (*f)();`
+# 再按多参调用。GCC 15 默认 -std=gnu23，`()` 变成“零参数”原型，这些调用
+# 全部报 too many arguments（6.12 树用 gcc-14，不受影响）。工具的用途只是
+# 写 SSDK 表，按 gnu17 语义编译即可，不改厂商源码。
 QCASSDK_CONFIG_OPTS+= TOOL_PATH=$(CONFIG_TOOLCHAIN_BIN_PATH) \
                 SYS_PATH=$(LINUX_DIR) \
                 TOOLPREFIX=$(TARGET_CROSS) \
                 KVER=$(LINUX_VERSION) \
-                CFLAGS="$(TARGET_CFLAGS)" \
+                CFLAGS="$(TARGET_CFLAGS) -std=gnu17" \
                 LDFLAGS="$(TARGET_LDFLAGS)" \
                 ARCH=$(LINUX_KARCH)
 

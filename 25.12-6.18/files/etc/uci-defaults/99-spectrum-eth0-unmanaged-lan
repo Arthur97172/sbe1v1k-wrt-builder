@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# 与 24.10-6.6 的 99-spectrum-eth0-unmanaged-lan 同一实现（该版本从厂商 rootfs
+# 的 99-spectrum-eth0-unmanaged-lan-v4312 改编、并在真机上验证）。board.d
+# 把 eth0 列进 LAN 只是为了让 board.json / LuCI 端口面板显示四个口；netifd
+# 不能拥有 eth0，否则 LAN 地址变更时 RTL8261N/dp1 会进入假 10G 环回。
+# 这里把它从生成的 br-lan 端口列表里摘出来，桥成员交给 eth0-lan-attach。
+#
+# 与厂商文件相比：去掉版本后缀；厂商专有的 lan-client-renew 与
+# factory-eth-led 服务不启用（闭源厂商包，LICENSE_REVIEW_REQUIRED）；
+# 保留对过时 lan-apply-watch 的清理，避免保留的旧 overlay 从原厂固件带回来。
+#
+# 6.18：只在 NSS 变体镜像上生效。两个设备共用 rootfs，mainline 镜像上
+# eth0 就是 lan1、由 netifd 直接持有，这里什么都不做（判据见 nss-board）。
+
+# board_name() 来自 /lib/functions.sh；uci-defaults 的 runner（/etc/init.d/boot
+# 的 uci_apply_defaults）只预载 /lib/functions/system.sh，所以必须先自己 source，
+# 否则这里永远拿到空值、脚本静默 exit 0 被当作成功删除。
+. /lib/functions.sh
+
+case "$(board_name 2>/dev/null)" in
+askey,sbe1v1k | spectrum,sbe1v1k) ;;
+*) exit 0 ;;
+esac
+
+# mainline 数据通路镜像：不摘 eth0、不建 sbe_ports、不启用 NSS 侧服务。
+/usr/lib/sbe1v1k/nss-board || exit 0
+
+remove_eth0_from_br_lan() {
+	local section="$1"
+	local name
+
+	config_get name "$section" name
+	[ "$name" = "br-lan" ] || return 0
+	uci -q del_list "network.$section.ports=eth0"
+}
+
+config_load network
+config_foreach remove_eth0_from_br_lan device
+uci -q commit network
+
+# Remove the obsolete helper even when it survived in a preserved overlay.
+/etc/init.d/lan-apply-watch stop 2>/dev/null
+/etc/init.d/lan-apply-watch disable 2>/dev/null
+rm -f /etc/init.d/lan-apply-watch /usr/sbin/lan-apply-watch
+
+# eth0 的桥成员关系由 eth0-lan-attach 在 netifd 之外维护；端口角色
+# （eth0/eth1 谁是 WAN）由 S19 的 sbe-port-roles 按下面这个默认值收敛。
+# 默认 eth1=WAN 就是今天的场景 3；改成 eth0 或 none 后下次开机生效，
+# 运行期切换用 sbe-port-roles set <eth0|eth1|none>。
+if ! uci -q get sbe_ports.main >/dev/null 2>&1; then
+	# 该版本 uci 对不存在的配置文件执行 set 会报 "Entry not found"，
+	# 必须先建空文件。
+	touch /etc/config/sbe_ports || exit 1
+	uci -q set sbe_ports.main=sbe_ports
+	uci -q set sbe_ports.main.wan_port='eth1'
+	uci -q commit sbe_ports
+fi
+
+/etc/init.d/eth0-lan-attach enable
+/etc/init.d/sbe-port-roles enable
+
+exit 0

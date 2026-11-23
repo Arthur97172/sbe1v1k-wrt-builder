@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+# 25.12-6.18 NSS 数据通路启动控制器。
+#
+# QSDK NSS 栈不再随 kmodloader 自动装载（AUTOLOAD 已移除），也不再由各自的
+# S16/S18/S19/S26/S72 脚本自动启动（START 已移除）。本脚本在 S15 读
+# /etc/nss.conf 的档位，交给 /usr/sbin/nss-load boot 分层装载：
+#   wired（6.18 镜像默认）= qca-ssdk + qca-nss-dp，恢复有线管理与网络；
+#   full                  = wired + qca-nss-ppe 全家 + qca-nss-ecm；
+#   off                   = 什么都不装载。
+# 连续 budget 次启动没等到 commit 时用 fallback 档，避免改档把设备锁进复位
+# 循环。机制与 25.12-6.12 相同（细节见该树 docs/NSS_AUTOLOAD_OFF.md）。
+#
+# S15 在 /etc/init.d/boot（S10，调 kmodloader 加载 qca-nss-phy 等）之后、
+# netifd（S20）之前，与原来 ssdk(16)/dp(18) 的位置保持一致。
+#
+# mainline 镜像与 NSS 镜像共用 rootfs，本脚本在 mainline 上必须什么都不做：
+# qca-ssdk 会和 mainline PPE 驱动抢 0x3a000000。判据见 nss-board。
+
+START=15
+
+PROG=/usr/sbin/nss-load
+
+start() {
+	/usr/lib/sbe1v1k/nss-board || {
+		logger -t nss 'mainline 数据通路镜像，跳过 NSS 装载'
+		return 0
+	}
+	[ -x "$PROG" ] || {
+		logger -t nss 'nss-load 缺失，跳过 NSS 档位装载'
+		return 0
+	}
+	"$PROG" boot
+	return 0
+}
+
+stop() {
+	/usr/lib/sbe1v1k/nss-board || return 0
+	# 只停 ECM 与 SFE。rmmod qca-nss-ppe/qca-nss-dp/qca-ssdk 有 ppe_drv_remove
+	# oops 风险，要回退请 reboot。
+	"$PROG" stop ecm
+	"$PROG" stop sfe
+	return 0
+}

@@ -45,9 +45,21 @@ ca-certificates
 kmod-hwmon-pwmfan
 kmod-leds-pwm
 
-# --- 端口角色（与 6.12 的差异） -------------------------------------------
-# 6.12 靠 qca-ssdk-shell 在运行期改 SSDK 成员表；6.18 没有 SSDK，网口角色
-# 由设备树补丁 0001 在编译期固定（2.5G=wan），这里没有任何对应包。
+# --- NSS 数据通路（S3d，2026-11-23；两个设备共用 rootfs）--------------------
+# mainline 镜像也带这些包（DEVICE_PACKAGES 取并集），但 /usr/lib/sbe1v1k/
+# nss-board 按设备树把关，mainline 上不装载。缺失会让 NSS 镜像没有网口。
+kmod-qca-ssdk-nohnat
+kmod-qca-nss-dp
+kmod-qca-nss-ppe
+kmod-qca-nss-ppe-vp
+kmod-qca-nss-ppe-rule
+kmod-qca-nss-ppe-ds
+kmod-qca-nss-ppe-bridge-mgr
+kmod-qca-nss-ppe-vlan-mgr
+kmod-qca-nss-ppe-ath-clients
+kmod-qca-nss-sfe
+kmod-qca-nss-ecm-standard
+qca-ssdk-shell
 
 # --- 公共运行时与包变体 ----------------------------------------------------
 firewall4

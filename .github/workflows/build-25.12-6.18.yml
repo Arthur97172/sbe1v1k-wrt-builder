@@ -1,15 +1,20 @@
 name: 📦 Build 25.12-6.18
 
 # 在 GitHub Actions 上编译 Spectrum SBE1V1K（IPQ9574）OpenWrt main +
-# Linux 6.18 固件（S1：上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k 基线，
-# mainline PPE 数据通路 + 上游 ath12k 固件），并把三个交付镜像发布到
-# 本次运行专属的 GitHub Release。
+# Linux 6.18 固件（上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k 基线），并把
+# 两个设备变体（mainline PPE 兜底、QSDK NSS 数据通路）各 3 个交付镜像
+# 共 6 个资产发布到本次运行专属的 GitHub Release。
+#
+# 设备变体是 kconfig choice，一次 world 只能出一个设备，所以 Build 步骤
+# 调用 scripts/ci/build-images.sh 顺序构建两遍（先 NSS、后 mainline），
+# 每遍都断言设备选择真的生效。
 #
 # 与 25.12-6.12 不同，本树完全基于上游公开源码与 feed：
 #   - openwrt/openwrt @ main（固定提交，见 prepare-tree.sh）
 #   - 官方 feeds（固定提交）
-#   - 本项目补丁 25.12-6.18/patches/（目前只有网口角色交换 0001）
-#   - files/ overlay（首启默认：ttyd 关闭、WAN 放行）
+#   - 本项目补丁 25.12-6.18/patches/（网口角色交换、型号改名、NSS DTS/设备
+#     0031–0034 等）
+#   - files/ overlay（首启默认：ttyd 关闭、WAN 放行、NSS 装载脚本）
 # 无线固件/板级 BDF 来自上游 ath12k-firmware 与 ipq-wifi-askey_sbe1v1k，
 # 不含厂商专有 blob；校准由上游脚本开机时从本机 eMMC 0:ART 提取。
 #
@@ -110,9 +115,11 @@ jobs:
           cat sources/buildroot-25.12-6.18/target/linux/generic/kernel-6.18
 
       - name: Build
+        # 两个设备各跑一遍 world（先 NSS、后 mainline）；失败重编沿用
+        # build.log 里的失败包名，.config 停留在失败那一遍的设备选择上。
         run: |
           set -o pipefail
-          if ./25.12-6.18/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee build.log; then
+          if ./25.12-6.18/scripts/ci/build-images.sh world 2>&1 | tee build.log; then
             exit 0
           fi
           # 非 verbose 的 world 用 `make -s` 跑每个包，包内部的编译错误被丢弃。
@@ -180,10 +187,12 @@ jobs:
           REL="$RUNNER_TEMP/release"
           PUB=openwrt-qualcommbe-ipq95xx-askey_sbe1v1k
           mkdir -p "$REL"
-          for n in squashfs-sysupgrade.bin squashfs-factory.bin initramfs-uImage.itb; do
-            src="$OUT/$PUB-$n"
-            test -s "$src" || { echo "缺少或为空：$src" >&2; exit 1; }
-            cp "$src" "$REL/$PUB-$n"
+          for v in "" "-nss"; do
+            for n in squashfs-sysupgrade.bin squashfs-factory.bin initramfs-uImage.itb; do
+              src="$OUT/$PUB$v-$n"
+              test -s "$src" || { echo "缺少或为空：$src" >&2; exit 1; }
+              cp "$src" "$REL/$PUB$v-$n"
+            done
           done
           ( cd "$REL" && sha256sum "$PUB"-* )
           ls -lh "$REL"
@@ -209,6 +218,9 @@ jobs:
             ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-sysupgrade.bin
             ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-factory.bin
             ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-initramfs-uImage.itb
+            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-nss-squashfs-sysupgrade.bin
+            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-nss-squashfs-factory.bin
+            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-nss-initramfs-uImage.itb
           if-no-files-found: error
           retention-days: 30
 
@@ -225,31 +237,36 @@ jobs:
           VLINE=$(cat sources/buildroot-25.12-6.18/bin/targets/qualcommbe/ipq95xx/version.buildinfo 2>/dev/null || echo unknown)
 
           cat > "$REL/notes.md" <<EOF
-          Spectrum SBE1V1K (IPQ9574) firmware — OpenWrt main + 主线 Linux 6.18（S1 基线）
+          Spectrum SBE1V1K (IPQ9574) firmware — OpenWrt main + 主线 Linux 6.18
 
           - 版本：${VLINE}
           - 提交：\`${GITHUB_SHA}\`
           - 运行：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          - 基线：上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k，mainline PPE 数据通路
+          - 基线：上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k
+          - 数据通路两个设备变体，按文件名区分：
+            - 不带后缀 = mainline PPE（上游 qcom PPE 驱动，兜底镜像）
+            - \`-nss\` 后缀 = QSDK NSS（ssdk/nss-dp/nss-ppe/ecm/sfe，DTB 删除
+              mainline PPE 节点后由 NSS 栈接管；设备侧行为 NOT TESTED）
           - 无线：上游 ath12k 驱动与固件 + ipq-wifi-askey_sbe1v1k BDF（无厂商 blob）
           - 网口角色：wan = 2.5G（QCA8081），lan1 = 10G（RTL8261N），lan2/lan3 = 1G（QCA8075）
-          - 未接入：QSDK NSS（ssdk/dp/ppe/ecm/sfe）与 Wi-Fi offload（S3）
+          - 两个变体共用同一份包选择与 files/ overlay；NSS 模块在 mainline
+            镜像里也在，但 /usr/lib/sbe1v1k/nss-board 按设备树把关不装载
 
-          资产（恰好 3 个）：
-          - \`${PUB}-squashfs-sysupgrade.bin\`
-          - \`${PUB}-squashfs-factory.bin\`
-          - \`${PUB}-initramfs-uImage.itb\`
+          资产（恰好 6 个：每个变体各 3 个）：
+          - \`${PUB}-squashfs-sysupgrade.bin\` / \`${PUB}-nss-squashfs-sysupgrade.bin\`
+          - \`${PUB}-squashfs-factory.bin\` / \`${PUB}-nss-squashfs-factory.bin\`
+          - \`${PUB}-initramfs-uImage.itb\` / \`${PUB}-nss-initramfs-uImage.itb\`
 
           SHA-256：
           \`\`\`
           $(cd "$REL" && sha256sum ${PUB}-*)
           \`\`\`
 
-          设备状态：同配置镜像已在 B 机做过 S1b 真机验证（2026-11-22）：
+          设备状态：同配置 mainline 镜像已在 B 机做过 S1b 真机验证（2026-11-22）：
           6.18.64 启动、网口角色、LAN→WAN、LuCI、风扇/LED、2.4G/5G 正常；
-          **6G 因固件 regdb 未启用信道不可用**。本次构建产物本身记为
-          UNVERIFIED，刷写前先读 25.12-6.18/README.md 与
-          docs/S1B-DEVICE-TEST-2026-11-22.md。
+          **6G 因固件 regdb 未启用信道不可用**。NSS 变体本次构建产物记为
+          UNVERIFIED（设备侧留 S3e，需单独批准）。刷写前先读 25.12-6.18/README.md
+          与 docs/NSS-PORT-ASSESSMENT-2026-11-22.md。
           EOF
 
           PLUG=sources/buildroot-25.12-6.18/.sbe-plugins.tsv
@@ -283,7 +300,10 @@ jobs:
               --notes-file "$REL/notes.md" \
               "$REL/${PUB}-squashfs-sysupgrade.bin" \
               "$REL/${PUB}-squashfs-factory.bin" \
-              "$REL/${PUB}-initramfs-uImage.itb" 2>&1); then
+              "$REL/${PUB}-initramfs-uImage.itb" \
+              "$REL/${PUB}-nss-squashfs-sysupgrade.bin" \
+              "$REL/${PUB}-nss-squashfs-factory.bin" \
+              "$REL/${PUB}-nss-initramfs-uImage.itb" 2>&1); then
               break
             fi
             printf '%s\n' "$out"
@@ -310,6 +330,6 @@ jobs:
 
           n=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
           echo "release $TAG assets=$n"
-          test "$n" = "3" || { echo "Release 资产数不是 3" >&2; exit 1; }
+          test "$n" = "6" || { echo "Release 资产数不是 6" >&2; exit 1; }
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | "\(.name) \(.size)"'

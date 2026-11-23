@@ -1,0 +1,116 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: NSS 镜像需要去掉内核 QCA8084 PHY 注册
+
+NSS 数据通路要装载 QSDK 的 qca8084-phy.ko，而 qualcommbe 目标
+（CONFIG_QCA808X_PHY=y，补丁 0302–0312）在 drivers/net/phy/qcom/
+qca808x.c 里也注册了同名 libphy 驱动 "Qualcomm QCA8084"。libphy 对
+重名返回 EEXIST（-16），随后的 qca-ssdk -> qca-nss-ppe -> qca-nss-dp/
+sfe/ecm 全部装载失败，机器起来后没有任何以太网口。
+
+这与 25.12-6.12 树的 patches/0030 是同一个问题（那边已真机定案）。
+修法照搬：只从 qca808x_driver[] 删掉 QCA8084 那一条，保留 QCA8081
+厂商驱动（QCA8081 降到 genphy 的话 2.5G 链路假通——6.12 树 2026-11-19
+的 A/B 实验结论）；四个失去引用的 QCA8084 入口函数标 __maybe_unused
+（目标开 CONFIG_WERROR=y）。QCA8084 在本板上本来就归 QSDK 模块。
+
+mainline 镜像共用同一内核：它不用 8084、QCA8081 驱动保留，行为不变。
+
+Status: 打过本补丁的 qca808x.o 已在 6.18.64 + WERROR 配置下编译通过
+（0 warning）；设备侧 NOT TESTED。
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0515-net-phy-qca808x-drop-qca8084-registration.patch b/target/linux/qualcommbe/patches-6.18/0515-net-phy-qca808x-drop-qca8084-registration.patch
+--- a/target/linux/qualcommbe/patches-6.18/0515-net-phy-qca808x-drop-qca8084-registration.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0515-net-phy-qca808x-drop-qca8084-registration.patch	2026-11-23 02:10:45.632935081 +0000
+@@ -0,0 +1,93 @@
++From: SBE1V1K build <noreply@example.invalid>
++Subject: [PATCH] net: phy: qca808x: keep the QCA8081 driver, drop the QCA8084 registration
++
++qualcommbe builds drivers/net/phy/qcom/qca808x.c with
++CONFIG_QCA808X_PHY=y.  The file registers both the QCA8081 and the
++"Qualcomm QCA8084" libphy drivers.  The SBE1V1K image also loads the
++QSDK qca8084-phy.ko, whose driver registers the same name; libphy
++answers EEXIST (-16) and the chain qca8084-phy -> qca-ssdk ->
++qca-nss-ppe -> qca-nss-dp/sfe/ecm dies, so the board boots without any
++Ethernet port.  This is the same failure the 25.12-6.12 tree fixed with
++its patches/0030; the module split is unchanged on 6.18.
++
++Disabling CONFIG_QCA808X_PHY entirely avoids the clash but also drops
++the QCA8081 vendor driver and leaves eth1 (QCA8081, 2.5G WAN) on
++genphy.  genphy never switches the MAC/PCS to PHY_INTERFACE_MODE_2500BASEX
++and lacks the SGMII FIFO and master/slave handling, so at 2.5G the link
++reports up but carries zero frames (2026-11-19 A/B experiment on the
++6.12 tree: vendor driver bidirectional at 2500 Mb/s, genphy silent at
++2500 and fully working at 1000 Mb/s).
++
++The QCA8084 PHY on this board is owned by the QSDK module, so drop only
++the QCA8084 element from qca808x_driver[] and keep the QCA8081 driver.
++The four now-unreferenced QCA8084 entry points are marked __maybe_unused
++because the target builds with CONFIG_WERROR=y.
++
++--- a/drivers/net/phy/qcom/qca808x.c	2026-11-23 02:09:58.909281355 +0000
+++++ b/drivers/net/phy/qcom/qca808x.c	2026-11-23 02:09:58.912865519 +0000
++@@ -961,7 +961,7 @@
++ 	return qca8084_package_clock_init(shared_priv);
++ }
++ 
++-static int qca8084_config_init(struct phy_device *phydev)
+++static int __maybe_unused qca8084_config_init(struct phy_device *phydev)
++ {
++ 	int ret;
++ 
++@@ -995,7 +995,7 @@
++ 			     QCA8084_MSE_THRESHOLD_2P5G_VAL);
++ }
++ 
++-static void qca8084_link_change_notify(struct phy_device *phydev)
+++static void __maybe_unused qca8084_link_change_notify(struct phy_device *phydev)
++ {
++ 	struct qca808x_shared_priv *shared_priv;
++ 	int ret;
++@@ -1164,7 +1164,7 @@
++ 					    shared_priv->mdiodev[0]);
++ }
++ 
++-static int qca8084_probe(struct phy_device *phydev)
+++static int __maybe_unused qca8084_probe(struct phy_device *phydev)
++ {
++ 	struct qca808x_shared_priv *shared_priv;
++ 	struct device *dev = &phydev->mdio.dev;
++@@ -1203,7 +1203,7 @@
++ 	return reset_control_deassert(rstc);
++ }
++ 
++-static void qca8084_remove(struct phy_device *phydev)
+++static void __maybe_unused qca8084_remove(struct phy_device *phydev)
++ {
++ 	if (phydev->interface != PHY_INTERFACE_MODE_10G_QXGMII)
++ 		return;
++@@ -1243,29 +1243,6 @@
++ 	.led_polarity_set	= qca808x_led_polarity_set,
++ 	.update_stats		= qca808x_update_stats,
++ 	.get_phy_stats		= qca808x_get_phy_stats,
++-}, {
++-	/* Qualcomm QCA8084 */
++-	PHY_ID_MATCH_MODEL(QCA8084_PHY_ID),
++-	.name			= "Qualcomm QCA8084",
++-	.flags			= PHY_POLL_CABLE_TEST,
++-	.config_intr		= at803x_config_intr,
++-	.handle_interrupt	= at803x_handle_interrupt,
++-	.get_tunable		= at803x_get_tunable,
++-	.set_tunable		= at803x_set_tunable,
++-	.set_wol		= at803x_set_wol,
++-	.get_wol		= at803x_get_wol,
++-	.get_features		= qca808x_get_features,
++-	.config_aneg		= qca808x_config_aneg,
++-	.suspend		= genphy_suspend,
++-	.resume			= genphy_resume,
++-	.read_status		= qca808x_read_status,
++-	.soft_reset		= qca808x_soft_reset,
++-	.cable_test_start	= qca808x_cable_test_start,
++-	.cable_test_get_status	= qca808x_cable_test_get_status,
++-	.config_init		= qca8084_config_init,
++-	.link_change_notify	= qca8084_link_change_notify,
++-	.probe			= qca8084_probe,
++-	.remove			= qca8084_remove,
++ }, };
++ 
++ module_phy_driver(qca808x_driver);
