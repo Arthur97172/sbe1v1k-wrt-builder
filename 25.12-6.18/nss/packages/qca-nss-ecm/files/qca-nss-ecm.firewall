@@ -16,6 +16,10 @@
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #
 
+# NSS 目录只对 NSS 数据通路镜像有意义；mainline 镜像共用 rootfs，且不带
+# iptables，直接退出（判据见 /usr/lib/sbe1v1k/nss-board）。
+/usr/lib/sbe1v1k/nss-board || exit 0
+
 iptables -nvL FORWARD | grep -q "physdev" && iptables -Z FORWARD 1
 iptables -nvL FORWARD | grep -q "physdev" || iptables -I FORWARD -m physdev --physdev-is-bridged -j ACCEPT
 

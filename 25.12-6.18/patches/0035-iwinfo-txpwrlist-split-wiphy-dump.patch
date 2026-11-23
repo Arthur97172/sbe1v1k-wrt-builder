@@ -1,0 +1,244 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] iwinfo: 频宽列表请求 WIPHY split dump，修复 255 dBm 假条目
+
+一 phy 多 band 的 ath12k 上，libiwinfo 的 nl80211_get_txpwrlist() 请求
+NL80211_CMD_GET_WIPHY 时没有带 NL80211_ATTR_SPLIT_WIPHY_DUMP；内核
+cfg80211 为兼容旧软件会跳过 5 GHz 以上频段（net/wireless/nl80211.c
+"omit higher bands for ancient software"）。6 GHz VAP 的信道因此在回复里
+永远匹配不到，回调留下 -1 哨兵，经 uint8_t 字段变成 255 dBm、
+iwinfo_dbm2mw(255) 饱和成 2147483647 mW，LuCI「最大传输功率」只剩这一项。
+
+本补丁在包内新增 101-txpwrlist-6ghz-split-dump.patch（紧接上游已有的
+100-multi_radio.patch）：
+  - 按 nl80211_get_freqlist() 的写法带上 split dump 标志；
+  - 回调改为跨消息累计（split dump 每条消息只含一个 band/channel），
+    命中即保留；
+  - 未命中时返回 -1，不再把负哨兵写进 uint8_t；
+  - wifi-device（radioN）调用按 UCI band/channel 选择本频段的频率，
+    避免同一 phy 的三个射频都显示首 VAP（6 GHz）的限值。
+
+与 25.12-6.12 树给 libiwinfo 打补丁的先例一致。
+
+--- /dev/null
++++ b/package/network/utils/iwinfo/patches/101-txpwrlist-6ghz-split-dump.patch
+@@ -0,0 +1,220 @@
++--- a/iwinfo_nl80211.c
+++++ b/iwinfo_nl80211.c
++@@ -2554,10 +2554,64 @@
++ 	return -1;
++ }
++ 
+++struct nl80211_txpwrlist_data {
+++	int ch_cur;
+++	int band;
+++	int dbm_max;
+++};
+++
+++/*
+++ * Resolve a wifi-device (radioN) section to its band and, when the channel is
+++ * not set to auto, the frequency it is configured for. Several radios may
+++ * share one wiphy, in which case the phy's first VAP can belong to a
+++ * different band than the requested radio.
+++ */
+++static void nl80211_uci_radio_hint(const char *name, int *band, int *freq)
+++{
+++	struct uci_section *s;
+++	const char *opt;
+++	int ch;
+++
+++	*band = -1;
+++	*freq = 0;
+++
+++	s = iwinfo_uci_get_radio(name, "mac80211");
+++	if (!s)
+++		goto out;
+++
+++	opt = uci_lookup_option_string(uci_ctx, s, "band");
+++	if (opt)
+++	{
+++		if (!strcmp(opt, "2g"))
+++			*band = IWINFO_BAND_24;
+++		else if (!strcmp(opt, "5g"))
+++			*band = IWINFO_BAND_5;
+++		else if (!strcmp(opt, "6g"))
+++			*band = IWINFO_BAND_6;
+++	}
+++
+++	opt = uci_lookup_option_string(uci_ctx, s, "channel");
+++	ch = opt ? atoi(opt) : 0;
+++
+++	if (ch > 0)
+++	{
+++		if (*band == IWINFO_BAND_24)
+++			*freq = nl80211_channel2freq(ch, NULL, 0);
+++		else if (*band == IWINFO_BAND_5)
+++			*freq = nl80211_channel2freq(ch, "a", 0);
+++		else if (*band == IWINFO_BAND_6)
+++			*freq = nl80211_channel2freq(ch, "a", 131);
+++	}
+++
+++out:
+++	iwinfo_uci_free();
+++}
+++
++ static int nl80211_get_txpwrlist_cb(struct nl_msg *msg, void *arg)
++ {
++-	int *dbm_max = arg;
++-	int ch_cur, ch_cmp, bands_remain, freqs_remain;
+++	struct nl80211_txpwrlist_data *data = arg;
+++	int ch_cmp, bands_remain, freqs_remain;
+++	uint32_t freq_mhz;
++ 
++ 	struct nlattr **attr = nl80211_parse(msg);
++ 	struct nlattr *bands[NL80211_BAND_ATTR_MAX + 1];
++@@ -2573,31 +2627,51 @@
++ 		[NL80211_FREQUENCY_ATTR_MAX_TX_POWER] = { .type = NLA_U32  },
++ 	};
++ 
++-	ch_cur = *dbm_max; /* value int* is initialized with channel by caller */
++-	*dbm_max = -1;
+++	/* With NL80211_ATTR_SPLIT_WIPHY_DUMP the wiphy is dumped band by band
+++	 * and channel by channel; a result found in an earlier message must
+++	 * survive the following ones. */
+++	if (data->dbm_max >= 0 || !attr[NL80211_ATTR_WIPHY_BANDS])
+++		return NL_SKIP;
++ 
++ 	nla_for_each_nested(band, attr[NL80211_ATTR_WIPHY_BANDS], bands_remain)
++ 	{
++ 		nla_parse(bands, NL80211_BAND_ATTR_MAX, nla_data(band),
++ 		          nla_len(band), NULL);
++ 
+++		if (!bands[NL80211_BAND_ATTR_FREQS])
+++			continue;
+++
++ 		nla_for_each_nested(freq, bands[NL80211_BAND_ATTR_FREQS], freqs_remain)
++ 		{
++ 			nla_parse(freqs, NL80211_FREQUENCY_ATTR_MAX,
++ 			          nla_data(freq), nla_len(freq), freq_policy);
++ 
++-			ch_cmp = nl80211_freq2channel(nla_get_u32(
++-				freqs[NL80211_FREQUENCY_ATTR_FREQ]));
+++			if (!freqs[NL80211_FREQUENCY_ATTR_FREQ] ||
+++			    !freqs[NL80211_FREQUENCY_ATTR_MAX_TX_POWER])
+++				continue;
++ 
++-			if ((!ch_cur || (ch_cmp == ch_cur)) &&
++-			    freqs[NL80211_FREQUENCY_ATTR_MAX_TX_POWER])
+++			freq_mhz = nla_get_u32(freqs[NL80211_FREQUENCY_ATTR_FREQ]);
+++
+++			if (data->band >= 0 &&
+++			    nl80211_freq2band((int)freq_mhz) != data->band)
+++				continue;
+++
+++			if (data->ch_cur)
++ 			{
++-				*dbm_max = (int)(0.01 * nla_get_u32(
++-					freqs[NL80211_FREQUENCY_ATTR_MAX_TX_POWER]));
+++				ch_cmp = nl80211_freq2channel(freq_mhz);
++ 
++-				break;
+++				if (ch_cmp != data->ch_cur)
+++					continue;
++ 			}
+++
+++			data->dbm_max = (int)(0.01 * nla_get_u32(
+++				freqs[NL80211_FREQUENCY_ATTR_MAX_TX_POWER]));
+++
+++			break;
++ 		}
+++
+++		if (data->dbm_max >= 0)
+++			break;
++ 	}
++ 
++ 	return NL_SKIP;
++@@ -2605,41 +2679,64 @@
++ 
++ static int nl80211_get_txpwrlist(const char *ifname, char *buf, int *len)
++ {
++-	int err, ch_cur;
++-	int dbm_max = -1, dbm_cur, dbm_cnt;
+++	struct nl80211_msg_conveyor *cv;
+++	struct nl80211_txpwrlist_data data = { .band = -1, .dbm_max = -1 };
++ 	struct iwinfo_txpwrlist_entry entry;
+++	uint32_t features;
+++	int flags, freq = 0, dbm_cur, dbm_cnt;
++ 
++-	if (nl80211_get_channel(ifname, &ch_cur))
++-		ch_cur = 0;
++-
++-	/* initialize the value pointer with channel for callback */
++-	dbm_max = ch_cur;
+++	*len = 0;
++ 
++-	err = nl80211_request(ifname, NL80211_CMD_GET_WIPHY, 0,
++-	                      nl80211_get_txpwrlist_cb, &dbm_max);
+++	nl80211_uci_radio_hint(ifname, &data.band, &freq);
++ 
++-	if (!err)
+++	/* only fall back to the running channel for plain interface or phy
+++	 * names: for a radioN the band hint above is authoritative, since the
+++	 * first VAP of a shared phy may operate in another band */
+++	if (!freq && data.band < 0)
+++		nl80211_get_frequency(ifname, &freq);
+++
+++	data.ch_cur = freq ? nl80211_freq2channel(freq) : 0;
+++
+++	/* Without NL80211_ATTR_SPLIT_WIPHY_DUMP the kernel omits the 5 GHz and
+++	 * 6 GHz bands from the response, so the channel of a 6 GHz VAP never
+++	 * matches and the lookup silently fails. */
+++	features = nl80211_get_protocol_features(ifname);
+++	flags = features & NL80211_PROTOCOL_FEATURE_SPLIT_WIPHY_DUMP ? NLM_F_DUMP : 0;
+++	cv = nl80211_msg(ifname, NL80211_CMD_GET_WIPHY, flags);
+++	if (!cv)
+++		goto out;
+++
+++	NLA_PUT_FLAG(cv->msg, NL80211_ATTR_SPLIT_WIPHY_DUMP);
+++	if (nl80211_send(cv, nl80211_get_txpwrlist_cb, &data))
+++		goto out;
+++
+++	/* never return the -1 sentinel: as uint8_t it would surface as a bogus
+++	 * 255 dBm entry in iwinfo/rpcd consumers */
+++	if (data.dbm_max < 0)
+++		goto out;
+++
+++	for (dbm_cur = 0, dbm_cnt = 0;
+++	     dbm_cur < data.dbm_max;
+++	     dbm_cur++, dbm_cnt++)
++ 	{
++-		for (dbm_cur = 0, dbm_cnt = 0;
++-		     dbm_cur < dbm_max;
++-		     dbm_cur++, dbm_cnt++)
++-		{
++-			entry.dbm = dbm_cur;
++-			entry.mw  = iwinfo_dbm2mw(dbm_cur);
+++		entry.dbm = dbm_cur;
+++		entry.mw  = iwinfo_dbm2mw(dbm_cur);
++ 
++-			memcpy(&buf[dbm_cnt * sizeof(entry)], &entry, sizeof(entry));
++-		}
+++		memcpy(&buf[dbm_cnt * sizeof(entry)], &entry, sizeof(entry));
+++	}
++ 
++-		entry.dbm = dbm_max;
++-		entry.mw  = iwinfo_dbm2mw(dbm_max);
+++	entry.dbm = data.dbm_max;
+++	entry.mw  = iwinfo_dbm2mw(data.dbm_max);
++ 
++-		memcpy(&buf[dbm_cnt * sizeof(entry)], &entry, sizeof(entry));
++-		dbm_cnt++;
+++	memcpy(&buf[dbm_cnt * sizeof(entry)], &entry, sizeof(entry));
+++	dbm_cnt++;
++ 
++-		*len = dbm_cnt * sizeof(entry);
++-		return 0;
++-	}
+++	*len = dbm_cnt * sizeof(entry);
+++	return 0;
++ 
+++nla_put_failure:
+++	nl80211_free(cv);
+++out:
++ 	return -1;
++ }
++ 

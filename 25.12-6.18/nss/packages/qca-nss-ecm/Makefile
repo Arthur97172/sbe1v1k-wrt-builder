@@ -8,7 +8,7 @@ PKG_NAME:=qca-nss-ecm
 PKG_LICENSE:=ISC
 PKG_SOURCE_PROTO:=git
 PKG_BRANCH:=master
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 LOCAL_SRC:=$(TOPDIR)/qca/src/nss/clients/qca-nss-ecm
 

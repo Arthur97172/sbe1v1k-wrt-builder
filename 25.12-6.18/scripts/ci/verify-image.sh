@@ -269,7 +269,8 @@ check_rootfs() {
 		|| bad "[$tag] eth0 首启脚本未按数据通路门控（mainline 会被改写）"
 	for f in etc/init.d/nss usr/sbin/nss-load etc/init.d/sbe-port-roles \
 	         usr/sbin/sbe-port-roles etc/init.d/eth0-lan-attach \
-	         usr/sbin/eth0-lan-attach etc/init.d/sbe-lan-mac; do
+	         usr/sbin/eth0-lan-attach etc/init.d/sbe-lan-mac \
+	         etc/firewall.d/qca-nss-ecm; do
 		grep -q 'nss-board' "$R/$f" 2>/dev/null \
 			&& ok "[$tag] /$f 按数据通路门控" || bad "[$tag] /$f 缺 nss-board 门控"
 	done
