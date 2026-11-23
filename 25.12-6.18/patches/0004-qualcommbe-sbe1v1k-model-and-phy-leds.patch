@@ -1,0 +1,50 @@
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
+@@ -10,7 +10,7 @@
+ #include <dt-bindings/leds/common.h>
+ 
+ / {
+-	model = "Askey SBE1V1K";
++	model = "Spectrum SBE1V1K";
+ 	compatible = "askey,sbe1v1k", "qcom,ipq9574";
+ 
+ 	aliases {
+@@ -567,27 +567,6 @@
+ 		reg = <28>;
+ 		reset-gpios = <&tlmm 52 GPIO_ACTIVE_LOW>;
+ 		reset-deassert-us = <10000>;
+-
+-		leds {
+-			#address-cells = <1>;
+-			#size-cells = <0>;
+-
+-			led@0 {
+-				reg = <0>;
+-				color = <LED_COLOR_ID_YELLOW>;
+-				default-state = "keep";
+-				function = LED_FUNCTION_LAN;
+-				active-low;
+-			};
+-
+-			led@2 {
+-				reg = <2>;
+-				color = <LED_COLOR_ID_GREEN>;
+-				default-state = "keep";
+-				function = LED_FUNCTION_LAN;
+-				active-low;
+-			};
+-		};
+ 	};
+ };
+ 
+--- a/target/linux/qualcommbe/image/ipq95xx.mk
++++ b/target/linux/qualcommbe/image/ipq95xx.mk
+@@ -17,7 +17,7 @@
+ define Device/askey_sbe1v1k
+ 	$(call Device/FitImage)
+ 	$(call Device/EmmcImage)
+-	DEVICE_VENDOR := Askey
++	DEVICE_VENDOR := Spectrum
+ 	DEVICE_MODEL := SBE1V1K
+ 	DEVICE_ALT0_VENDOR := Askey
+ 	DEVICE_ALT0_MODEL := RTQ7300T

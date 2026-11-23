@@ -65,3 +65,25 @@ required 包 107 项反查）。产物：
 3. `ip -br link` 中 lan1/lan2/lan3/wan 的 MAC 两两不同；
 4. `date` 显示 Asia/Taipei；`uci get system.@system[0].clock_hourcycle` = h23；
 5. 6G 在 regdb 无信道时 radio2 disabled（预期，与 6.12 的 TW 现象同源）。
+
+## 5. 追加（11-22 晚，真机反馈两项显示差异）
+
+用户在 6.18 镜像上发现两处与 6.12 不一致，逐项修复（**设备 NOT TESTED**）：
+
+1. **状态 → 概览 → 型号**显示 `Askey SBE1V1K`，6.12 显示 `Spectrum SBE1V1K`。
+   型号取自设备树 `model` 属性；6.18 上游 DTS 写的是 Askey。
+   补丁 `patches/0004`：`model = "Spectrum SBE1V1K"`，并把
+   `DEVICE_VENDOR` 同步为 `Spectrum`（保留 `DEVICE_ALT0/1` 的 Askey 别名；
+   设备配置名仍是 `askey_sbe1v1k`，镜像文件名不变）。`verify-image.sh` 的
+   FIT 断言随之改为 `Spectrum SBE1V1K`。
+
+2. **系统 → 灯光与风扇 → 系统 RGB 灯 → 指示灯**下拉多出
+   `90000.mdio-1:1c:green:lan`、`90000.mdio-1:1c:yellow:lan` 两项。
+   根因：6.18 上游 DTS 在 `qca8081_28`（0x1c，2.5G PHY）下声明了
+   `leds { led@0 黄 / led@2 绿，function=lan }`，phylib 把它们注册成
+   LED class 设备；6.12 的 DTS 没有这些节点。同一补丁 0004 删除该
+   `leds` 子节点，PHY 端口灯回到硬件默认（链路/活动）行为，与 6.12 一致。
+
+补丁在原始副本上 `patch -p1 --fuzz=0 --dry-run` 通过；
+`patches/0004` 同时改动 `target/linux/qualcommbe/image/ipq95xx.mk`。
+刷机后应核对：概览型号为 `Spectrum SBE1V1K`，指示灯下拉不再出现两项 PHY LED。

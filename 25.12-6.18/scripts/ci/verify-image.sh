@@ -62,7 +62,7 @@ if [ -n "$PREFIX" ]; then
 fi
 
 # --- 3. FIT 里的本板 DTB ---------------------------------------------------
-for pat in 'Askey SBE1V1K' 'askey,sbe1v1k' 'config@rtq7300t-rev0'; do
+for pat in 'Spectrum SBE1V1K' 'askey,sbe1v1k' 'config@rtq7300t-rev0'; do
 	grep -aqF "$pat" "$TMP/kernel" \
 		&& ok "FIT 含 '$pat'" || bad "FIT 缺少 '$pat'"
 done
