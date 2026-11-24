@@ -457,6 +457,23 @@ DTB 静态反编译另证：NSS DTB 的 dp1–dp4 分别为 ethaddr 0–3，`led
 **结论：三项全部真机 PASS**——full 档成为默认（防锁死 fallback 保留）、
 蓝灯设备树常亮、MAC 固定为出厂连续值且上游看到的值不再漂移。
 
+### 8.4.1 冷上电复测（断电冷启动，2026-11-24）
+
+用户断电 10 s 后重新上电（13:35:23 离线 → 13:36:12 SSH 回线，回线时
+uptime 33 s、boot counter 0→1，确认是新启动）。取证与 §8.4 相同：以
+uptime ~80 s 快照为准——
+
+- `nss-load status`：`tier=full`，sdk/dp/ppe 全家/ecm/sfe 全 `loaded`
+  （logread `boot #1: tier full loaded`）；
+- eth0–eth3 = `90:d3:cf:4b:eb:81`–`84`、br-lan `:83`，与全部热重启一致；
+  `Invalid MAC` 0 行；蓝灯 255/255；
+- WAN eth1 192.168.10.237，上游 ARP 视角仍 `90:d3:cf:4b:eb:82`；
+  ping 网关 0% 丢包、经路由器的 HTTP 200、ECM 计数 0→1；
+- 三频 AP 在；uptime 339 s 时 boot counter 已归 0，logread
+  `commit: tier=full survived; boot counter reset (was 1)`。
+
+**冷上电路径 PASS**，与热重启基线逐项一致。
+
 ### 8.5 构建基础设施修复：prepare-tree 补丁幂等重放
 
 首次重建在补丁阶段失败：`0031` 报「补丁与树不匹配」。根因是判断
@@ -471,5 +488,6 @@ DTB 静态反编译另证：NSS DTB 的 dp1–dp4 分别为 ethaddr 0–3，`led
 
 - ECM 装载顶掉 `nft_flow_offload` 回调的一次性 WARN：已知噪声，若未来
   启用 flow offloading 再单独评估。
-- 冷上电（断电重启）冷启动路径未测，本轮均为热重启。
+- 冷上电已补测（§8.4.1，单次断电冷启动 PASS）；多次冷上电的 eth0 AN
+  坏启动占比仍是 S95 看门狗项目的统计项（§7.3–7.5），不属本轮 S4。
 - 刷机为 `-n`（不保留配置），root 密码为空、SSH 仅限 LAN，需用户设置。
