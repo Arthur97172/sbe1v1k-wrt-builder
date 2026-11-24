@@ -20,10 +20,13 @@ name: 📦 Build 25.12-6.18
 #
 # 说明：
 #   - 构建不会接触任何设备，仅下载源码与编译依赖；
-#   - 设备行为状态：S1b（2026-11-22，B 机）对同配置镜像做过真机验证
-#     （`25.12-6.18/docs/S1B-DEVICE-TEST-2026-11-22.md`）：6.18.64 启动、
-#     网口角色、LAN→WAN、LuCI、风扇/LED、2.4G/5G 正常；6G 因固件 regdb
-#     未启用信道不可用。CI 本次构建的产物仍记为 UNVERIFIED。
+#   - 设备行为状态（2026-11-24）：mainline PPE 变体 2026-11-23 真机 PASS
+#     （`25.12-6.18/docs/S3D-DEVICE-TEST-2026-11-23.md`：启动、网口角色、
+#     三频 AP、LuCI、风扇）；NSS 变体 2026-11-24 S4 真机 PASS（
+#     `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8：tier=full 默认、
+#     热重启 + 断电冷启动、MAC 固定、蓝灯常亮）。CI 本次构建的产物仍记为
+#     UNVERIFIED——发布前需按 README 做真机复验。
+#   - 内核漂移检测（check-kernel.sh）只报告，不修改 OPENWRT_SHA 或内核 pin。
 
 on:
   workflow_dispatch:
@@ -90,6 +93,14 @@ jobs:
           SBE_PLUGIN_MODE: ${{ inputs.plugin_mode || 'latest' }}
           SBE_PLUGIN_STRICT: '1'
         run: ./25.12-6.18/scripts/ci/prepare-tree.sh "$GITHUB_WORKSPACE"
+
+      # 6.18 内核漂移检测：只报告，不修改 OPENWRT_SHA / 内核版本 / 补丁。
+      # 网络不可用只记 SOURCE_UNAVAILABLE；continue-on-error 保证它永不阻塞构建。
+      - name: Check kernel (report only)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ./25.12-6.18/scripts/ci/check-kernel.sh "$GITHUB_WORKSPACE" | tee kernel-report.txt
 
       - name: Configure
         run: |
@@ -205,6 +216,7 @@ jobs:
           path: |
             build.log
             verify.log
+            kernel-report.txt
             sources/buildroot-25.12-6.18/.sbe-plugins.tsv
           if-no-files-found: warn
           retention-days: 7
@@ -262,11 +274,15 @@ jobs:
           $(cd "$REL" && sha256sum ${PUB}-*)
           \`\`\`
 
-          设备状态：同配置 mainline 镜像已在 B 机做过 S1b 真机验证（2026-11-22）：
-          6.18.64 启动、网口角色、LAN→WAN、LuCI、风扇/LED、2.4G/5G 正常；
-          **6G 因固件 regdb 未启用信道不可用**。NSS 变体本次构建产物记为
-          UNVERIFIED（设备侧留 S3e，需单独批准）。刷写前先读 25.12-6.18/README.md
-          与 docs/NSS-PORT-ASSESSMENT-2026-11-22.md。
+          设备状态（本次构建产物本身仍记为 UNVERIFIED）：
+          - mainline PPE 变体：2026-11-23 真机 PASS（S3d，`docs/S3D-DEVICE-TEST-2026-11-23.md`）
+            ——启动、网口角色、三频 AP、LuCI、风扇时区；
+          - NSS 变体：2026-11-24 S4 真机 PASS（`docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8）
+            ——`/etc/nss.conf` 默认 `tier=full`（保留 `fallback=wired`），
+            热重启 + 断电冷启动均自动装载 sdk/dp/ppe 全家/ecm；
+            dp1–dp4 MAC 固定为 ART `ethaddr` 0–3（上游看到的 WAN MAC 不再漂移）；
+            蓝灯上电常亮。
+          刷写前先读 25.12-6.18/README.md 与 docs/NSS-PORT-ASSESSMENT-2026-11-22.md。
           EOF
 
           PLUG=sources/buildroot-25.12-6.18/.sbe-plugins.tsv
@@ -281,6 +297,14 @@ jobs:
                 awk -F'\t' '{printf "| %s | %s | `%s` | %s |\n", $1, $3, substr($4,1,12), $6}'
             else
               echo "（没有生成 $PLUG）"
+            fi
+            echo ""
+            echo "内核检测（report-only；不会自动改 OPENWRT_SHA 或内核 pin）："
+            echo ""
+            if [ -s kernel-report.txt ]; then
+              cat kernel-report.txt
+            else
+              echo "（没有生成 kernel-report.txt）"
             fi
           } >> "$REL/notes.md"
 

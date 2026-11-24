@@ -17,7 +17,7 @@
 > （`0:HLOS`/`rootfs`/`rootfs_data`）、PWM 风扇/LED、RTL8261N、ath12k BDF 与
 > 校准提取脚本都在上游树里。本树只加一个网口角色补丁（见下），其余保持上游。
 
-## 当前状态（2026-11-22）
+## 当前状态（2026-11-24）
 
 - 用户目标：**功能对齐 25.12-6.12**——包括 NSS 加速栈、tier/nss-load、项目
   overlay 与插件；同时复用 6.12 的全部踩坑结论
@@ -30,8 +30,8 @@
   12 项 PASS（含镜像 apk 数据库按 required 清单反查 107/0/0）。
 - **S1b 真机（2026-11-22，B 机）PASS**：`sysupgrade -F -n` 刷入后 6.18.64
   正常启动（root=p27，overlay=独立 p29），网口角色与 6.12 一致（2.5G=WAN、
-  10G/1G=LAN）、LAN→WAN NAT 通、LuCI 200、风扇/LED 正常；2.4G/5G AP 正常，
-  **6G 因固件 regdb 未启用信道暂不可用**（S2/S3 处理）。详见
+  10G/1G=LAN）、LAN→WAN NAT 通、LuCI 200、风扇/LED 正常；2.4G/5G AP 正常
+  （6G 当时因固件 regdb 未启用信道不可用，S3d 起三频含 6G 已真机 PASS）。详见
   `docs/S1B-DEVICE-TEST-2026-11-22.md`；重启复验待批准。
 - 插件栈（2026-11-22 按用户要求对齐 25.12-6.12）：18 个插件、官方 LuCI
   页/WireGuard、工具与运行时全部写入种子与 `build/thirdparty-pins.conf`；
@@ -71,19 +71,29 @@
     板名门控、rc.d 链接、时区脚本断言；本机构建 PASS，**PASS=36 FAIL=0**。
     镜像哈希与内容级取证见 `docs/S2-BANNER-WIFI-2026-11-22.md`（设备
     **NOT TESTED**）。
-- **S3d NSS 数据通路（2026-11-23 本机构建 PASS，设备 NOT TESTED）**：
-  两个设备变体——mainline PPE（无后缀，兜底）与 QSDK NSS（`-nss`，补丁
-  0031 的 DTB `/delete-node/ &qcom_ppe;` 换 ess-switch/EDMA/dp）。kconfig
-  choice 一次只能选一个设备，`scripts/ci/build-images.sh` 顺序跑两遍；
-  `verify-image.sh` 对两镜像各自断言，**PASS=128 FAIL=0**（包反查各
-  119/0/0）。详见 `docs/NSS-PORT-ASSESSMENT-2026-11-22.md` §5；设备侧
-  （nss-load、`/sys/ssdk`、加速计数）留 S3e，需单独批准。
-- CI（S5，2026-11-22）：`.github/workflows/build-25.12-6.18.yml` 与
-  `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、configure
-  三道包反查、`build-images.sh world` 两遍构建、`verify-image.sh` 双镜像
-  静态校验、发布 6 个资产（两变体各 3 个）到本次运行专属 Release；
-  `plugin_mode` 可选手动触发时用 `pinned` 复现旧镜像。
-  首次运行结果以 Actions 页为准。
+- **S3d NSS 数据通路**：两个设备变体——mainline PPE（无后缀，兜底）与
+  QSDK NSS（`-nss`，补丁 0031 的 DTB `/delete-node/ &qcom_ppe;` 换
+  ess-switch/EDMA/dp）。kconfig choice 一次只能选一个设备，
+  `scripts/ci/build-images.sh` 顺序跑两遍；`verify-image.sh` 对两镜像
+  各自断言。**mainline 变体 2026-11-23 真机 PASS**（启动、网口角色、
+  三频 AP（含 6G）、LuCI、风扇时区；两项缺陷已修，见
+  `docs/S3D-DEVICE-TEST-2026-11-23.md`）。**S3e 有线数据面修复已真机
+  PASS**（PCS 时钟、MDIO 复位、复位所有权，见
+  `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §1–§7），并移植了
+  S95 eth0 AN 看门狗。
+- **S4（2026-11-24，NSS 变体真机 PASS）**：`files/etc/nss.conf` 默认
+  `tier=full`（保留 `fallback=wired`、`budget=3`），启动自动装载
+  sdk/dp/ppe 全家/ecm；补丁 0041：两变体 DTS 蓝灯 `default-state="on"`
+  常亮、NSS dp1–dp4 挂 ART `ethaddr` 0–3 使 MAC 跨启动固定（上游看到的
+  WAN MAC 不再漂移）。热重启 3 轮 + 断电冷启动均 PASS，详见
+  `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8。
+- CI（S5，2026-11-24 起含内核检测）：`.github/workflows/build-25.12-6.18.yml`
+  与 `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、
+  `check-kernel.sh` 内核漂移报告（只报告，不改 pin）、configure 三道包反查、
+  `build-images.sh world` 两遍构建、`verify-image.sh` 双镜像静态校验、
+  发布 6 个资产（两变体各 3 个）到本次运行专属 Release（notes 含插件实际
+  提交表与内核检测结论）；`plugin_mode` 可选手动触发时用 `pinned` 复现旧镜像。
+  运行结果以 Actions 页为准。
 - 任何刷机、重启、连接路由器或远程验证都需要用户单独批准。
 
 ## 目录
