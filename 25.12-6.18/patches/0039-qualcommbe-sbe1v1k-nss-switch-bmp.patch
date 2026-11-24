@@ -1,0 +1,44 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k-nss: switch_lan_bmp/switch_wan_bmp
+ 对齐 6.12 真机验证值（0x58/0x20）
+
+6.18 NSS DTS 把 switch_lan_bmp/switch_wan_bmp 写成 0x38/0x40，注释还
+声称「与 6.12 树保持一致」——不成立：25.12-6.12 的 0036 早已把它们改成
+0x58/0x20（0x38/0x40 是那棵树上的已知错误，把 WAN 指到 10G 口、与
+netifd 的 wan.device=eth1 矛盾）。
+
+这两个值不会落到硬件：APPE 开机把成员表写成平面表，真正的 LAN/WAN 隔离
+由 S19 /usr/sbin/sbe-port-roles 按角色写 SSDK 成员表（脚本头注释有同样
+结论）。但 ssdk_portvlan_init() 在 qca_switch_init 之后仍会按它们写一遍
+初始成员表（hppe 的 lan_bmp|wan_bmp 联合值 0x78 两套相同，nr_phy 不变），
+错误的分配只在 S19 之前短暂存在。因此本补丁是「与已硬件验证的 6.12 树
+对齐 + 修正注释」的整理项，不作为有线数据面实验（0038）的变量。
+
+Device status: NOT TESTED.
+
+---
+diff -ruN a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts	2026-11-23 13:57:50.460881739 +0000
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts	2026-11-23 13:57:50.489488405 +0000
+@@ -658,7 +658,9 @@
+  * switch_lan_bmp/switch_wan_bmp do not reach the hardware on this chip: APPE
+  * rewrites every port's member table to all-ones at boot, so the real LAN/WAN
+  * isolation is written at runtime by /usr/sbin/sbe-port-roles (ssdk_sh
+- * portVlan member).  0x38/0x40 are kept for parity with the 6.12 tree.
++ * portVlan member).  The values below match the 6.12 tree, which is the
++ * tree whose role mapping is hardware-validated: 0x58 = SSDK ports 3, 4
++ * (1G) and 6 (10G) LAN, 0x20 = port 5 (2.5G) WAN.
+  *
+  * qca-ssdk finds the MDIO bus via the "mdio-bus" phandle (its compatible
+  * scan does not match "qcom,ipq9574-mdio","qcom,ipq4019-mdio"), hence the
+@@ -669,8 +671,8 @@
+ &ess_switch {
+ 	mdio-bus = <&mdio>;
+ 
+-	switch_lan_bmp = <0x38>;	/* run-time roles come from sbe-port-roles */
+-	switch_wan_bmp = <0x40>;
++	switch_lan_bmp = <0x58>;	/* lan: SSDK ports 3, 4 (1G) and 6 (10G) */
++	switch_wan_bmp = <0x20>;	/* wan: SSDK port 5 (2.5G) = eth1 */
+ 	/* enum ssdk_port_wrapper_cfg (include/init/ssdk_init.h), one per UNIPHY */
+ 	switch_mac_mode = <0xb>;	/* uniphy 0: QSGMII (qca8075 package) */
+ 	switch_mac_mode1 = <0xf>;	/* uniphy 1: SGMII channel 0 (qca8081) */

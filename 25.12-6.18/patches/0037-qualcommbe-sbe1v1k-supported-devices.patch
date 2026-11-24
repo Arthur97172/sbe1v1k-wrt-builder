@@ -1,0 +1,62 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: SUPPORTED_DEVICES 同时声明
+ askey,sbe1v1k 与 spectrum,sbe1v1k
+
+NSS 变体真机复验（2026-11-23，S3e 修复后刷机）时发现：设备上
+`sysupgrade -n` 拒绝本镜像，报
+
+  upgrade: Device askey,sbe1v1k not supported by this image
+  upgrade: Supported devices: askey,sbe1v1k-nss
+
+原因：两个设备变体共用同一设备树 compatible（"askey,sbe1v1k"），
+运行期只按 /proc/device-tree/soc@0/ethernet@3a000000 是否存在区分
+（见 /usr/lib/sbe1v1k/nss-board）；而 SUPPORTED_DEVICES 缺省取设备名
+（askey_sbe1v1k-nss → askey,sbe1v1k-nss），与板上 board_name 不符。
+后果：NSS 镜像只能 `-F` 强刷，LuCI 升级页也无法接受它。
+
+同样的口径适用于 mainline 变体：它默认值 askey,sbe1v1k 与 compatible
+一致，从本树自身升级没问题，但从 25.12-6.12 或 24.10 跑着的设备
+（那两个树的设备树 compatible 是 "spectrum,sbe1v1k"）不带 -F 升级
+过来时，运行期 board_name 是 spectrum,sbe1v1k，mainline 镜像同样会被
+拒绝。因此两个变体都显式声明
+
+  SUPPORTED_DEVICES := askey,sbe1v1k spectrum,sbe1v1k
+
+fwtool 的 supported_devices 是空白分隔的列表，逐项与运行期 board_name
+比较（见 lib/upgrade/fwtool.sh），任一项匹配即通过。
+
+注意反方向：25.12-6.12 与 24.10 的镜像目前仍只声明
+spectrum,sbe1v1k，从本树 6.18 镜像升级回那两个树时仍需 `-F`；
+如需免 -F，需在各自树加对称的 askey,sbe1v1k 声明（尚未做）。
+
+---
+diff -ruN a/target/linux/qualcommbe/image/ipq95xx.mk b/target/linux/qualcommbe/image/ipq95xx.mk
+--- a/target/linux/qualcommbe/image/ipq95xx.mk	2026-11-23 13:56:07.376785371 +0000
++++ b/target/linux/qualcommbe/image/ipq95xx.mk	2026-11-23 13:56:14.143438993 +0000
+@@ -24,6 +24,10 @@
+ 	DEVICE_ALT1_VENDOR := Spectrum
+ 	DEVICE_ALT1_MODEL := SBE1V1K
+ 	DEVICE_DTS_CONFIG := config@rtq7300t-rev0
++	# 默认值 askey,sbe1v1k 与 compatible 一致；再声明 spectrum,sbe1v1k
++	# 以便从 25.12-6.12/24.10 的镜像不带 -F 升级过来（那边的 compatible 是
++	# "spectrum,sbe1v1k"）。理由详见 NSS 变体里的注释。
++	SUPPORTED_DEVICES := askey,sbe1v1k spectrum,sbe1v1k
+ 	KERNEL_LOADADDR := 0x42200000
+ 	SOC := ipq9570
+ 	DEVICE_PACKAGES := ath12k-firmware-qcn9274 f2fsck ipq-wifi-askey_sbe1v1k kmod-ath12k \
+@@ -44,6 +48,15 @@
+ 	DEVICE_VARIANT := NSS
+ 	DEVICE_DTS := ipq9570-sbe1v1k-nss
+ 	DEVICE_DTS_CONFIG := config@rtq7300t-rev0
++	# 两个变体共用设备树 compatible（"askey,sbe1v1k"），运行期只按
++	# /proc/device-tree/soc@0/ethernet@3a000000 是否存在区分（见
++	# /usr/lib/sbe1v1k/nss-board）。SUPPORTED_DEVICES 默认取设备名，会变成
++	# "askey,sbe1v1k-nss"，与板上 board_name 不符：不带 -F 的 sysupgrade
++	# 和 LuCI 升级都会以 "not supported by this image" 拒绝本镜像。
++	# 同时声明 spectrum,sbe1v1k：25.12-6.12 与 24.10 的设备树 compatible 是
++	# "spectrum,sbe1v1k"，从那个树跑着的设备不带 -F 升级到本树镜像时，
++	# 运行期 board_name 就是 spectrum,sbe1v1k。
++	SUPPORTED_DEVICES := askey,sbe1v1k spectrum,sbe1v1k
+ 	KERNEL_LOADADDR := 0x42200000
+ 	SOC := ipq9570
+ 	DEVICE_PACKAGES := ath12k-firmware-qcn9274 f2fsck ipq-wifi-askey_sbe1v1k kmod-ath12k \

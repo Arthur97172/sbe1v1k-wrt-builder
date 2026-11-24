@@ -1,0 +1,90 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k-nss: 把 UNIPHY sys/soft 复位交还 qca-ssdk
+
+E2 镜像（0018）真机取证定案 D2/D3 的共同根因：6.18 BSP 的
+patches-6.18/0356 在 uniphy0/1/2 节点上补了 "sys"（GCC）与 "soft"
+（NSSCC）复位，重写后的 pcs-qcom-ipq9574 驱动在 probe 时把三条复位
+全部 exclusive 抢走。qca-ssdk 通过 ess-switch 复位表申请同一批线，
+拿到 -EBUSY，每次接口模式切换后必做的
+__adpt_ppe_gcc_uniphy_software_reset()（assert sys → 1 ms → deassert）
+静默变成空操作，serdes 不锁存新写入的模式：
+
+- D2：port 5（SGMII+）链路 up、MISC2/MODE_CTRL 回读正确，但双向零帧；
+- D3：port 6（USXGMII）AN 永远不完成，patch 0018 的 re-init 同样失效。
+
+E2 dmesg 的 7 条 __reset_control_get_internal WARN / 7 条
+"reset(N) not exist!" 与 DTB 数值一一对应：PCS 节点的
+gcc 0x87/0x8a/0x8d（xpcs）、gcc 0x85/0x88/0x8b（sys）、nsscc 0x6d
+（uniphy0 soft）正是 ess-switch 表里的同名线；uniphy1/2 的 "soft"
+在 ess-switch 表里实际映射到 PORT5/PORT6_ARES，不与 PCS 冲突，这也
+解释了为什么只有 uniphy0 的 soft 报错——与 6.12 行为一致。
+
+6.12 树里 uniphy 节点只有 xpcs 一条复位，sys/soft 一直归 ssdk，所以
+同样的序列工作正常。本补丁在 NSS 变体里把三条 uniphy 节点的复位裁剪
+回 6.12 的形态（仅 xpcs）：
+
+- sys/soft 交还 ssdk，软件复位恢复，D2/D3 的操作路径与 6.12 完全一致；
+- xpcs 仍由 PCS 驱动持有：6.12 树把 xpcs 交给 ssdk 独占后 10G 口死亡
+  （25.12-6.12/patches/0037 的 v2 实验），ssdk 对 -EBUSY 的处理本就是
+  跳过该 assert，与 6.12 相同；复位噪声从 7 条 WARN 降回 3 条。
+
+PCS 驱动在本变体只提供时钟（没有任何 pcs-handle 消费者），
+ipq_pcs_config_mode() 里的 sys/soft 脉冲本来就不可达，交还给 ssdk 不
+损失任何功能；标准（非 NSS）变体的 DTS 不受影响。
+
+Device status: PASS (2026-11-24, E4 image sha256 05eedd21...).  Real
+device: reset-core WARNs 7 -> 3 (only the XPCS lines 0x87/0x8a/0x8d,
+same as 6.12), "reset(0/14/15/16) not exist!" gone; D2 fixed (eth1 got
+a DHCP lease, ping/DNS/HTTP-200 through the 2.5G WAN port all PASS).
+D3 improved but still probabilistic: 1 of 3 boots still hit the old
+"uniphy autoneg time out!" (0x1f8002=0x0); the other 2 boots completed
+AN (0x1f8002=0x7000) and passed traffic from the host over the 10G
+port.  This residual matches the 6.12 baseline race (XPCS AN enable vs
+RTL8261N init timing), tracked separately from the reset-ownership
+defect this patch fixes.
+
+---
+diff -u a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
+@@ -737,19 +737,38 @@
+  * dp nodes no pcs-handle, so nobody ever calls them.  qca-ssdk keeps
+  * exclusive use of the UNIPHY registers through its ess-uniphy node.
+  *
+- * The XPCS reset lines stay as upstream describes them: qca-ssdk is not
+- * the only consumer, and on 6.12 removing them made the 10G port die.
++ * The reset lines are trimmed to what the 6.12 tree had: XPCS only.  The
++ * 6.18 BSP (patches-6.18/0356) additionally describes the per-UNIPHY "sys"
++ * (GCC) and "soft" (NSSCC) resets and the rewritten PCS driver claims all
++ * three exclusively at probe.  qca-ssdk requests the same lines through the
++ * ess-switch reset list, gets -EBUSY, and its mandatory
++ * __adpt_ppe_gcc_uniphy_software_reset() (assert sys, 1 ms, deassert) after
++ * every interface mode change silently becomes a no-op, so the serdes never
++ * latches the programmed mode: port 5 SGMII+ reports link but passes no
++ * frames (WAN dead) and port 6 USXGMII autonegotiation never completes.
++ * Handing sys/soft back to qca-ssdk reproduces the 6.12 reset ownership.
++ *
++ * The XPCS line stays claimed by the PCS driver.  On 6.12 giving qca-ssdk
++ * sole ownership of it made the 10G port die (25.12-6.12/patches/0037), and
++ * qca-ssdk tolerates the -EBUSY by skipping that assert, exactly as it did
++ * on 6.12.
+  */
+ &pcs0 {
+ 	status = "okay";
++	resets = <&gcc GCC_UNIPHY0_XPCS_RESET>;
++	reset-names = "xpcs";
+ };
+
+ &pcs1 {
+ 	status = "okay";
++	resets = <&gcc GCC_UNIPHY1_XPCS_RESET>;
++	reset-names = "xpcs";
+ };
+
+ &pcs2 {
+ 	status = "okay";
++	resets = <&gcc GCC_UNIPHY2_XPCS_RESET>;
++	reset-names = "xpcs";
+ };
+
+ &soc {

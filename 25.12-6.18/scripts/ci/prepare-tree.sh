@@ -130,16 +130,106 @@ if [ -d "$PROJ/files" ] && [ -n "$(ls -A "$PROJ/files" 2>/dev/null)" ]; then
 	cp -a "$PROJ/files/." "$BR/files/"
 fi
 
-# NSS（S3a，用户要求对齐 6.12）：把 QSDK 包定义与厂商源码装进装配树。
-# 只编译不安装——seed 不选这些包，mainline PPE 仍是默认数据通路。
-# 厂商源码来自本地 sources/buildroot（或 SBE_NSS_BASE 指定的打平目录）；
-# 找不到时跳过并明确打印，避免 CI 在没有 nss-src 资产时静默失败。
-if [ -n "${SBE_NSS_BASE:-}" ] || [ -d "$ROOT/sources/buildroot/qca/src/nss/base" ]; then
-	echo "[prepare] 安装 NSS 包与厂商源码（S3a）"
-	"$PROJ/nss/install.sh" "$ROOT"
+# NSS（S3a–S3d）：QSDK 包定义 + 厂商源码装进装配树。两个设备变体的镜像
+# 都带这 12 个包（mainline 变体靠 /usr/lib/sbe1v1k/nss-board 按设备树把关
+# 不装载），所以 CI 也必须装配，不能像 S3a 时那样“缺源码就跳过”。
+#
+# 厂商源码不在仓库里（QSDK 厂商树数十 GB 不入库）。来源优先级：
+#   SBE_NSS_BASE（打平的已解包目录）→ 本地 sources/buildroot 厂商树 →
+#   本地缓存 → 现场自产。
+# 自产方式与 6.12 相同：对 QSDK 基座做 blob:none 稀疏克隆，只检出
+# qca/src/nss，用 scripts/ci/export-nss-src.sh 重打 tar.gz，并与提交进
+# 仓库的 nss/nss-src.tar.gz.sha256 逐字节比对。CI 不需要人工上传的
+# Release 资产，校验强度不变（哈希相同）。
+NSS_SHA_FILE=$PROJ/nss/nss-src.tar.gz.sha256
+NSS_CACHE=$ROOT/.sbe-cache
+NSS_QSDK_URL=${SBE_NSS_QSDK_URL:-https://github.com/everything411/qsdk}
+NSS_QSDK_COMMIT=${SBE_NSS_QSDK_COMMIT:-21a8d13393aa8c7d2abf806e62a8dac2ba7af52f}
+
+echo "[prepare] 接入 NSS 源码"
+nss_flat=
+if [ -n "${SBE_NSS_BASE:-}" ]; then
+	echo "[prepare]   使用 SBE_NSS_BASE=$SBE_NSS_BASE"
+	nss_flat=$SBE_NSS_BASE
+elif [ -d "$ROOT/sources/buildroot/qca/src/nss/base" ]; then
+	echo "[prepare]   使用本地厂商树 $ROOT/sources/buildroot/qca/src/nss"
+elif [ -d "$NSS_CACHE/nss-src-v1/qca-ssdk" ] && \
+     [ -d "$NSS_CACHE/nss-src-v1/qca-ssdk-shell" ]; then
+	# 缓存必须是含 qca-ssdk-shell 的版本：旧缓存没有 apps-oss，
+	# install.sh 会跳过源码，qca-ssdk-shell 编译必失败。
+	echo "[prepare]   复用 $NSS_CACHE/nss-src-v1"
+	nss_flat=$NSS_CACHE/nss-src-v1
 else
-	echo "[prepare] 跳过 NSS：找不到厂商源码（本地需 sources/buildroot/qca/src/nss，或设 SBE_NSS_BASE）"
+	[ -f "$NSS_SHA_FILE" ] || { echo "[prepare] 缺少 $NSS_SHA_FILE" >&2; exit 1; }
+	echo "[prepare]   从 qsdk 基座自产 NSS 源码包（稀疏检出 qca/src/nss @ ${NSS_QSDK_COMMIT:0:12}）"
+	mkdir -p "$NSS_CACHE"
+	nss_work=$(mktemp -d "$NSS_CACHE/gen.XXXXXX")
+	nss_clone=$nss_work/qsdk
+	export GIT_TERMINAL_PROMPT=0
+	git init -q "$nss_clone"
+	git -C "$nss_clone" remote add origin "$NSS_QSDK_URL"
+	git -C "$nss_clone" config core.sparseCheckout true
+	git -C "$nss_clone" config core.sparseCheckoutCone true
+	# cone 模式必须逐级写出父目录的“重新包含”行。只写 /qca/src/nss/ 时
+	# git 会把整棵树都当成稀疏外（实测 checkout 出 0 个文件）；下面六行与
+	# `git sparse-checkout set --cone qca/src/nss` 生成的内容逐字一致，只是
+	# 提前到 fetch 之前写，避免先落全树再删。
+	mkdir -p "$nss_clone/.git/info"
+	cat > "$nss_clone/.git/info/sparse-checkout" <<'EOF'
+/*
+!/*/
+/qca/
+!/qca/*/
+/qca/src/
+!/qca/src/*/
+/qca/src/nss/
+EOF
+	git -c protocol.version=2 -C "$nss_clone" fetch --quiet --depth 1 \
+		--filter=blob:none origin "$NSS_QSDK_COMMIT" \
+		|| { echo "[prepare] 取不到 qsdk 基座 $NSS_QSDK_COMMIT（SOURCE_UNAVAILABLE）" >&2; rm -rf "$nss_work"; exit 1; }
+	git -C "$nss_clone" checkout --quiet --detach FETCH_HEAD
+	got=$(git -C "$nss_clone" rev-parse HEAD)
+	[ "$got" = "$NSS_QSDK_COMMIT" ] \
+		|| { echo "[prepare] qsdk 基座 HEAD 不符：$got（PIN_MISMATCH）" >&2; rm -rf "$nss_work"; exit 1; }
+	for d in base/qca-ssdk base/qca-nss-phy base/qca-nss-dp base/qca-nss-ppe \
+	         clients/qca-nss-ecm clients/qca-nss-ae-clients clients/qca-nss-sfe \
+	         apps-oss/qca-ssdk-shell; do
+		[ -d "$nss_clone/qca/src/nss/$d" ] \
+			|| { echo "[prepare] 稀疏检出缺少 qca/src/nss/$d" >&2; rm -rf "$nss_work"; exit 1; }
+	done
+	SBE_NSS_SRC_BASE="$nss_clone/qca/src/nss/base" \
+	SBE_NSS_SRC_CLIENTS="$nss_clone/qca/src/nss/clients" \
+	SBE_NSS_SRC_APPS="$nss_clone/qca/src/nss/apps-oss" \
+		"$SELF/export-nss-src.sh" "$nss_work/out" \
+		|| { echo "[prepare] NSS 源码包自产失败" >&2; rm -rf "$nss_work"; exit 1; }
+	cp "$NSS_SHA_FILE" "$nss_work/out/nss-src.tar.gz.sha256"
+	( cd "$nss_work/out" && sha256sum -c nss-src.tar.gz.sha256 ) \
+		|| { echo "[prepare] NSS 源码包自产结果与 nss-src.tar.gz.sha256 不一致（源码已漂移）" >&2
+		     rm -rf "$nss_work"; exit 1; }
+	tar -C "$NSS_CACHE" -xzf "$nss_work/out/nss-src-v1.tar.gz"
+	rm -rf "$nss_work"
+	nss_flat=$NSS_CACHE/nss-src-v1
 fi
+if [ -n "$nss_flat" ]; then
+	SBE_NSS_BASE=$nss_flat SBE_BUILDROOT=$BR "$PROJ/nss/install.sh" "$ROOT"
+else
+	SBE_BUILDROOT=$BR "$PROJ/nss/install.sh" "$ROOT"
+fi
+# 装配完整性断言：包目录与关键源码都必须进树。缺任何一件，
+# check-packages.sh index 会把对应的 NSS 包报成“索引里没有”，但到那时
+# 已经浪费了一次 prepare；这里提前失败并指名。
+for d in "$PROJ"/nss/packages/*/; do
+	_p=$(basename "$d")
+	[ -f "$BR/package/feeds/nss/$_p/Makefile" ] \
+		|| { echo "[prepare] NSS 装配不完整：缺少 package/feeds/nss/$_p/Makefile" >&2; exit 1; }
+done
+for f in "$BR/qca/src/nss/base/qca-ssdk/src/init/ssdk_clk.c" \
+         "$BR/qca/src/nss/base/qca-nss-dp/nss_dp_main.c" \
+         "$BR/qca/src/nss/base/qca-nss-ppe/Makefile" \
+         "$BR/qca/src/nss/clients/qca-nss-ecm/Makefile" \
+         "$BR/qca/src/nss/apps-oss/qca-ssdk-shell/Makefile"; do
+	[ -e "$f" ] || { echo "[prepare] NSS 装配不完整：缺少 $f" >&2; exit 1; }
+done
 
 echo "[prepare] 断言上游支持面"
 grep -qx 'KERNEL_PATCHVER:=6.18' "$BR/target/linux/qualcommbe/Makefile" \

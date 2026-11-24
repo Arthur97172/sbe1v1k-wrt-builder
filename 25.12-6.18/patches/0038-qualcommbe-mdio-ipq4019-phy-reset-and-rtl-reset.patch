@@ -1,0 +1,222 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k-nss: 移植 6.12 的 MDIO phy-reset 脉冲
+ （qca8075 扫描前复位 + QCA8081/RTL8261N 复位提前）
+
+立项「6.18 NSS 有线数据面」（2026-11-23）的第一号实验，对应三个缺陷：
+
+1. eth2/eth3（qca8075，SSDK port 3/4）在 NSS 镜像上不通：dmesg 为
+   "mdio_bus 90000.mdio-1: MDIO device at address 18 is missing."（19 同）
+   加上 "ssdk_port_phylink_setup: PPE port 3/4 failed to connect PHY,
+   ret -19"；设备上 /sys/bus/mdio_bus 只有 0x00（RTL8261N）与 0x1c
+   （QCA8081），没有任何 qca8075 PHY。
+2. eth1（WAN，QCA8081）：链路 2.5G/SGMII PLUS 成立，但 PPE 出口按
+   dropcode 119 "TX MAC disable drop" 丢弃全部帧（S3E §6.5）。
+3. eth0（RTL8261N，USXGMII）：AN 死锁 6/6（S3E §6.2–6.3），
+   ssdk 在 16.0 s 使能 AN，PHY 节点到 16.5 s 才由 phylib 复位
+   （config_init 打固件补丁）。
+
+共同根因候选：6.12 树有 0036/patches-6.12/0150 的「MDIO 驱动在扫描前
+脉冲 phy-reset 数组」补丁，6.18 树没有移植。缺了它，qca8075 包在上电/
+暖重启后不响应 MDIO（-19），QCA8081 与 RTL8261N 的复位被推迟到 phylib
+逐个 probe 的 16.5 s 之后——正好在 qca-ssdk 16.0 s 配置 uniphy、使能
+USXGMII AN 之后：对端 PHY 的复位会清掉 AN 状态，而 XPCS 侧 AN 是
+一次性的，不再重试。6.12 好启动约 50%、6.18 0/6，也与「6.12 有早期
+硬复位、6.18 没有」相符。
+
+改动：
+- 新增 patches-6.18/0150-net-mdio-ipq4019-phy-reset-gpios.patch
+  （6.12 0150 的 6.18 移植：整组 phy-reset 脉冲，100 ms 保持 +
+  1 s 释放后沉降）；
+- NSS DTS：&mdio 的 phy-reset-gpio 数组补上 tlmm 41（RTL8261N），
+  并去掉 rtl8261be_0 / qca8081_28 节点上的 reset-gpios——复位所有权
+  全部交给 MDIO 驱动，避免 phylib 在 16.5 s 再拉一次线；相关注释同步。
+
+判据（刷机后）：MDIO 扫描 0x12/0x13 出现、port 3/4 不再 -19、LAN
+有线口可通；若同时修复 WAN 出口与 eth0 AN，则 dropcode 119 停止增长、
+eth1 拿到 DHCP 租约、eth0 AN 寄存器非零。未达判据则保留本补丁
+（它修的是独立缺陷）、按 S3E §6.6 的后续实验继续。
+
+Device status: NOT TESTED.
+
+diff -ruN a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts	2026-11-23 13:53:42.189581904 +0000
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts	2026-11-23 13:54:10.149663340 +0000
+@@ -431,9 +431,6 @@
+ 	rtl8261be_0: ethernet-phy@5 {
+ 		compatible = "ethernet-phy-ieee802.3-c45";
+ 		reg = <0>;
+-		reset-gpios = <&tlmm 41 GPIO_ACTIVE_LOW>;
+-		reset-assert-us = <40000>;
+-		reset-deassert-us = <150000>;
+ 	};
+ 
+ 	ethernet-phy-package@16 {
+@@ -458,8 +455,6 @@
+ 	qca8081_28: ethernet-phy@28 {
+ 		compatible = "ethernet-phy-id004d.d101";
+ 		reg = <28>;
+-		reset-gpios = <&tlmm 52 GPIO_ACTIVE_LOW>;
+-		reset-deassert-us = <10000>;
+ 	};
+ };
+ 
+@@ -645,11 +640,13 @@
+  * of_find_node_by_name(NULL, "edma") lookup.
+  *
+  * The mainline qca8075_reset_hog on GPIO 60 is not present here: qca-ssdk
+- * drives that reset line itself through "phy-reset-gpio" below.  It only
+- * consumes index 0 (SSDK_PHY_RESET_GPIO_INDEX), so the QCA8075 package reset
+- * (tlmm 60) must come first; tlmm 52 (QCA8081) is declared after it for the
+- * S2 property to stay intact.  The per-PHY reset-gpios above stay owned by
+- * phylib.
++ * reads the "phy-reset-gpio" array itself and only consumes index 0
++ * (SSDK_PHY_RESET_GPIO_INDEX), so the QCA8075 package reset (tlmm 60) must
++ * come first; tlmm 52 (QCA8081) and tlmm 41 (RTL8261N) follow.  The ipq4019
++ * MDIO driver pulses the whole array before the PHY scan
++ * (patches-6.18/0150), so the PHY nodes carry no reset-gpios: a phylib
++ * reset only fires when that PHY probes, after the earlier MDIO addresses
++ * have already been read.
+  *
+  * Switch values are from the 6.12 tree (S2: QSDK 14.0 vendor DTB, hardware
+  * validated there): QSGMII for the QCA8075 package, SGMII channel 0 for the
+@@ -711,7 +708,12 @@
+ };
+ 
+ &mdio {
+-	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW>;
++	/* The ipq4019 MDIO driver pulses this whole array before the PHY
++	 * scan (patches-6.18/0150): tlmm 60 qca8075 package, tlmm 52
++	 * QCA8081 (0x1c), tlmm 41 RTL8261N (0x0, C45).  qca-ssdk reads the
++	 * property and only consumes index 0 (tlmm 60). */
++	phy-reset-gpio = <&tlmm 60 GPIO_ACTIVE_LOW &tlmm 52 GPIO_ACTIVE_LOW
++			  &tlmm 41 GPIO_ACTIVE_LOW>;
+ 	clock-frequency = <6250000>;
+ };
+ 
+diff -ruN a/target/linux/qualcommbe/patches-6.18/0150-net-mdio-ipq4019-phy-reset-gpios.patch b/target/linux/qualcommbe/patches-6.18/0150-net-mdio-ipq4019-phy-reset-gpios.patch
+--- a/target/linux/qualcommbe/patches-6.18/0150-net-mdio-ipq4019-phy-reset-gpios.patch	1970-01-01 00:00:00.000000000 +0000
++++ b/target/linux/qualcommbe/patches-6.18/0150-net-mdio-ipq4019-phy-reset-gpios.patch	2026-11-23 13:54:20.499659269 +0000
+@@ -0,0 +1,123 @@
++net: mdio: ipq4019: pulse phy-reset GPIOs before the PHY scan
++
++The QSDK 6.6 mdio-ipq4019 driver pulses the whole "phy-reset-gpio" GPIO
++array (bitmap over ndescs, IPQ_PHY_SET_DELAY_US hold in both directions)
++inside ipq_mdio_reset(), right before the bus is scanned.  Without it the
++PHYs behind the UNIPHYs do not answer: on the SBE1V1K the qca8075
++package (0x10-0x13; this board wires 0x12 and 0x13) is held in reset
++when of_mdiobus_register() starts probing, and the qca8081 (0x1c) and
++the RTL8261N (0x0) only get a reset much later, when phylib probes their
++nodes at ~16.5 s - after qca-ssdk has already configured the uniphy
++ports and enabled USXGMII auto-negotiation at ~16.0 s.
++
++Restore that pulse faithfully, including every array entry, and add a
++longer post-deassert settle (1 s instead of 100 ms) because our bus is
++scanned about ten seconds earlier in the boot than QSDK's was: the PHYs
++are still powering up.
++
++The QSDK CMN PLL poke (ipq_cmn_clk_reset()) is deliberately not ported.
++It writes the block at 0x9b000, but the upstream ipq-cmn-pll clock
++driver already maps that register block exclusively and drives the same
++refclk/RSTN/lock sequence.  A second ioremap here would fail with
++-EBUSY and take down the whole MDIO bus.
++
++Note that phylib's per-PHY "reset-gpios" is not a substitute: it pulses
++a line only when that PHY probes, after the earlier addresses have
++already been read.  The board array therefore carries all three reset
++lines: tlmm 60 (qca8075 package), tlmm 52 (QCA8081, 0x1c) and tlmm 41
++(RTL8261N, 0x0); qca-ssdk still only consumes index 0.
++
++This is the 6.18 port of the 6.12 fix (25.12-6.12/patches/0036).  Its
++absence is visible on the S3e NSS image as "mdio_bus 90000.mdio-1: MDIO
++device at address 18/19 is missing" and "ssdk_port_phylink_setup: PPE
++port 3/4 failed to connect PHY, ret -19".
++
++---
++--- a/drivers/net/mdio/mdio-ipq4019.c
+++++ b/drivers/net/mdio/mdio-ipq4019.c
++@@ -2,7 +2,9 @@
++ /* Copyright (c) 2015, The Linux Foundation. All rights reserved. */
++ /* Copyright (c) 2020 Sartura Ltd. */
++
+++#include <linux/bitmap.h>
++ #include <linux/delay.h>
+++#include <linux/gpio/consumer.h>
++ #include <linux/io.h>
++ #include <linux/iopoll.h>
++ #include <linux/kernel.h>
++@@ -48,9 +50,16 @@
++
++ #define IPQ_PHY_SET_DELAY_US	100000
++
+++/* The PHYs behind the UNIPHYs are also physically reset here, so give them
+++ * a full second to become MDIO-ready; the QSDK driver had the advantage of
+++ * being loaded about ten seconds later in the boot than we are.
+++ */
+++#define IPQ_PHY_SETTLE_DELAY_US	1000000
+++
++ struct ipq4019_mdio_data {
++ 	void __iomem	*membase;
++ 	void __iomem *eth_ldo_rdy;
+++	struct gpio_descs *reset_gpios;
++ 	struct clk *mdio_clk;
++ 	unsigned int mdc_rate;
++ };
++@@ -247,6 +256,36 @@
++ 	return -EINVAL;
++ }
++
+++/* Pulse every phy-reset line (the DT "phy-reset-gpio" array, whose index 0
+++ * is the qca8075 package reset).  The QSDK driver did this before the scan;
+++ * without it the PHYs behind the UNIPHYs do not answer.
+++ */
+++static void ipq_phy_reset_pulse(struct ipq4019_mdio_data *priv)
+++{
+++	unsigned long *values;
+++
+++	if (!priv->reset_gpios)
+++		return;
+++
+++	values = bitmap_zalloc(priv->reset_gpios->ndescs, GFP_KERNEL);
+++	if (!values)
+++		return;
+++
+++	bitmap_fill(values, priv->reset_gpios->ndescs);
+++	gpiod_set_array_value_cansleep(priv->reset_gpios->ndescs,
+++				       priv->reset_gpios->desc,
+++				       priv->reset_gpios->info, values);
+++	fsleep(IPQ_PHY_SET_DELAY_US);
+++
+++	bitmap_zero(values, priv->reset_gpios->ndescs);
+++	gpiod_set_array_value_cansleep(priv->reset_gpios->ndescs,
+++				       priv->reset_gpios->desc,
+++				       priv->reset_gpios->info, values);
+++	bitmap_free(values);
+++
+++	fsleep(IPQ_PHY_SETTLE_DELAY_US);
+++}
+++
++ static int ipq_mdio_reset(struct mii_bus *bus)
++ {
++ 	struct ipq4019_mdio_data *priv = bus->priv;
++@@ -263,6 +302,8 @@
++ 		fsleep(IPQ_PHY_SET_DELAY_US);
++ 	}
++
+++	ipq_phy_reset_pulse(priv);
+++
++ 	/* Configure MDIO clock source frequency if clock is specified in the device tree */
++ 	ret = clk_set_rate(priv->mdio_clk, IPQ_MDIO_CLK_RATE);
++ 	if (ret)
++@@ -358,6 +399,12 @@
++ 			return PTR_ERR(priv->eth_ldo_rdy);
++ 	}
++
+++	priv->reset_gpios = devm_gpiod_get_array_optional(&pdev->dev, "phy-reset",
+++							  GPIOD_OUT_LOW);
+++	if (IS_ERR(priv->reset_gpios))
+++		return dev_err_probe(&pdev->dev, PTR_ERR(priv->reset_gpios),
+++				     "couldn't get phy-reset GPIOs\n");
+++
++ 	bus->name = "ipq4019_mdio";
++ 	bus->read = ipq4019_mdio_read_c22;
++ 	bus->write = ipq4019_mdio_write_c22;

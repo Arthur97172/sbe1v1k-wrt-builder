@@ -1,0 +1,150 @@
+From: sbe1v1k 25.12-6.18 port <noreply@sbe1v1k-build>
+Subject: [PATCH] qca-ssdk: re-init the usxgmii uniphy when autoneg never completes
+
+qca_hppe_mac_sw_sync_task() checks usxgmii autoneg completion once, for
+100 ms, at the link-up edge, then seals port_old_link = UP whatever the
+result.  When the check fails, both the XPCS and the line PHY (RTL8261N
+on the 10G port) stay latched in the failed state:  SR_MII_CTRL reads
+back 0x1120, VR_MII_AN_CTRL 0x101, VR_MII_AN_INTR_STS 0x0, and the PHY
+reports "SerDes link did not come up".  Restarting autoneg or resetting
+XPCS on one side alone never clears it (device-proven on the 6.12 tree,
+~50% of boots); only a full re-run of the uniphy setup with the port
+clock gated -- PLL reset, XPCS held in reset, AN re-enabled -- brings the
+two ends back into the same window, and that path was never exercised at
+run time.
+
+Split the wait into adpt_hppe_uniphy_usxgmii_an_wait() with an explicit
+retry count, keep adpt_hppe_uniphy_usxgmii_autoneg_completed() as the
+100 ms wrapper it was, and on a failed check in usxgmii mode call the
+new adpt_hppe_uniphy_usxgmii_mode_reinit() (the __...mode_set() body
+that adpt_hppe_uniphy_mode_set() already uses at boot, plus the raw
+clock restoration of the same path) up to two times, each followed by a
+2 s wait.  UQXGMII keeps the old single-shot behaviour.
+
+Classification: behaviour fix for the 6.18 wired datapath; device
+testing pending.
+--- a/src/adpt/hppe/adpt_hppe_portctrl.c
++++ b/src/adpt/hppe/adpt_hppe_portctrl.c
+@@ -4137,11 +4137,11 @@
+ 	return;
+ }
+ 
+-sw_error_t
+-adpt_hppe_uniphy_usxgmii_autoneg_completed(a_uint32_t dev_id,
+-				a_uint32_t uniphy_index, a_uint32_t port_id)
++static sw_error_t
++adpt_hppe_uniphy_usxgmii_an_wait(a_uint32_t dev_id, a_uint32_t uniphy_index,
++				a_uint32_t port_id, a_uint32_t retries)
+ {
+-	a_uint32_t autoneg_complete = 0, retries = 100;
++	a_uint32_t autoneg_complete = 0;
+ 	union vr_mii_an_intr_sts_u vr_mii_an_intr_sts;
+ 
+ 	memset(&vr_mii_an_intr_sts, 0, sizeof(vr_mii_an_intr_sts));
+@@ -4150,10 +4150,7 @@
+ 	while (autoneg_complete != 0x1) {
+ 		mdelay(1);
+ 		if (retries-- == 0)
+-		{
+-			printk("uniphy autoneg time out!\n");
+ 			return SW_TIMEOUT;
+-		}
+ 		adpt_hppe_uniphy_usxgmii_autoneg_status_get(dev_id, uniphy_index,
+ 				port_id, &vr_mii_an_intr_sts);
+ 		autoneg_complete = vr_mii_an_intr_sts.bf.cl37_ancmplt_intr;
+@@ -4165,6 +4162,19 @@
+ 
+ 	return SW_OK;
+ }
++
++sw_error_t
++adpt_hppe_uniphy_usxgmii_autoneg_completed(a_uint32_t dev_id,
++				a_uint32_t uniphy_index, a_uint32_t port_id)
++{
++	sw_error_t rv;
++
++	rv = adpt_hppe_uniphy_usxgmii_an_wait(dev_id, uniphy_index, port_id, 100);
++	if (rv != SW_OK)
++		printk("uniphy autoneg time out!\n");
++
++	return rv;
++}
+ static void
+ adpt_hppe_uniphy_speed_set(a_uint32_t dev_id, a_uint32_t port_id, fal_port_speed_t speed)
+ {
+@@ -4204,12 +4214,38 @@
+ {
+ 	fal_port_interface_mode_t port_mode = PORT_INTERFACE_MODE_MAX;
+ 	a_uint32_t uniphy_index = 0;
++	a_uint32_t retry = 0;
++	sw_error_t rv;
+ 
+ 	adpt_hppe_port_interface_mode_get(dev_id, port_id, &port_mode);
+ 
+ 	if ((port_mode == PORT_UQXGMII) || (port_mode == PORT_USXGMII)) {
+ 		uniphy_index = hsl_port_to_uniphy(dev_id, port_id);
+-		adpt_hppe_uniphy_usxgmii_autoneg_completed(dev_id,uniphy_index, port_id);
++		rv = adpt_hppe_uniphy_usxgmii_autoneg_completed(dev_id,
++				uniphy_index, port_id);
++		/*
++		 * A stalled usxgmii autoneg leaves both XPCS and the line PHY
++		 * latched in the failed state; restarting autoneg on one side
++		 * alone never clears it.  Re-running the uniphy mode setup
++		 * (port clock gated, PLL and XPCS reset, AN re-enabled) makes
++		 * the two ends renegotiate in one window.
++		 */
++		if ((rv != SW_OK) && (port_mode == PORT_USXGMII)) {
++			for (retry = 0; retry < 2; retry++) {
++				adpt_hppe_uniphy_usxgmii_mode_reinit(dev_id,
++						uniphy_index);
++				rv = adpt_hppe_uniphy_usxgmii_an_wait(dev_id,
++						uniphy_index, port_id, 2000);
++				if (rv == SW_OK) {
++					printk("uniphy%d autoneg recovered after re-init (attempt %u)\n",
++							uniphy_index, retry + 1);
++					break;
++				}
++			}
++			if (rv != SW_OK)
++				printk("uniphy%d autoneg still incomplete after re-init\n",
++						uniphy_index);
++		}
+ 	}
+ 	return;
+ }
+--- a/src/adpt/hppe/adpt_hppe_uniphy.c
++++ b/src/adpt/hppe/adpt_hppe_uniphy.c
+@@ -755,6 +755,22 @@
+ 	return rv;
+ }
+ 
++sw_error_t
++adpt_hppe_uniphy_usxgmii_mode_reinit(a_uint32_t dev_id, a_uint32_t uniphy_index)
++{
++	sw_error_t rv;
++
++	rv = __adpt_hppe_uniphy_usxgmii_mode_set(dev_id, uniphy_index);
++	if (SW_OK == rv) {
++		ssdk_uniphy_raw_clock_set(dev_id, uniphy_index, UNIPHY_RX,
++			UNIPHY_CLK_RATE_312M);
++		ssdk_uniphy_raw_clock_set(dev_id, uniphy_index, UNIPHY_TX,
++			UNIPHY_CLK_RATE_312M);
++	}
++
++	return rv;
++}
++
+ static a_bool_t
+ __adpt_hppe_uniphy_rxlos_check(a_uint32_t dev_id, a_uint32_t uniphy_index)
+ {
+--- a/include/adpt/hppe/adpt_hppe_uniphy.h
++++ b/include/adpt/hppe/adpt_hppe_uniphy.h
+@@ -55,6 +55,8 @@
+ void
+ __adpt_hppe_uniphy_mode_ctrl_set(a_uint32_t dev_id, a_uint32_t uniphy_index,
+ 				 a_uint32_t mode, a_uint32_t channel);
++sw_error_t
++adpt_hppe_uniphy_usxgmii_mode_reinit(a_uint32_t dev_id, a_uint32_t uniphy_index);
+ #ifdef __cplusplus
+ }
+ #endif                          /* __cplusplus */

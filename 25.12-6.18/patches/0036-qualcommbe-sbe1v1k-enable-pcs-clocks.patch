@@ -1,0 +1,86 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k-nss: 启用 IPQ9574 PCS 时钟提供者
+
+NSS 变体真机取证（2026-11-23，S3e）：eth0（RTL8261N 10G，port 6）与
+eth1（QCA8081 2.5G WAN，port 5）phylink 报 Link is Up、桥端口进
+forwarding，但双向零帧（eth0 rx_packets 恒 0）、WAN DHCP pending。
+debugfs 里 port5/port6 的 TX/RX 时钟链停在 24 MHz / 512 = 46,875 Hz，
+而 qsgmii 的 port1-4 正常；dmesg 每 ~0.37 s 刷
+
+  nss_cc_port5_tx_clk_src: can't find a configuration for rate ...
+
+与 6.12 的 0037 完全同源：nsscc 的 port5/6 时钟源表以 UNIPHY 的 NSS
+RX/TX 时钟为父（nsscc 节点 clocks 索引 4..9，phandle 分别是
+<&pcs0 0/1> <&pcs1 0/1> <&pcs2 0/1>），这些父时钟由 mainline PCS 驱动
+注册；本变体（沿用 0031）把 pcs0/pcs1/pcs2 置 disabled，父项永远解析
+不到，__clk_rcg2_select_conf() 选不出配置，ssdk 的 clk_set_rate 永远
+失败，分频器停在 512 上限。
+
+修法与 6.12 相同：三颗 PCS 置 okay，内核配置把 PCS_QCOM_IPQ9574 从
+上游的未选（被 qcom_ppe 的 select 拉成 =m）提为 =y。
+
+与 qca-ssdk 共存安全：本变体删除了 qcom_ppe，NSS dp 节点没有
+pcs-handle，PCS 的写寄存器 ops 没有任何 phylink 消费者会调用；probe 只
+映射自己的三个 64 KiB 窗口、打开 uniphy sys/ahb 时钟并注册时钟提供者。
+XPCS resets 保持上游原样（6.12 试验：删掉会让 10G 口起不来）。
+
+只在 NSS 变体的设备树启用，mainline 变体的 DTS 不动：上游板级 DTS
+（含 rdp433 与 sbe1v1k）都默认关闭 PCS，mainline 镜像在 S1b/S3d 已
+真机 PASS，不给它引入行为变化。
+
+Status: 本机构建 + verify-image 待跑；设备侧 NOT TESTED。
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
+@@ -716,19 +716,36 @@
+ };
+ 
+ /*
+- * The UNIPHY register windows are consumed by qca-ssdk (ess-uniphy below).
+- * The mainline PCS drivers must not claim the same registers.
++ * The UNIPHY register windows are still consumed by qca-ssdk (ess-uniphy
++ * below) for the switch data path, but the mainline PCS driver must also
++ * probe: the per-UNIPHY NSS RX/TX clocks it registers are the parents of
++ * the port 5/6 clock-source tables (nsscc "clocks" indices 4..9).  Without
++ * a provider every rate request on nss_cc_port5_*_clk_src hits
++ * "can't find a configuration for rate" and the port clocks stay stuck at
++ * xo/512, which leaves eth1 (WAN, port 5) and eth0 (10G, port 6) dead at
++ * the MAC while phylink still reports the link as up.
++ *
++ * Coexistence with qca-ssdk is safe (same conclusion as the 6.12 tree,
++ * 25.12-6.12/patches/0037): the PCS driver probe only maps its own three
++ * 64 KiB windows, enables the uniphy sys/ahb clocks and registers the
++ * clock providers; the register-writing PCS ops are only reached through
++ * a phylink consumer, and this variant deletes qcom_ppe and gives the NSS
++ * dp nodes no pcs-handle, so nobody ever calls them.  qca-ssdk keeps
++ * exclusive use of the UNIPHY registers through its ess-uniphy node.
++ *
++ * The XPCS reset lines stay as upstream describes them: qca-ssdk is not
++ * the only consumer, and on 6.12 removing them made the 10G port die.
+  */
+ &pcs0 {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ &pcs1 {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ &pcs2 {
+-	status = "disabled";
++	status = "okay";
+ };
+ 
+ &soc {
+--- a/target/linux/qualcommbe/config-6.18
++++ b/target/linux/qualcommbe/config-6.18
+@@ -321,7 +321,7 @@
+ CONFIG_PCI_MSI=y
+ CONFIG_PCI_PWRCTRL=y
+ CONFIG_PCI_PWRCTRL_SLOT=y
+-# CONFIG_PCS_QCOM_IPQ9574 is not set
++CONFIG_PCS_QCOM_IPQ9574=y
+ CONFIG_PER_VMA_LOCK=y
+ CONFIG_PGTABLE_LEVELS=3
+ CONFIG_PHYLIB=y
