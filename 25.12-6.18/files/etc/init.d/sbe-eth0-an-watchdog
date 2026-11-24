@@ -1,0 +1,26 @@
+#!/bin/sh /etc/rc.common
+# eth0 USXGMII AN 死锁看门狗启动入口（6.18 NSS 变体；移植自 6.12）。
+# 检测与自愈逻辑、以及为什么只能靠"重启一次"来恢复，
+# 见 /usr/sbin/sbe-eth0-an-watchdog 顶部说明与
+# docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md。
+#
+# S95：晚于 network(20)、eth0-lan-attach(23) 与 nss(15)；脚本自身会在
+# 后台等 eth0 出载波（6.18 NSS 变体正常 ~58 s）后再判定，不阻塞 rcS。
+
+START=95
+STOP=05
+# 不要写 USE_PROCD=0：rc.common 用 [ -n "$USE_PROCD" ] 判分支，"0" 也是
+# 非空，会进入 procd 路径并把下面的 start() 覆盖成空的 start_service，
+# 开机时 worker 根本不会被拉起（6.12 的 v92-1 真机踩过）。非 procd 脚本
+# 唯一的正确写法是整行省略。
+
+start() {
+	# mainline 镜像（共用 rootfs）上 eth0 归 netifd、没有 ssdk_sh，
+	# 不启动 worker；worker 自身也会再判一次。
+	/usr/lib/sbe1v1k/nss-board || return 0
+	/usr/sbin/sbe-eth0-an-watchdog >/dev/null 2>&1 &
+}
+
+stop() {
+	killall sbe-eth0-an-watchdog 2>/dev/null
+}

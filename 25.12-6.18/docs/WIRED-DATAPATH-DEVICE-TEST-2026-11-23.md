@@ -287,3 +287,57 @@ ETH0_XPCS_AN_BOOT_2026-11-22.md`，26 次采样 13 坏）同一形态，属**既
 - port3/4（qca8075 两个 LAN 口）DISABLE 属预期（未接线）；port5/6 ENABLE。
 - 无线 3 radio（wl0.0/1/2-ap0）正常拉起；无新增 dmesg 噪声。
 - 未测：冷上电重复性、D3 坏启动占比统计（需更多重启或看门狗策略）。
+
+## 7. E5：S95 看门狗移植 + 10 次热重启统计（2026-11-24）
+
+### 7.1 移植内容
+
+6.12 的 S95 `sbe-eth0-an-watchdog` 移植到 6.18 有线口（eth0，NSS
+port6）。三件套 + rc.d 链接与 6.12 同名：
+
+- `files/usr/sbin/sbe-eth0-an-watchdog`：等 eth0 载波（6.18 link up
+  ~58 s，上限 150 s）后按 `VR_MII_AN_INTR_STS`(0x1f8002) 判
+  `& 0x7f00 == 0` 即 AN 死锁；采样 3/8/6 s 三次（跨 17 s）；判死后
+  写 `/etc/sbe-eth0-an-watchdog.count` 并自动重启一次，好启动清零。
+- 6.18 适配：板名门控同时认 `askey,sbe1v1k` 与 `spectrum,sbe1v1k`；
+  加 `nss-board` 数据通路门控与 `command -v ssdk_sh`（mainline 镜像
+  worker 直接退出）；init 保持非 procd 写法（不写 `USE_PROCD=`，
+  避免 rc.common 陷阱）。
+- `verify-image.sh` 新增 8 条断言 × 2 镜像（文件、rc.d 链接、板名/
+  数据通路门控、寄存器判据、USE_PROCD 负断言）。
+
+镜像：NSS sysupgrade sha256 `8891de24`…；构建 EXIT=0，
+`verify-image` **PASS=148 FAIL=0**。2026-11-24 `sysupgrade -n` 刷入
+（dropbear 主机密钥重置，known_hosts 旧指纹需清）。
+
+### 7.2 E5 首启：re-init 自愈首次被真机观察到
+
+首启 dmesg：`uniphy autoneg time out!`（56.97 s）后 1 s 内
+`uniphy2 autoneg recovered after re-init (attempt 1)`（57.88 s），
+AN 寄存器最终 0x7000。这是 qca-ssdk 0018 re-init 补丁第一次在真机
+把 AN 救回来（E2 时 `still incomplete after re-init`）。看门狗在
+这种启动上保持静默、计数 0。即现行有三级防线：AN 直接成功 →
+0018 re-init 自愈 → S95 看门狗重启一次。
+
+### 7.3 10 次热重启统计（统计口径见下）
+
+每轮 `reboot` 后判定"被测试的启动"：等待期观测到 uptime 回落
+（看门狗重启过）或稳定态 `0x1f8002 == 0` → BAD；否则 GOOD。同时
+记录看门狗计数与日志。
+
+| 轮 | 结果 | 看门狗计数 | 稳定态 0x1f8002 |
+|---|---|---|---|
+| 1–10 | **GOOD ×10** | 全 0 | 0x7000（第 2 轮复采 0x3000，掩码内非零） |
+
+**坏启动率 0/10（GOOD=10 BAD=0 UNKNOWN=0）。** 10 次启动里没有出现
+`uniphy autoneg time out!`，看门狗零触发、零误判、零自动重启。
+
+### 7.4 结论与覆盖缺口
+
+- 0040 之后坏启动率远低于 E4 的 1/3（E4 样本 3 次），10 次热重启
+  全部健康；残留竞争是否仍存在无法用本轮排除，但实际触发率很低。
+- 看门狗的**好启动路径**已验证（静默、计数清零、无打扰）；
+  **自愈触发路径本轮未覆盖**（没有坏启动可触发）。要验证
+  "判死 → 重启一次 → 好启动恢复" 与 "连续坏启动 → 放弃路径"，
+  需另开一轮并人工制造坏启动（冷上电/受控实验），需用户批准。
+- 未测：冷上电重复性、看门狗在 eth0 无载波/角色切换场景的行为。

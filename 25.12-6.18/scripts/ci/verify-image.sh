@@ -275,6 +275,32 @@ check_rootfs() {
 			&& ok "[$tag] /$f 按数据通路门控" || bad "[$tag] /$f 缺 nss-board 门控"
 	done
 
+	# --- eth0 AN 看门狗（S95，移植自 6.12）-----------------------------
+	# 坏启动自愈依赖三件套齐全 + rc.d 链接 + 板名/数据通路门控：
+	# 门控漏任一项，worker 会在开机时静默退出，假链路永远等不到重启。
+	for f in usr/sbin/sbe-eth0-an-watchdog etc/init.d/sbe-eth0-an-watchdog \
+	         etc/config/sbe_eth0_watchdog; do
+		[ -x "$R/$f" ] || [ -f "$R/$f" ] \
+			&& ok "[$tag] /$f 在镜像中" || bad "[$tag] 镜像缺少 /$f"
+	done
+	check_rc_link /etc/rc.d/S95sbe-eth0-an-watchdog ../init.d/sbe-eth0-an-watchdog
+	grep -q 'askey,sbe1v1k | spectrum,sbe1v1k' \
+		"$R/usr/sbin/sbe-eth0-an-watchdog" \
+		&& ok "[$tag] 看门狗板名门控含 askey,sbe1v1k" \
+		|| bad "[$tag] 看门狗板名门控不含 askey,sbe1v1k（不会执行）"
+	for f in usr/sbin/sbe-eth0-an-watchdog etc/init.d/sbe-eth0-an-watchdog; do
+		grep -q 'nss-board' "$R/$f" \
+			&& ok "[$tag] /$f 按数据通路门控" || bad "[$tag] /$f 缺 nss-board 门控"
+	done
+	grep -q '0x1f8002' "$R/usr/sbin/sbe-eth0-an-watchdog" \
+		&& ok "[$tag] 看门狗按 VR_MII_AN_INTR_STS(0x1f8002) 判定" \
+		|| bad "[$tag] 看门狗缺少 AN 寄存器判定"
+	if grep -q '^USE_PROCD=' "$R/etc/init.d/sbe-eth0-an-watchdog"; then
+		bad "[$tag] 看门狗 init 写了 USE_PROCD=（rc.common 陷阱，worker 不会启动）"
+	else
+		ok "[$tag] 看门狗 init 未写 USE_PROCD=（非 procd 正确写法）"
+	fi
+
 	# --- 包集合反查（与 seed/defconfig 检查同一份清单）------------------
 	"$SELF/check-packages.sh" db "$R"
 	case $? in

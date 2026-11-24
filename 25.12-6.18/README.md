@@ -189,9 +189,21 @@ FIT 里嵌着 `Spectrum SBE1V1K` / `askey,sbe1v1k` / `config@rtq7300t-rev0`；
 逐包反查（插件、工具、NSS 模块、必禁项），并校验 NSS overlay（`nss-board`
 判据、`nss.conf`、装载/角色脚本与 rc.d 链接、`nss-board || exit 0` 门控）。
 设备侧：启动、网口角色、LAN→WAN 转发、LuCI、风扇/LED、2.4G/5G 已在 B 机
-S1b 验证（`docs/S1B-DEVICE-TEST-2026-11-22.md`）；6G 信道未启用、NSS 变体
-设备行为未验证（S3e，需单独批准），均不得据静态校验声称可用。重启复验与
-WiFi 客户端关联未做。
+S1b 验证（`docs/S1B-DEVICE-TEST-2026-11-22.md`）；6G 信道未启用。NSS 变体
+有线数据面：D1（LAN PHY 绑定）/D2（2.5G WAN）已真机 PASS，D3（10G 口
+USXGMII AN）在补丁 0040 后回到概率性坏启动，由 S95 看门狗兜底，见
+`docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md`。重启复验与 WiFi 客户端
+关联未做。
+
+### eth0 AN 看门狗（S95，移植自 6.12）
+
+`files/etc/init.d/sbe-eth0-an-watchdog` + `files/usr/sbin/sbe-eth0-an-watchdog`
+只作用于 NSS 变体（`nss-board` 门控）且 eth0 有载波时：等 eth0 出载波后
+三次采样 uniphy2 `VR_MII_AN_INTR_STS`（0x1f8002），usxg_an_sts 恒 0 即判
+USXGMII AN 死锁，自动重启一次；`/etc/sbe-eth0-an-watchdog.count` 防重启
+循环（默认 `max_reboots='1'`，正常启动清零）。配置在
+`/etc/config/sbe_eth0_watchdog`，设 `enabled '0'` 可关闭。mainline 镜像
+上 worker 直接退出。
 
 ## 规则
 
