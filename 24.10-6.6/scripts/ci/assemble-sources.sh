@@ -213,7 +213,11 @@ apply_series() {
 			for _np in "${dest%/}/$(basename "$patch")" "${dest%/}"; do
 				# 按第一列精确比对：规则既可写 glob 也可写绝对路径，新路径的
 				# 登记必须原文出现，否则指纹比对时对不上（fnmatch 语义另算）。
-				cut -f1 "$BUILD/known-delta.conf" | grep -qxF -- "$_np" \
+				# 用 awk 整文件扫描，不用 cut|grep -q：grep -q 命中即退出，
+				# 写端可能吃 SIGPIPE，pipefail 会把匹配成功判成失败（11-24
+				# 本地装配实测误报过一次，之后无法稳定复现）。
+				awk -F'\t' -v p="$_np" '$1 == p { f = 1 } END { exit !f }' \
+					"$BUILD/known-delta.conf" \
 					|| die 4 "package-patch 新路径未在 known-delta.conf 登记：$_np（第 16 步指纹比对必然失败）"
 			done
 			logmsg "  PACKAGE-PATCH $(basename "$patch") → $dest/"
@@ -370,6 +374,16 @@ for _f in 99-ttyd-disable 99-allow-luci-wan 99-allow-ssh-wan 99-opkg-distfeeds \
 done
 logmsg "  SBE_DEFAULTS_OK ttyd-disable + allow-luci-wan + allow-ssh-wan + opkg-distfeeds + system-timezone"
 logmsg "  SBE_DTS_OK 与 build/p-b/files 源文件逐字节一致"
+# P-B 0004 在镜像定义里追加设备名（known-delta 对 generic.mk 登记 changed）。
+# 这里断言那一行确实落进去了，且原 BOARD_NAME 没被替换——否则跨树升级仍会被
+# fwtool 拒绝，或者板名错位导致 platform.sh 走错升级分支。
+_gen="$SRC/buildroot/target/linux/feeds/ipq95xx/image/generic.mk"
+[ -f "$_gen" ] || die 4 "ipq95xx/image/generic.mk 缺失"
+grep -qx '[[:space:]]*SUPPORTED_DEVICES := spectrum,sbe1v1k askey,sbe1v1k' "$_gen" \
+	|| die 4 "generic.mk 缺少 sbe1v1k 的双设备名 SUPPORTED_DEVICES"
+grep -qx '[[:space:]]*BOARD_NAME := spectrum_sbe1v1k' "$_gen" \
+	|| die 4 "generic.mk 的 BOARD_NAME 被改动（升级分支会错位）"
+logmsg "  SUPPORTED_DEVICES_OK spectrum,sbe1v1k + askey,sbe1v1k"
 _mmc="$SRC/buildroot/target/linux/feeds/ipq95xx/base-files/lib/upgrade/mmc.sh"
 [ -f "$_mmc" ] || die 4 "mmc.sh 缺失"
 # 审计树里 mmc.sh 是 744（组可执行），但 git 只记录 644/755，检出后再经
@@ -483,7 +497,7 @@ logmsg "  SAE_COMPAT_OK wifi-scripts（netifd + hostapd + uci 迁移）"
 # 的退出码，而这个分支必须包在 CONFIG_IEEE80211BE 里——无条件返回 1 会在
 # 没开 EHT 的构建里谎报支持。分支存在且确实受 #ifdef 约束，缺一即停。
 _bf="$SRC/buildroot/qca/src/network/services/hostapd/src/utils/build_features.h"
-grep -A2 '^#ifdef CONFIG_IEEE80211BE$' "$_bf" | grep -q 'strcmp(feat, "11be")' \
+grep -q 'strcmp(feat, "11be")' <(grep -A2 '^#ifdef CONFIG_IEEE80211BE$' "$_bf") \
 	|| die 4 "0021 未生效：build_features.h 缺 CONFIG_IEEE80211BE 下的 11be 分支"
 logmsg "  BUILD_FEATURES_11BE_OK hostapd（has_feature 报 11be）"
 
@@ -555,7 +569,7 @@ _ws26="$SRC/buildroot/qca/feeds/wlan-open/mac80211/wifi-scripts/files/lib/netifd
 _pp26="$SRC/buildroot/qca/feeds/wlan-open/mac80211/files/lib/wifi/pre_post_wifi_operations.sh"
 [ "$(grep -cF 'command -v wlanconfig >/dev/null 2>&1 || return 0' "$_ws26")" = 1 ] \
 	|| die 4 "0026 未生效：configure_mcast_denylist() 的 wlanconfig 守卫不是恰好一处"
-grep -A4 '^configure_mcast_denylist() {$' "$_ws26" | grep -q 'command -v wlanconfig' \
+grep -q 'command -v wlanconfig' <(grep -A4 '^configure_mcast_denylist() {$' "$_ws26") \
 	|| die 4 "0026 位置错误：wlanconfig 守卫不在 configure_mcast_denylist() 开头"
 [ "$(grep -cF '[ "$mlo_add_flag" = 1 ] || mlo_add_flag=0' "$_ws26")" = 4 ] \
 	|| die 4 "0026 未生效：mlo_add_flag 的 4 处读取点没有全部归一化"
