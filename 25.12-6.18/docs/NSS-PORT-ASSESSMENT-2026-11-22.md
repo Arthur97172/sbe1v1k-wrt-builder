@@ -227,6 +227,12 @@ budget 回退机制原样移植，作为刷机兜底。
 
 ### 5.1 实际落地（2026-11-23 实施，与上面的预方案相比有三处偏离）
 
+> **2026-11-24 变更**：mainline PPE 兜底变体退役，下面描述的
+> `Device/askey_sbe1v1k-nss` 独立设备已取消；同一个 `Device/askey_sbe1v1k`
+> 现在由补丁 0032 原地切到 NSS DTB（`ipq9570-sbe1v1k-nss`）并携带 NSS 包集，
+> 镜像名不带 `-nss` 后缀。本节保留 2026-11-23 的双变体背景；运行期
+> `nss-board` 门控作为数据通路判据继续保留。
+
 **两个设备、一份 rootfs。** 设备变体 `Device/askey_sbe1v1k-nss`
 （补丁 0032）与 mainline `Device/askey_sbe1v1k` 同目标、同一份包选择与
 overlay（`DEVICE_PACKAGES` 取并集；两份 rootfs 内容等价，由各自一遍构建

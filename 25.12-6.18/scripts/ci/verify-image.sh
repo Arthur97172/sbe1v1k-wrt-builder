@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # 25.12-6.18 产物静态校验（只看文件，不接触设备）。
 #
-# S3d 起产出两个设备镜像（mainline PPE 与 QSDK NSS），两者共用同一套包选择
-# 与 overlay（seed + files/），但 OpenWrt 的设备选择是 kconfig choice，每个
-# 镜像来自各自的一次构建（scripts/ci/build-images.sh 跑两遍）。因此这里对
-# 每份镜像独立校验：
-#   1. 产物齐全：两套 squashfs sysupgrade 与 initramfs FIT，各一份；
+# 2026-11-24 起本树只有一个设备 askey_sbe1v1k：数据通路由补丁 0032 原地
+# 固定为 QSDK NSS（DEVICE_DTS ipq9570-sbe1v1k-nss），脚本只产出一个镜像，
+# 文件名不带 -nss 后缀，scripts/ci/build-images.sh 也只需跑一遍。校验项：
+#   1. 产物齐全：恰好一套 squashfs sysupgrade 与 initramfs FIT，且目录里
+#      不得再有已退役的 -nss 变体产物；
 #   2. sysupgrade 是 tar，成员 kernel/root 存在；
-#   3. kernel 成员是 FIT，里面嵌着本板 DTB（model/compatible/config 节点）；
-#      mainline FIT 含 qcom,ipq9574-ppe，NSS FIT 含 qcom,ess-switch-ipq95xx
-#      且不含 qcom,ipq9574-ppe（补丁 0031 的 /delete-node/）；
-#   4. 两份 root 都是 squashfs，且各自都带 NSS 包与 overlay/NSS 服务文件
-#      （共用包选择的并集模型：mainline 上靠 nss-board 门控静默让路）；
+#   3. kernel 成员是 FIT，里面嵌着本板 DTB（model/compatible/config 节点），
+#      含 qcom,ess-switch-ipq95xx 且不含 qcom,ipq9574-ppe（补丁 0031 的
+#      /delete-node/，即数据通路确实是 NSS）；
+#   4. root 是 squashfs，带 NSS 包与 overlay/NSS 服务文件；
 #   5. root 里 /etc/openwrt_release 的 DISTRIB_TARGET 指向
 #      qualcommbe/ipq95xx（解包工具可用时）；
 #   6. 项目 overlay（banner/无线默认值/时区/NSS 服务/rc.d）与 required 包
@@ -36,30 +35,19 @@ bad()  { echo "FAIL  $*"; fail=$((fail+1)); }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# --- 1. 产物齐全：mainline 与 NSS 各一套 --------------------------------
-mapfile -t SYSUPS < <(find "$OUT" -maxdepth 1 -name '*askey_sbe1v1k*squashfs-sysupgrade.bin' | sort)
-mapfile -t INITS < <(find "$OUT" -maxdepth 1 -name '*askey_sbe1v1k*initramfs*itb' | sort)
-MAIN_SYS=(); NSS_SYS=(); MAIN_INIT=(); NSS_INIT=()
-for f in "${SYSUPS[@]}"; do
-	case "$(basename "$f")" in
-	*askey_sbe1v1k-nss*) NSS_SYS+=("$f") ;;
-	*) MAIN_SYS+=("$f") ;;
-	esac
-done
-for f in "${INITS[@]}"; do
-	case "$(basename "$f")" in
-	*askey_sbe1v1k-nss*) NSS_INIT+=("$f") ;;
-	*) MAIN_INIT+=("$f") ;;
-	esac
-done
-[ "${#MAIN_SYS[@]}" -eq 1 ] && ok "mainline sysupgrade 唯一：$(basename "${MAIN_SYS[0]}")" \
-	|| bad "mainline sysupgrade 数量 = ${#MAIN_SYS[@]}（期望 1）"
-[ "${#NSS_SYS[@]}" -eq 1 ] && ok "NSS sysupgrade 唯一：$(basename "${NSS_SYS[0]}")" \
-	|| bad "NSS sysupgrade 数量 = ${#NSS_SYS[@]}（期望 1）"
-[ "${#MAIN_INIT[@]}" -eq 1 ] && ok "mainline initramfs 唯一：$(basename "${MAIN_INIT[0]}")" \
-	|| bad "mainline initramfs 数量 = ${#MAIN_INIT[@]}（期望 1）"
-[ "${#NSS_INIT[@]}" -eq 1 ] && ok "NSS initramfs 唯一：$(basename "${NSS_INIT[0]}")" \
-	|| bad "NSS initramfs 数量 = ${#NSS_INIT[@]}（期望 1）"
+# --- 1. 产物齐全：唯一设备 askey_sbe1v1k（NSS 数据通路）------------------
+mapfile -t SYSUPS < <(find "$OUT" -maxdepth 1 -name '*askey_sbe1v1k-squashfs-sysupgrade.bin' | sort)
+mapfile -t INITS < <(find "$OUT" -maxdepth 1 -name '*askey_sbe1v1k-initramfs*itb' | sort)
+[ "${#SYSUPS[@]}" -eq 1 ] && ok "sysupgrade 唯一：$(basename "${SYSUPS[0]}")" \
+	|| bad "sysupgrade 数量 = ${#SYSUPS[@]}（期望 1；陈旧产物请清 bin/targets）"
+[ "${#INITS[@]}" -eq 1 ] && ok "initramfs 唯一：$(basename "${INITS[0]}")" \
+	|| bad "initramfs 数量 = ${#INITS[@]}（期望 1；陈旧产物请清 bin/targets）"
+# 已退役的 -nss 变体若因补丁回归再次出现，发布就会多出整套资产，直接判失败。
+if find "$OUT" -maxdepth 1 -name '*askey_sbe1v1k-nss*' | grep -q .; then
+	bad "产物目录仍有 *askey_sbe1v1k-nss*（退役变体回归，或本地陈旧产物未清理）"
+else
+	ok "无 *askey_sbe1v1k-nss* 产物（单设备构建）"
+fi
 [ "$fail" -eq 0 ] || exit 1
 
 # --- 2/3. 每个 sysupgrade：tar 成员、FIT 内容、squashfs -------------------
@@ -101,29 +89,24 @@ check_sysupgrade() {
 	fi
 }
 
-check_sysupgrade "${MAIN_SYS[0]}" main
-check_sysupgrade "${NSS_SYS[0]}" nss
+check_sysupgrade "${SYSUPS[0]}" img
 
-# 数据通路的区分只看 DTB：mainline 有 PPE 节点，NSS 在补丁 0031 里删掉了它
-# 并换成 ess-switch/dp。rootfs 内容两边相同（同一份 seed 包选择）。
-grep -aqF 'qcom,ipq9574-ppe' "$TMP/main/kernel" \
-	&& ok "mainline FIT 含 mainline PPE 节点（qcom,ipq9574-ppe）" \
-	|| bad "mainline FIT 缺少 qcom,ipq9574-ppe（mainline 数据通路不成立）"
-if grep -aqF 'qcom,ipq9574-ppe' "$TMP/nss/kernel"; then
-	bad "NSS FIT 仍含 qcom,ipq9574-ppe（/delete-node/ 未生效）"
+# 数据通路只看 DTB：设备定义（补丁 0032）固定用 NSS 设备树，补丁 0031 的
+# /delete-node/ 删掉了 mainline PPE 节点并换成 ess-switch/dp。三项缺一不可。
+if grep -aqF 'qcom,ipq9574-ppe' "$TMP/img/kernel"; then
+	bad "FIT 仍含 qcom,ipq9574-ppe（/delete-node/ 未生效，数据通路不是 NSS）"
 else
-	ok "NSS FIT 不含 qcom,ipq9574-ppe（节点已删除）"
+	ok "FIT 不含 qcom,ipq9574-ppe（mainline PPE 节点已删除）"
 fi
-grep -aqF 'qcom,ess-switch-ipq95xx' "$TMP/nss/kernel" \
-	&& ok "NSS FIT 含 ess-switch 节点（qcom,ess-switch-ipq95xx）" \
-	|| bad "NSS FIT 缺少 qcom,ess-switch-ipq95xx"
-grep -aqF 'qcom,nss-dp' "$TMP/nss/kernel" \
-	&& ok "NSS FIT 含 nss-dp 端口节点（qcom,nss-dp）" \
-	|| bad "NSS FIT 缺少 qcom,nss-dp"
+grep -aqF 'qcom,ess-switch-ipq95xx' "$TMP/img/kernel" \
+	&& ok "FIT 含 ess-switch 节点（qcom,ess-switch-ipq95xx）" \
+	|| bad "FIT 缺少 qcom,ess-switch-ipq95xx"
+grep -aqF 'qcom,nss-dp' "$TMP/img/kernel" \
+	&& ok "FIT 含 nss-dp 端口节点（qcom,nss-dp）" \
+	|| bad "FIT 缺少 qcom,nss-dp"
 
-# --- 4/5/6. rootfs：两个镜像各查一遍 --------------------------------------
-# 两个设备共用一套 seed 包选择与 files/ overlay（rootfs 内容等价），但每次
-# 构建各自产出一份 squashfs；这里对两份都断言，防止某个设备缺包。
+# --- 4/5/6. rootfs：唯一镜像 ---------------------------------------------
+# 单设备构建只产出一份 squashfs；这里对它完整断言 overlay 与包集合。
 check_rootfs() {
 	local tag=$1 squash=$2 R="$TMP/rootfs-$1"
 
@@ -235,8 +218,8 @@ check_rootfs() {
 		|| bad "[$tag] 首启时区脚本不含 Asia/Taipei"
 
 	# --- NSS 服务 overlay（S3d）----------------------------------------
-	# 两个镜像共用包选择，NSS 服务必须在 mainline 上按设备树自动让路：
-	# nss-board 是唯一的判据，缺了它 NSS 模块会对 mainline 的 PPE 抢寄存器。
+	# 数据通路已是唯一的 NSS 设备树；nss-board 保留为运行期安全门
+	# （判据 = mainline PPE 节点是否仍存在），所有 NSS 服务启动前都要过它。
 	[ -x "$R/usr/lib/sbe1v1k/nss-board" ] \
 		&& ok "[$tag] /usr/lib/sbe1v1k/nss-board 在镜像中（数据通路判据）" \
 		|| bad "[$tag] 缺少 /usr/lib/sbe1v1k/nss-board"
@@ -269,7 +252,7 @@ check_rootfs() {
 	grep -q 'nss-board || exit 0' \
 		"$R/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan" \
 		&& ok "[$tag] eth0 首启脚本按数据通路门控" \
-		|| bad "[$tag] eth0 首启脚本未按数据通路门控（mainline 会被改写）"
+		|| bad "[$tag] eth0 首启脚本未按数据通路门控"
 	for f in etc/init.d/nss usr/sbin/nss-load etc/init.d/sbe-port-roles \
 	         usr/sbin/sbe-port-roles etc/init.d/eth0-lan-attach \
 	         usr/sbin/eth0-lan-attach etc/init.d/sbe-lan-mac \
@@ -313,8 +296,7 @@ check_rootfs() {
 	esac
 }
 
-check_rootfs main "$TMP/main/root"
-check_rootfs nss "$TMP/nss/root"
+check_rootfs img "$TMP/img/root"
 
 echo "----"
 echo "PASS=$pass FAIL=$fail"

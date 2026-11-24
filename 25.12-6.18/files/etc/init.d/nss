@@ -13,8 +13,8 @@
 # S15 在 /etc/init.d/boot（S10，调 kmodloader 加载 qca-nss-phy 等）之后、
 # netifd（S20）之前，与原来 ssdk(16)/dp(18) 的位置保持一致。
 #
-# mainline 镜像与 NSS 镜像共用 rootfs，本脚本在 mainline 上必须什么都不做：
-# qca-ssdk 会和 mainline PPE 驱动抢 0x3a000000。判据见 nss-board。
+# 设备树仍有 mainline PPE 节点时，本脚本必须什么都不做：qca-ssdk 会和
+# mainline PPE 驱动抢 0x3a000000。判据见 nss-board。
 
 START=15
 

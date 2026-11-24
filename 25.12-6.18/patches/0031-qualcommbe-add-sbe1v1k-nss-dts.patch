@@ -3,8 +3,8 @@ Subject: [PATCH] qualcommbe: 增加 SBE1V1K 的 QSDK 14 NSS 设备树变体
 
 6.12 树（25.12-6.12）的以太网数据通路由 QSDK 14.x NSS 栈
 （qca-ssdk + qca-nss-dp + qca-nss-ppe）接管，并在真机上验证过。
-本补丁把同一套设备树描述移植到 6.18，供 askey_sbe1v1k-nss 设备
-（见 0032）使用：
+本补丁把同一套设备树描述移植到 6.18，由 0032 挂到 askey_sbe1v1k
+设备上（2026-11-24 起本树唯一的设备定义）：
 
 - ipq9574-nss.dtsi：SoC 级 QSDK 节点（ess-switch、ess-uniphy、
   nss_edma、PCS 关闭等）。正文与 6.12 版本一致；用到的 clock/reset

@@ -25,8 +25,8 @@ master() {
 }
 
 attach() {
-	# mainline 镜像（共用 rootfs）不需要这个 helper：那里 eth0 就是 lan1，
-	# 由 netifd 直接持有，没有 RTL8261N 假环回问题。安静地视为已完成。
+	# 非 NSS 通路不需要这个 helper：那里 eth0 就是 lan1，由 netifd 直接
+	# 持有，没有 RTL8261N 假环回问题。安静地视为已完成。
 	/usr/lib/sbe1v1k/nss-board || return 0
 	[ -e "$DISABLE" ] && return 0
 	[ "$(uci -q get sbe_ports.main.wan_port 2>/dev/null)" = "eth0" ] && return 0

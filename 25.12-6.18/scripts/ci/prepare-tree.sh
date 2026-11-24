@@ -137,9 +137,9 @@ if [ -d "$PROJ/files" ] && [ -n "$(ls -A "$PROJ/files" 2>/dev/null)" ]; then
 	cp -a "$PROJ/files/." "$BR/files/"
 fi
 
-# NSS（S3a–S3d）：QSDK 包定义 + 厂商源码装进装配树。两个设备变体的镜像
-# 都带这 12 个包（mainline 变体靠 /usr/lib/sbe1v1k/nss-board 按设备树把关
-# 不装载），所以 CI 也必须装配，不能像 S3a 时那样“缺源码就跳过”。
+# NSS（S3a–S3d）：QSDK 包定义 + 厂商源码装进装配树。本树唯一的设备镜像
+# 带这 12 个包（运行期仍由 /usr/lib/sbe1v1k/nss-board 按设备树把关），
+# 所以 CI 必须装配，不能像 S3a 时那样“缺源码就跳过”。
 #
 # 厂商源码不在仓库里（QSDK 厂商树数十 GB 不入库）。来源优先级：
 #   SBE_NSS_BASE（打平的已解包目录）→ 本地 sources/buildroot 厂商树 →

@@ -10,8 +10,9 @@
 # factory-eth-led 服务不启用（闭源厂商包，LICENSE_REVIEW_REQUIRED）；
 # 保留对过时 lan-apply-watch 的清理，避免保留的旧 overlay 从原厂固件带回来。
 #
-# 6.18：只在 NSS 变体镜像上生效。两个设备共用 rootfs，mainline 镜像上
-# eth0 就是 lan1、由 netifd 直接持有，这里什么都不做（判据见 nss-board）。
+# 6.18：NSS 数据通路（本树唯一）生效；门控不满足（设备树仍有 mainline
+# PPE 节点）时 eth0 就是 lan1、由 netifd 直接持有，这里什么都不做（判据见
+# nss-board）。
 
 # board_name() 来自 /lib/functions.sh；uci-defaults 的 runner（/etc/init.d/boot
 # 的 uci_apply_defaults）只预载 /lib/functions/system.sh，所以必须先自己 source，

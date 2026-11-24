@@ -1,0 +1,42 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k 设备定义切到 QSDK NSS 数据通路
+
+2026-11-24 起本树只构建 NSS 镜像（S4 真机 PASS 的默认形态），mainline
+PPE 兜底变体退役。为了发布资产不带 -nss 后缀，不再新增独立设备，而是
+直接在上游 Device/askey_sbe1v1k 上切换：
+
+  DEVICE_DTS        ipq9570-sbe1v1k-nss（补丁 0031 新增：删除 mainline
+                    PPE 节点，改述 ess-switch/EDMA/dp）
+  DEVICE_PACKAGES   + kmod-qca-ssdk-nohnat kmod-qca-nss-dp
+                    kmod-qca-nss-ppe qca-ssdk-shell（qca-ssdk 会带入
+                    kmod-qca-nss-phy/kmod-qca8k-cc/kmod-qca8084，
+                    qca-nss-ppe 带入 kmod-qca-nss-debug/kmod-nat46）
+
+DEVICE_VENDOR/DEVICE_MODEL、DEVICE_ALT*、DEVICE_DTS_CONFIG、
+KERNEL_LOADADDR、SOC 保持上游原样：镜像名、profiles.json 的 profile id、
+镜像内嵌元数据的 board 字段都是 askey_sbe1v1k，不含 NSS 变体字样。
+SUPPORTED_DEVICES 由补丁 0037 单独声明。
+
+Status: 构建配置；设备侧沿用 S4 真机 PASS（同一 NSS DTB）的结论。
+---
+--- a/target/linux/qualcommbe/image/ipq95xx.mk
++++ b/target/linux/qualcommbe/image/ipq95xx.mk
+@@ -24,10 +24,17 @@
+ 	DEVICE_ALT1_VENDOR := Spectrum
+ 	DEVICE_ALT1_MODEL := SBE1V1K
+ 	DEVICE_DTS_CONFIG := config@rtq7300t-rev0
++	# 数据通路固定为 QSDK 14.x NSS（S3d 移植，S4 真机 PASS）：上游 DTS
++	# 描述 mainline PPE（ethernet@3a000000），与 NSS 栈抢同一寄存器窗口；
++	# ipq9570-sbe1v1k-nss（补丁 0031）删掉该节点并改述 ess-switch/EDMA/dp。
++	# 2026-11-24 起本树只发布 NSS 镜像，mainline 兜底变体退役，因此直接在
++	# 上游设备定义上切换：镜像名保持 askey_sbe1v1k，不带 -nss 后缀。
++	DEVICE_DTS := ipq9570-sbe1v1k-nss
+ 	KERNEL_LOADADDR := 0x42200000
+ 	SOC := ipq9570
+ 	DEVICE_PACKAGES := ath12k-firmware-qcn9274 f2fsck ipq-wifi-askey_sbe1v1k kmod-ath12k \
+-		kmod-hwmon-pwmfan kmod-leds-pwm kmod-phy-realtek mkf2fs rtl826x-firmware
++		kmod-hwmon-pwmfan kmod-leds-pwm kmod-phy-realtek mkf2fs rtl826x-firmware \
++		kmod-qca-ssdk-nohnat kmod-qca-nss-dp kmod-qca-nss-ppe qca-ssdk-shell
+ endef
+ TARGET_DEVICES += askey_sbe1v1k
+ 

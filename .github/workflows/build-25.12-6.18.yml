@@ -1,13 +1,11 @@
 name: 📦 Build 25.12-6.18
 
 # 在 GitHub Actions 上编译 Spectrum SBE1V1K（IPQ9574）OpenWrt main +
-# Linux 6.18 固件（上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k 基线），并把
-# 两个设备变体（mainline PPE 兜底、QSDK NSS 数据通路）各 3 个交付镜像
-# 共 6 个资产发布到本次运行专属的 GitHub Release。
-#
-# 设备变体是 kconfig choice，一次 world 只能出一个设备，所以 Build 步骤
-# 调用 scripts/ci/build-images.sh 顺序构建两遍（先 NSS、后 mainline），
-# 每遍都断言设备选择真的生效。
+# Linux 6.18 固件（上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k 基线）。
+# 2026-11-24 起只构建 QSDK NSS 数据通路（补丁 0032 原地切换设备定义，
+# mainline PPE 兜底变体退役）：一次构建产出 3 个交付镜像（sysupgrade /
+# factory / initramfs），全部发布到本次运行专属的 GitHub Release，文件名
+# 不带 -nss 后缀。
 #
 # 与 25.12-6.12 不同，本树完全基于上游公开源码与 feed：
 #   - openwrt/openwrt @ main（固定提交，见 prepare-tree.sh）
@@ -20,12 +18,12 @@ name: 📦 Build 25.12-6.18
 #
 # 说明：
 #   - 构建不会接触任何设备，仅下载源码与编译依赖；
-#   - 设备行为状态（2026-11-24）：mainline PPE 变体 2026-11-23 真机 PASS
-#     （`25.12-6.18/docs/S3D-DEVICE-TEST-2026-11-23.md`：启动、网口角色、
-#     三频 AP、LuCI、风扇）；NSS 变体 2026-11-24 S4 真机 PASS（
-#     `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8：tier=full 默认、
-#     热重启 + 断电冷启动、MAC 固定、蓝灯常亮）。CI 本次构建的产物仍记为
-#     UNVERIFIED——发布前需按 README 做真机复验。
+#   - 设备行为状态（2026-11-24）：NSS 数据通路 S4 真机 PASS
+#     （`25.12-6.18/docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8：
+#     tier=full 默认、热重启 + 断电冷启动、MAC 固定、蓝灯常亮）；此前的
+#     mainline PPE 变体 2026-11-23 真机 PASS 记录见
+#     `docs/S3D-DEVICE-TEST-2026-11-23.md`（该变体已于 2026-11-24 退役）。
+#     CI 本次构建的产物仍记为 UNVERIFIED——发布前需按 README 做真机复验。
 #   - 内核漂移检测（check-kernel.sh）只报告，不修改 OPENWRT_SHA 或内核 pin。
 
 on:
@@ -126,8 +124,8 @@ jobs:
           cat sources/buildroot-25.12-6.18/target/linux/generic/kernel-6.18
 
       - name: Build
-        # 两个设备各跑一遍 world（先 NSS、后 mainline）；失败重编沿用
-        # build.log 里的失败包名，.config 停留在失败那一遍的设备选择上。
+        # 单设备（askey_sbe1v1k，NSS 数据通路）跑一遍 world；失败重编沿用
+        # build.log 里的失败包名，.config 保持在该设备选择上。
         run: |
           set -o pipefail
           if ./25.12-6.18/scripts/ci/build-images.sh world 2>&1 | tee build.log; then
@@ -198,12 +196,10 @@ jobs:
           REL="$RUNNER_TEMP/release"
           PUB=openwrt-qualcommbe-ipq95xx-askey_sbe1v1k
           mkdir -p "$REL"
-          for v in "" "-nss"; do
-            for n in squashfs-sysupgrade.bin squashfs-factory.bin initramfs-uImage.itb; do
-              src="$OUT/$PUB$v-$n"
-              test -s "$src" || { echo "缺少或为空：$src" >&2; exit 1; }
-              cp "$src" "$REL/$PUB$v-$n"
-            done
+          for n in squashfs-sysupgrade.bin squashfs-factory.bin initramfs-uImage.itb; do
+            src="$OUT/$PUB-$n"
+            test -s "$src" || { echo "缺少或为空：$src" >&2; exit 1; }
+            cp "$src" "$REL/$PUB-$n"
           done
           ( cd "$REL" && sha256sum "$PUB"-* )
           ls -lh "$REL"
@@ -230,9 +226,6 @@ jobs:
             ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-sysupgrade.bin
             ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-factory.bin
             ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-initramfs-uImage.itb
-            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-nss-squashfs-sysupgrade.bin
-            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-nss-squashfs-factory.bin
-            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-nss-initramfs-uImage.itb
           if-no-files-found: error
           retention-days: 30
 
@@ -255,19 +248,17 @@ jobs:
           - 提交：\`${GITHUB_SHA}\`
           - 运行：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           - 基线：上游 qualcommbe/ipq95xx 原生 askey_sbe1v1k
-          - 数据通路两个设备变体，按文件名区分：
-            - 不带后缀 = mainline PPE（上游 qcom PPE 驱动，兜底镜像）
-            - \`-nss\` 后缀 = QSDK NSS（ssdk/nss-dp/nss-ppe/ecm/sfe，DTB 删除
-              mainline PPE 节点后由 NSS 栈接管；设备侧行为 NOT TESTED）
+          - 数据通路：QSDK NSS（ssdk/nss-dp/nss-ppe/ecm/sfe，DTB 删除 mainline
+            PPE 节点后由 NSS 栈接管；唯一数据通路，文件名不带 -nss 后缀）
           - 无线：上游 ath12k 驱动与固件 + ipq-wifi-askey_sbe1v1k BDF（无厂商 blob）
           - 网口角色：wan = 2.5G（QCA8081），lan1 = 10G（RTL8261N），lan2/lan3 = 1G（QCA8075）
-          - 两个变体共用同一份包选择与 files/ overlay；NSS 模块在 mainline
-            镜像里也在，但 /usr/lib/sbe1v1k/nss-board 按设备树把关不装载
+          - /usr/lib/sbe1v1k/nss-board 保留为运行期数据通路判据（mainline PPE
+            节点是否仍存在），NSS 服务启动前都会过它
 
-          资产（恰好 6 个：每个变体各 3 个）：
-          - \`${PUB}-squashfs-sysupgrade.bin\` / \`${PUB}-nss-squashfs-sysupgrade.bin\`
-          - \`${PUB}-squashfs-factory.bin\` / \`${PUB}-nss-squashfs-factory.bin\`
-          - \`${PUB}-initramfs-uImage.itb\` / \`${PUB}-nss-initramfs-uImage.itb\`
+          资产（恰好 3 个）：
+          - \`${PUB}-squashfs-sysupgrade.bin\`
+          - \`${PUB}-squashfs-factory.bin\`
+          - \`${PUB}-initramfs-uImage.itb\`
 
           SHA-256：
           \`\`\`
@@ -275,13 +266,11 @@ jobs:
           \`\`\`
 
           设备状态（本次构建产物本身仍记为 UNVERIFIED）：
-          - mainline PPE 变体：2026-11-23 真机 PASS（S3d，`docs/S3D-DEVICE-TEST-2026-11-23.md`）
-            ——启动、网口角色、三频 AP、LuCI、风扇时区；
-          - NSS 变体：2026-11-24 S4 真机 PASS（`docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8）
-            ——`/etc/nss.conf` 默认 `tier=full`（保留 `fallback=wired`），
+          - NSS 数据通路：2026-11-24 S4 真机 PASS（\`docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md\` §8）
+            ——\`/etc/nss.conf\` 默认 \`tier=full\`（保留 \`fallback=wired\`），
             热重启 + 断电冷启动均自动装载 sdk/dp/ppe 全家/ecm；
-            dp1–dp4 MAC 固定为 ART `ethaddr` 0–3（上游看到的 WAN MAC 不再漂移）；
-            蓝灯上电常亮。
+            dp1–dp4 MAC 固定为 ART \`ethaddr\` 0–3（上游看到的 WAN MAC 不再漂移）；
+            蓝灯上电常亮。mainline PPE 变体已于 2026-11-24 退役，不再发布。
           刷写前先读 25.12-6.18/README.md 与 docs/NSS-PORT-ASSESSMENT-2026-11-22.md。
           EOF
 
@@ -324,10 +313,7 @@ jobs:
               --notes-file "$REL/notes.md" \
               "$REL/${PUB}-squashfs-sysupgrade.bin" \
               "$REL/${PUB}-squashfs-factory.bin" \
-              "$REL/${PUB}-initramfs-uImage.itb" \
-              "$REL/${PUB}-nss-squashfs-sysupgrade.bin" \
-              "$REL/${PUB}-nss-squashfs-factory.bin" \
-              "$REL/${PUB}-nss-initramfs-uImage.itb" 2>&1); then
+              "$REL/${PUB}-initramfs-uImage.itb" 2>&1); then
               break
             fi
             printf '%s\n' "$out"
@@ -354,6 +340,6 @@ jobs:
 
           n=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
           echo "release $TAG assets=$n"
-          test "$n" = "6" || { echo "Release 资产数不是 6" >&2; exit 1; }
+          test "$n" = "3" || { echo "Release 资产数不是 3" >&2; exit 1; }
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | "\(.name) \(.size)"'

@@ -45,9 +45,9 @@ ca-certificates
 kmod-hwmon-pwmfan
 kmod-leds-pwm
 
-# --- NSS 数据通路（S3d，2026-11-23；两个设备共用 rootfs）--------------------
-# mainline 镜像也带这些包（DEVICE_PACKAGES 取并集），但 /usr/lib/sbe1v1k/
-# nss-board 按设备树把关，mainline 上不装载。缺失会让 NSS 镜像没有网口。
+# --- NSS 数据通路（S3d，2026-11-23；2026-11-24 起为唯一数据通路）-----------
+# 由补丁 0032 的 DEVICE_PACKAGES 带入；运行期仍由 /usr/lib/sbe1v1k/
+# nss-board 按设备树把关。缺失会让镜像没有网口。
 kmod-qca-ssdk-nohnat
 kmod-qca-nss-dp
 kmod-qca-nss-ppe

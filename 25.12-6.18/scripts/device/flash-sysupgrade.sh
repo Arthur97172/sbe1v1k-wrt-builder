@@ -5,8 +5,9 @@
 # 用法：
 #   scripts/device/flash-sysupgrade.sh [镜像路径]
 #
-# 镜像默认取今天 S3d 双设备构建里的 mainline 变体
-# （openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-sysupgrade.bin）。
+# 镜像默认取本地构建产物
+# （openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-sysupgrade.bin；
+# 2026-11-24 起唯一设备即 NSS 数据通路）。
 #
 # 安全约定（项目 CLAUDE.md）：
 #   - 密码不写进脚本、不放进命令行参数、不落盘；本脚本用 SSH ControlMaster

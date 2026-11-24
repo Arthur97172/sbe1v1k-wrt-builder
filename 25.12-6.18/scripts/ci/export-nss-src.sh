@@ -2,9 +2,9 @@
 # 把厂商树里的 NSS 源码打成公开可下载的 Release 资产 nss-src-v1.tar.gz。
 #
 # 为什么需要：CI 的装配树里没有厂商 QSDK 树（sources/buildroot，数十 GB，
-# 不入库），而 askey_sbe1v1k / askey_sbe1v1k-nss 两个设备变体的镜像都带
+# 不入库），而本树唯一的设备镜像 askey_sbe1v1k（数据通路固定为 NSS）带
 # kmod-qca-ssdk-nohnat / kmod-qca-nss-dp / kmod-qca-nss-ppe 等 12 个包
-# （mainline 变体靠 nss-board 门控不装载）；没有源码就装不上这些包，而
+# （运行期由 nss-board 门控）；没有源码就装不上这些包，而
 # NSS 设备树（补丁 0031）又删掉了主线 qcom_ppe —— 结果是没有以太网的
 # 镜像。因此把这些包的源码单独成包，prepare-tree.sh 在 CI 里现场自产并
 # 按 nss/nss-src.tar.gz.sha256 校验。

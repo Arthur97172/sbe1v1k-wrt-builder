@@ -15,8 +15,8 @@
 # 下的计数器防止重启循环；正常启动时计数器清零，每次坏启动都有一次重试
 # 机会。
 #
-# 只在 NSS 变体上生效：mainline 镜像的 eth0 由 netifd 直接持有，也没有
-# ssdk_sh 可读 uniphy 寄存器。nss-board 判据见 /usr/lib/sbe1v1k/nss-board。
+# 只在 NSS 数据通路上生效：非 NSS 通路的 eth0 由 netifd 直接持有，也没有
+# ssdk_sh 可读 uniphy 寄存器。判据见 /usr/lib/sbe1v1k/nss-board。
 #
 # 配置：/etc/config/sbe_eth0_watchdog
 #   option enabled '1'        # 0 关闭
@@ -54,8 +54,8 @@ carrier() {
 	cat /sys/class/net/eth0/carrier 2>/dev/null
 }
 
-# 等 eth0 出载波：6.18 NSS 变体正常启动在 ~58 s 由 dp 报 link up（ssdk
-# 初始化 ~48 s 之后）。最多等 150 s，没载波说明没插线（或该变体没有
+# 等 eth0 出载波：6.18 NSS 通路正常启动在 ~58 s 由 dp 报 link up（ssdk
+# 初始化 ~48 s 之后）。最多等 150 s，没载波说明没插线（或本机没有
 # eth0），直接结束，不判死。
 i=0
 while [ "$i" -lt 30 ]; do

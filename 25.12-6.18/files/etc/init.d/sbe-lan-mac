@@ -56,8 +56,8 @@ pin_one() {
 
 start() {
 	local base
-	# mainline 镜像的 eth2/eth3 是 lan2/lan3，MAC 由 6.18 设备树 nvmem 给出
-	# （补丁 0003），不需要这里派生；两个镜像共用 rootfs，所以先判通路。
+	# 非 NSS 通路的 eth2/eth3 是 lan2/lan3，MAC 由 6.18 设备树 nvmem 给出
+	# （补丁 0003），不需要这里派生；所以先判通路。
 	/usr/lib/sbe1v1k/nss-board || return 0
 	if [ ! -e /sys/class/net/eth0/address ]; then
 		log "eth0 不存在（NSS dp 未装载），跳过"

@@ -7,7 +7,7 @@
 |---|---|---|
 | 上游 | `openwrt-25.12` 分支，6.12 | `main`，`KERNEL_PATCHVER:=6.18` |
 | 设备定义 | 本项目的 `spectrum_sbe1v1k`（补丁） | 上游原生 `askey_sbe1v1k` |
-| 数据通路 | QSDK NSS（qca-ssdk/dp/ppe/ecm） | 两个设备变体：mainline PPE（兜底）+ QSDK NSS（`-nss`，S3d） |
+| 数据通路 | QSDK NSS（qca-ssdk/dp/ppe/ecm） | QSDK NSS（补丁 0032 原地切换设备定义，单设备、无 `-nss` 后缀） |
 | 无线固件 | 项目打包的厂商 blob（QCN92XX/hw1.0） | 上游 ath12k 固件 + `ipq-wifi-askey_sbe1v1k`，校准从 `0:ART` 提取 |
 | 网口角色 | eth1（2.5G）=WAN，其余=LAN | 相同：port@5（2.5G）=WAN，port@3/4/6=LAN（补丁 0001） |
 | 项目 overlay | `files/` + 多个补丁 | 分阶段移植（S2/S4） |
@@ -71,29 +71,29 @@
     板名门控、rc.d 链接、时区脚本断言；本机构建 PASS，**PASS=36 FAIL=0**。
     镜像哈希与内容级取证见 `docs/S2-BANNER-WIFI-2026-11-22.md`（设备
     **NOT TESTED**）。
-- **S3d NSS 数据通路**：两个设备变体——mainline PPE（无后缀，兜底）与
-  QSDK NSS（`-nss`，补丁 0031 的 DTB `/delete-node/ &qcom_ppe;` 换
-  ess-switch/EDMA/dp）。kconfig choice 一次只能选一个设备，
-  `scripts/ci/build-images.sh` 顺序跑两遍；`verify-image.sh` 对两镜像
-  各自断言。**mainline 变体 2026-11-23 真机 PASS**（启动、网口角色、
-  三频 AP（含 6G）、LuCI、风扇时区；两项缺陷已修，见
-  `docs/S3D-DEVICE-TEST-2026-11-23.md`）。**S3e 有线数据面修复已真机
+- **S3d NSS 数据通路**（2026-11-24 起成为唯一数据通路）：补丁 0031 的 DTB
+  `/delete-node/ &qcom_ppe;` 换 ess-switch/EDMA/dp，补丁 0032 把上游
+  `Device/askey_sbe1v1k` 原地切到该 DTB 并加入 QSDK 包。原先并列的
+  mainline PPE 兜底变体（设备名 `askey_sbe1v1k-nss`）已退役：一次 world
+  只产一套镜像，文件名不带 `-nss` 后缀。**mainline 变体 2026-11-23 真机
+  PASS**（启动、网口角色、三频 AP（含 6G）、LuCI、风扇时区；两项缺陷已修，
+  见 `docs/S3D-DEVICE-TEST-2026-11-23.md`）。**S3e 有线数据面修复已真机
   PASS**（PCS 时钟、MDIO 复位、复位所有权，见
   `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §1–§7），并移植了
   S95 eth0 AN 看门狗。
-- **S4（2026-11-24，NSS 变体真机 PASS）**：`files/etc/nss.conf` 默认
+- **S4（2026-11-24，NSS 数据通路真机 PASS）**：`files/etc/nss.conf` 默认
   `tier=full`（保留 `fallback=wired`、`budget=3`），启动自动装载
-  sdk/dp/ppe 全家/ecm；补丁 0041：两变体 DTS 蓝灯 `default-state="on"`
+  sdk/dp/ppe 全家/ecm；补丁 0041：蓝灯 `default-state="on"`
   常亮、NSS dp1–dp4 挂 ART `ethaddr` 0–3 使 MAC 跨启动固定（上游看到的
   WAN MAC 不再漂移）。热重启 3 轮 + 断电冷启动均 PASS，详见
   `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8。
 - CI（S5，2026-11-24 起含内核检测）：`.github/workflows/build-25.12-6.18.yml`
   与 `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、
   `check-kernel.sh` 内核漂移报告（只报告，不改 pin）、configure 三道包反查、
-  `build-images.sh world` 两遍构建、`verify-image.sh` 双镜像静态校验、
-  发布 6 个资产（两变体各 3 个）到本次运行专属 Release（notes 含插件实际
-  提交表与内核检测结论）；`plugin_mode` 可选手动触发时用 `pinned` 复现旧镜像。
-  运行结果以 Actions 页为准。
+  `build-images.sh world` 单次构建、`verify-image.sh` 单镜像静态校验、
+  发布 3 个资产（sysupgrade / factory / initramfs）到本次运行专属 Release
+  （notes 含插件实际提交表与内核检测结论）；`plugin_mode` 可选手动触发时
+  用 `pinned` 复现旧镜像。运行结果以 Actions 页为准。
 - 任何刷机、重启、连接路由器或远程验证都需要用户单独批准。
 
 ## 目录
@@ -119,7 +119,7 @@
 │   ├── 0002-wifi-scripts-pin-radio-numbering-by-band.patch
 │   ├── 0003-qualcommbe-sbe1v1k-distinct-mac-per-port.patch
 │   ├── 0031-qualcommbe-add-sbe1v1k-nss-dts.patch     # NSS 板级 DTS（删 mainline PPE 节点）
-│   ├── 0032-qualcommbe-add-sbe1v1k-nss-device.patch  # NSS 设备定义与 DEVICE_PACKAGES
+│   ├── 0032-qualcommbe-sbe1v1k-use-nss-device.patch  # 原地切换设备定义（DTS + QSDK 包）
 │   ├── 0033-qualcommbe-ipq95xx-nss-board-network.patch # 02_network 按设备树分支
 │   ├── 0034-qualcommbe-qca808x-drop-qca8084-for-nss.patch # 6.18 内置 qca8084 抢名
 │   ├── 0036..0040-*                                  # PCS 时钟、MDIO 复位、看门狗、reset 所有权
@@ -129,8 +129,8 @@
     ├── ci/fetch-plugins.sh                      # 18 插件按最新 tag 安装
     ├── ci/check-kernel.sh                       # 6.18 内核漂移报告（只读）
     ├── ci/check-packages.sh                     # seed/index/config/db 反查
-    ├── ci/build-images.sh                       # 两个设备顺序各跑一遍 make
-    ├── ci/verify-image.sh                       # 两镜像各自静态校验 + 包反查
+    ├── ci/build-images.sh                       # 单设备一次 make（NSS 唯一通路）
+    ├── ci/verify-image.sh                       # 单镜像静态校验 + 包反查
     ├── render-overlay.sh                        # files/ → 装配树 + banner 版本替换
     └── local/build-image.sh                     # 本地构建入口（走 build-images.sh）
 ```
@@ -156,14 +156,13 @@
 ```sh
 cd /home/arthur/claude/sbe1v1k-build
 SBE_CI=1 25.12-6.18/scripts/ci/prepare-tree.sh      # 一次性装配
-25.12-6.18/scripts/local/build-image.sh world       # 两个设备各编一遍 + 校验
+25.12-6.18/scripts/local/build-image.sh world       # 编译 + 校验
 ```
 
-设备变体是 kconfig choice：一次 world 只出一个设备，两个都写 `=y` 时后者
-静默覆盖前者。`local/build-image.sh` 因此调用 `scripts/ci/build-images.sh`，
-**先 NSS、后 mainline 顺序跑两遍**，每遍 defconfig 后断言设备选择真的生效；
-第二遍基本增量（包都已编过，只重出 DTB/FIT 与镜像）。种子默认选中 NSS，
-单独跑 make 时也以 NSS 为准。
+本树只有一个设备（`askey_sbe1v1k`，数据通路固定为 NSS）；种子选中它之后
+`local/build-image.sh` 调用 `scripts/ci/build-images.sh`，一次 world 出全套
+镜像，defconfig 后断言设备选择真的生效、已退役的 `askey_sbe1v1k-nss` 符号
+没有回归。
 
 本机网络有两个已知坑（CI 不受影响）：`cdn.kernel.org`/`ftp.gnu.org` 等镜像
 会挂死（`download.pl` 等的 curl 永不超时），`proxy.golang.org` 会被代理重置。
@@ -180,7 +179,7 @@ GOPROXY='https://goproxy.cn,https://mirrors.aliyun.com/goproxy,direct' \
 
 装配树落在 `sources/buildroot-25.12-6.18/`，产物在
 `bin/targets/qualcommbe/ipq95xx/`（文件名带上游版本前缀，均含
-`askey_sbe1v1k`；NSS 变体带 `-nss` 后缀）。
+`askey_sbe1v1k`，不带 `-nss` 后缀）。
 
 ## 固定版本
 
@@ -194,16 +193,16 @@ GOPROXY='https://goproxy.cn,https://mirrors.aliyun.com/goproxy,direct' \
 
 ## 产物与验证
 
-`verify-image.sh` 对**两个镜像各自断言**：sysupgrade tar 含 `kernel`/`root`；
+`verify-image.sh` 对**单一镜像**断言：sysupgrade tar 含 `kernel`/`root`；
 FIT 里嵌着 `Spectrum SBE1V1K` / `askey,sbe1v1k` / `config@rtq7300t-rev0`；
-数据通路按 FIT 判别——mainline 含 `qcom,ipq9574-ppe`，NSS 不含该节点而含
+数据通路为 NSS——FIT 不含 `qcom,ipq9574-ppe` 节点而含
 `qcom,ess-switch-ipq95xx`/`qcom,nss-dp`；root 是 squashfs；`openwrt_release`
 目标为 `qualcommbe/ipq95xx`；解包后的 apk 数据库按 `build/required-packages.txt`
 逐包反查（插件、工具、NSS 模块、必禁项），并校验 NSS overlay（`nss-board`
 判据、`nss.conf`、装载/角色脚本与 rc.d 链接、`nss-board || exit 0` 门控）。
 设备侧：启动、网口角色、LAN→WAN 转发、LuCI、风扇/LED、2.4G/5G 已在 B 机
-S1b 验证（`docs/S1B-DEVICE-TEST-2026-11-22.md`）；6G 信道未启用。NSS 变体
-有线数据面：D1（LAN PHY 绑定）/D2（2.5G WAN）已真机 PASS，D3（10G 口
+S1b 验证（`docs/S1B-DEVICE-TEST-2026-11-22.md`）；6G 信道未启用。NSS 数据面
+有线：D1（LAN PHY 绑定）/D2（2.5G WAN）已真机 PASS，D3（10G 口
 USXGMII AN）在补丁 0040 后回到概率性坏启动，由 S95 看门狗兜底，见
 `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md`。重启复验与 WiFi 客户端
 关联未做。
@@ -211,12 +210,12 @@ USXGMII AN）在补丁 0040 后回到概率性坏启动，由 S95 看门狗兜�
 ### eth0 AN 看门狗（S95，移植自 6.12）
 
 `files/etc/init.d/sbe-eth0-an-watchdog` + `files/usr/sbin/sbe-eth0-an-watchdog`
-只作用于 NSS 变体（`nss-board` 门控）且 eth0 有载波时：等 eth0 出载波后
-三次采样 uniphy2 `VR_MII_AN_INTR_STS`（0x1f8002），usxg_an_sts 恒 0 即判
-USXGMII AN 死锁，自动重启一次；`/etc/sbe-eth0-an-watchdog.count` 防重启
-循环（默认 `max_reboots='1'`，正常启动清零）。配置在
-`/etc/config/sbe_eth0_watchdog`，设 `enabled '0'` 可关闭。mainline 镜像
-上 worker 直接退出。
+只作用于 NSS 数据通路（`nss-board` 门控；本树现在只有这一条）且 eth0 有
+载波时：等 eth0 出载波后三次采样 uniphy2 `VR_MII_AN_INTR_STS`（0x1f8002），
+usxg_an_sts 恒 0 即判 USXGMII AN 死锁，自动重启一次；
+`/etc/sbe-eth0-an-watchdog.count` 防重启循环（默认 `max_reboots='1'`，正常
+启动清零）。配置在 `/etc/config/sbe_eth0_watchdog`，设 `enabled '0'` 可关闭。
+门控不满足（设备树没有 NSS 数据通路）时 worker 直接退出。
 
 ## 规则
 

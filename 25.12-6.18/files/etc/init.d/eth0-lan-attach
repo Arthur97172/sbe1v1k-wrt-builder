@@ -10,8 +10,8 @@ STOP=88
 USE_PROCD=1
 
 start_service() {
-	# mainline 镜像（共用 rootfs）不需要常驻监听：eth0 是 netifd 直接持有
-	# 的 lan1，没有 RTL8261N 假环回问题。
+	# 非 NSS 通路不需要常驻监听：eth0 是 netifd 直接持有的 lan1，没有
+	# RTL8261N 假环回问题。
 	/usr/lib/sbe1v1k/nss-board || return 0
 	procd_open_instance monitor
 	procd_set_param command /usr/sbin/eth0-lan-attach monitor

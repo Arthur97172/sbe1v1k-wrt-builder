@@ -376,10 +376,10 @@ do_set() {
 	apply_role "$role" 1
 }
 
-# mainline 镜像上 SSDK 不装载、成员表不存在：整个脚本不适用（两个镜像共用
-# rootfs，判据见 nss-board）。
+# 非 NSS 通路上 SSDK 不装载、成员表不存在：整个脚本不适用（判据见
+# nss-board）。
 /usr/lib/sbe1v1k/nss-board || {
-	printf '%s\n' 'sbe-port-roles：本镜像是 mainline 数据通路，端口角色由 board.d 管理' >&2
+	printf '%s\n' 'sbe-port-roles：本机不是 NSS 数据通路，端口角色由 board.d 管理' >&2
 	exit 1
 }
 

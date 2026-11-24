@@ -5,8 +5,8 @@
 # 移除，见 25.12-6.12 树的 docs/NSS_AUTOLOAD_OFF.md）。各层由本脚本按档位
 # 显式装载，目的是把启动故障定位到具体一层（ssdk / dp / ppe / ecm）。
 #
-# mainline 镜像与 NSS 镜像共用 rootfs：mainline 镜像上本脚本拒绝工作
-# （qca-ssdk 会和 mainline PPE 驱动抢 0x3a000000），判据见 nss-board。
+# 数据通路判据是设备树（nss-board）：设备树里仍有 mainline PPE 节点时本
+# 脚本拒绝工作（qca-ssdk 会和 mainline PPE 驱动抢 0x3a000000）。
 #
 # 用法：
 #   nss-load status           # 当前档位、计数器、各层模块/接口状态
