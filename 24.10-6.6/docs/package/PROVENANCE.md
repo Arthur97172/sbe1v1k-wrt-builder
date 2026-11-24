@@ -344,7 +344,11 @@ release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户�
 2026-11-22 用户要求再查一轮：`smartnetpilot`（`1.1.9-r1` → `1.2.7-r1`，
 新增无线覆盖校验与 select 箭头修复）与 `passwall-packages` 分支头再次前进
 （只动了 `smartdns`、`v2ray-geodata` 两个本项目未启用的包）；`nikki` 仍保持不动，
-其余 pin 不变。
+其余 pin 不变。2026-11-24 用户要求再查一轮：`oxidns`（`v1.5.5` → `v1.5.6`）、
+`tasks`（`1.1.2-r1` → `1.1.8-r1`）、`passwall`（`26.11.11-1` → `26.11.23-1`）、
+`passwall-packages` 分支头前进（7 个入选包内容未变）、`argon`（`v3.1.4` → `v3.2.0`）；
+`nikki` 仍保持不动（pin 已过 tag `v1.26.2`），其余 pin 不变。本轮本地
+`defconfig` 复核 `.config` 无变化；镜像未重编、未上机验证（`NOT TESTED`）。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
@@ -353,10 +357,10 @@ release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户�
 | `luci-app-online-upgrade` | `luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 2026-10-24T04:11:06Z | `docs: 调整构建章节位置并合并从源码编译说明` | GPL-2.0-only（`LICENSE`；上游原作为 gooyjq） | 3.1 MB |
 | `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `1f032f39bb41e81f53389eb493711eecd3429834` | 2026-11-18T23:05:05Z | `daemon: 自动档改由用户态曲线驱动，内核 cooling map 只作兜底`（tag `1.1.3-r1`） | GPL-3.0-only（`LICENSE`） | 230 KB |
 | `luci-app-nssecm` | `luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 2026-11-13T03:48:43Z | `nssecm: add bottom padding for Argon section card, bump to 1.0.1-r1`（tag `1.0.1-r1`） | GPL-3.0-only（`LICENSE`） | 100 KB |
-| `luci-app-tasks` | `luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 2026-11-13T02:53:33Z | `Bump version to 1.1.2-r1`（tag `1.1.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 344 KB |
+| `luci-app-tasks` | `luci-app-tasks` | `4030f7c7cd282a7ae959f9e0c43e20347c5d2e2c` | 2026-11-23T23:50:59Z | `Discard added sections when the form does not validate`（tag `1.1.8-r1`，`PKG_VERSION 1.1.8`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 448 KB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `14b42cc05d81a72e15dba461880b0a851175a219` | 2026-11-22T00:26:49Z | `fix: keep the theme's chevron on select fields`（tag `1.2.7-r1`） | GPL-3.0-only（`LICENSE`） | 860 KB |
 | `luci-app-corestatus` | `luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | 2026-11-14T03:04:06Z | `Merge branch 'release-1.0.4'`（tag `v1.0.4`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 388 KB |
-| `luci-app-oxidns` | `luci-app-oxidns` | `2ab3ffe5927b295931cf41e4d83d6c71321c511f` | 2026-11-16T06:33:11Z | `refactor(overview): fold the dnsmasq upstream hint into the value`（tag `v1.5.5`，`PKG_VERSION 1.5.5`） | GPL-3.0-or-later（`LICENSE`） | 1.2 MB |
+| `luci-app-oxidns` | `luci-app-oxidns` | `851ceb403f485c7382620897e8eb84364d92ef5e` | 2026-11-24T11:56:02Z | `fix(config): stack guided rows on phone widths`（tag `v1.5.6`，`PKG_VERSION 1.5.6`） | GPL-3.0-or-later（`LICENSE`） | 1.2 MB |
 | `luci-app-meshassistant` | `luci-app-meshassistant` | `88f1056e7bdb0c712757fb9feecce3d7499186f7` | 2026-11-16T09:11:27Z | `Hide the per-band thresholds behind a checkbox`（tag `2.8.4-r1`） | GPL-3.0-only（`LICENSE`） | 944 KB |
 | `luci-app-turboacc` | `luci-app-turboacc` | `d10cc9337a2a04dcdadd42ceac04aa272c780454` | 2026-11-19T11:32:51Z | `Release 1.3.2-r1`（tag `1.3.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 340 KB |
 
@@ -465,13 +469,13 @@ mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本�
 
 | 目录 | 远端 | **固定 commit** | 提交时间 | 提交标题 | 许可证 |
 |---|---|---|---|---|---|
-| `openwrt-passwall` | `Openwrt-Passwall/openwrt-passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | 2026-11-10T16:44:36Z | `luci: bump 26.11.11`（tag `26.11.11-1`） | GPL-3.0（`LICENSE`；Makefile 头声明 GPLv3） |
-| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `8147e8bf8abc62b5357f76defa37f380e35f6e0a` | 2026-11-16T19:52:17+08:00 | `v2ray-geosite: update to 202611152204 (#779)`（仓库无版本 tag，取 `main` 分支头；2026-11-19 刷新，7 个入选包内容未变） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
+| `openwrt-passwall` | `Openwrt-Passwall/openwrt-passwall` | `c3a2c54390d7bbfcce8920e81ca72521b2ad38ed` | 2026-11-23T14:25:34Z | `luci: bump 26.11.23`（tag `26.11.23-1`） | GPL-3.0（`LICENSE`；Makefile 头声明 GPLv3） |
+| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `a7e65d1d5d624f4b7910ba738ba7045fc2f534ce` | 2026-11-23T17:46:30Z | `v2ray-geosite: update to 202611222203 (#784)`（仓库无版本 tag，取 `main` 分支头；2026-11-24 刷新，7 个入选包内容未变） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
 | `OpenWrt-nikki` | `nikkinikki-org/OpenWrt-nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | 2026-10-14T17:11:28+08:00 | `fix: do not restart cron service after crontab changed` | GPL-3.0（`LICENSE`） |
 | `OpenClash` | `vernesong/OpenClash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | 2026-10-11T13:10:57+08:00 | `0.48.002` | **MIT**（`LICENSE`，Copyright 2019-2026 vernesong） |
 | `luci-app-poweroff` | `Arthur97172/luci-app-poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | 2026-10-25T13:34:55Z | `docs: reorder README sections and add screenshot` | GPL-3.0-only（`LICENSE` 与 `PKG_LICENSE` 一致） |
 | `luci-app-mosdns` | `sbwml/luci-app-mosdns` | `dbdd91ab8ac8b079b6a3ca1a48d99e970d17111b` | 2026-10-25T18:29:46+08:00 | `mosdns: bump pkgrel to r15`（tag `v5.3.4-r15`） | GPL-3.0（`LICENSE`；仓库含 `mosdns/`、`luci-app-mosdns/`、`geo2txt/` 三个包目录，本构建只接后两个） |
-| `luci-theme-argon` | `jerrykuku/luci-theme-argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | 2026-11-13T10:32:39Z | `release: v3.1.4`（annotated tag `v3.1.4` 的 peel 目标） | Apache-2.0 + MIT（`LICENSE`；`PKG_LICENSE:=Apache-2.0 MIT`） |
+| `luci-theme-argon` | `jerrykuku/luci-theme-argon` | `1917d2f0c02d084bf1311310d0fe55f1803ae121` | 2026-11-24T07:33:55Z | `release: v3.2.0`（annotated tag `v3.2.0` 的 peel 目标） | Apache-2.0 + MIT（`LICENSE`；`PKG_LICENSE:=Apache-2.0 MIT`） |
 
 `sources/passwall-selected/`（新目录，不带 `.git`）是从
 `openwrt-passwall-packages` 上述 commit **复制**出的 7 个包目录。复制结果
@@ -479,7 +483,8 @@ mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本�
 （2026-11-13 在 pin `b094b79c` 上重新核过；此前记录的 809 是计数多算了一条）。
 2026-11-16（v92）pin 升到 `efc4093` 后复核：7 个目录仍是 808 个文件，两个
 pin 之间上游只改了 `hysteria/`，不在剪裁集合内，因此 `passwall-selected`
-内容没有任何变化。
+内容没有任何变化。2026-11-24 pin 再升到 `a7e65d1`：对 7 个入选目录
+`git diff --stat` 为空（只动了 `v2ray-geosite` 数据），复制结果同样不变。
 之所以不整棵 feed 引入：上游同一仓库还包含 `xray-core`、`sing-box` 等与
 qca feed 同名的包，以及本项目明确不打包的 `shadowsocks-rust`、`haproxy`、
 `smartdns`；只复制所需目录可避免包名冲突与误装。各包锚点：
@@ -531,8 +536,8 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 `PKG_HASH 4f1031ce…`），解包只取 `packages_ci/mosdns_5.3.4-r15_aarch64_cortex-a53.ipk`
 里的 `/usr/bin/mosdns`（15.1 MiB，ELF aarch64 静态链接、已 strip），
 包装包本身在 `build/local-relayout/mosdns/`（GPL-3.0 文本随包提交）、
-`luci-theme-argon` **3.1.4**
-（`c5c0873e`，243 个受版本控制文件；仓库根目录即包目录，v3 起 `luci-app-argon-config`
+`luci-theme-argon` **3.2.0**
+（`1917d2f0`，256 个受版本控制文件；仓库根目录即包目录，v3 起 `luci-app-argon-config`
 的设置页已并入主题包，发行里的同名包只是空迁移包，故本构建只接一个源包）。
 
 2026-11-07 升级后的第三方版本锚点：`openwrt-passwall` 26.11.3（tag `26.11.3-1`）、
@@ -547,7 +552,7 @@ metacubexd 前端产物；仓库 LICENSE 为 **MIT**）、
 | 接入方式 | `feeds.conf` 追加 `src-link thirdparty …/sources/thirdparty-feed` 与 `src-link passwall_selected …/sources/passwall-selected`；2026-11-07 又追加 `src-link routing qca/feeds/routing`（只为 meshassistant 的 batctl/kmod-batman-adv）。`thirdparty-feed` 只含 11 个指向固定 clone 的符号链接，避免把 `openwrt-passwall-packages` 的 60 多个包（含同名 `xray-core`/`sing-box`）索引进 feed |
 | `feeds/packages` 路径 | 新建 `sources/buildroot/feeds/packages -> ../qca/feeds/packages` 软链，满足第三方包的 `include $(TOPDIR)/feeds/packages/lang/{golang,rust}/…` 与 luci 的 `findrev`；`packages` feed 仍未建立索引，包通过 `package/feeds/packages/` 手工符号链接可见 |
 | 构建期联网 | 首次下载各包 `PKG_SOURCE`/`PKG_MIRROR_HASH` 对应的 tarball 或 git 镜像；其中 **`chinadns-ng` 与 `mosdns` 下载的是 GitHub Release 的 aarch64 预编译二进制**（`chinadns-ng+wolfssl_noasm@aarch64…`、`aarch64_cortex-a53-openwrt-24.10.tar.gz`，`PKG_HASH 42ddd494…` / `4f1031ce…`）；`geo2txt` 下载 `sbwml/geo2txt` 1.0.0 的 codeload tarball；`mihomo-meta`、`xray-core`、`sing-box`、`yq` 首次需构建 `golang/host` |
-| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、corestatus（2026-11-08 起替换 xpu-status）无外部联网；`luci-app-mosdns` 的“更新”页会按用户点击从 sbwml 的公开镜像下载 geosite/geoip 与规则（`geo2txt` 解包），mosdns 本体按 `/etc/mosdns` 配置向上游 DNS 转发（默认关闭）；`luci-theme-argon` 3.1.4 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
+| 运行期联网（应用自身功能） | PassWall/Nikki/OpenClash 会按用户配置连接代理服务器、订阅 URL，并（OpenClash）在 Web UI 运行时下载 mihomo 内核；`luci-app-oxidns` 在用户点击时用 `curl`/`uclient-fetch`/`wget` 下载插件与规则（URL 由用户配置、可走用户配置的代理）；meshassistant 只操作本机 batman-adv/dawn；poweroff、tasks、smartnetpilot、corestatus（2026-11-08 起替换 xpu-status）无外部联网；`luci-app-mosdns` 的“更新”页会按用户点击从 sbwml 的公开镜像下载 geosite/geoip 与规则（`geo2txt` 解包），mosdns 本体按 `/etc/mosdns` 配置向上游 DNS 转发（默认关闭）；`luci-theme-argon` 3.2.0 的壁纸/更新代码会用 `wget-ssl` 访问内置或用户配置的 HTTPS 壁纸源（`argon-config` 页面亦可上传本地背景），运行期行为同样 **NOT TESTED**。均记录于 `docs/SECURITY_FINDINGS.md` §7.9 与 R-28…R-34；五个新应用的逐行联网审计仍为 **NOT TESTED** |
 | 本地修改 | 无。`wifihistory` 原先的一行 include 改写随该应用一起删除（2026-11-07）；其余 7 个 clone `git status --porcelain` 为空 |
 | 供应链结论 | 全部公开 GitHub、逐 commit 固定；许可证以 GPL 系为主，`chinadns-ng`/`ipt2socks` 为 **AGPL**，`chinadns-ng` 与 `mosdns` 为预编译二进制（`LICENSE_REVIEW_REQUIRED`）；运行期一律 `NOT TESTED` |
 
@@ -564,17 +569,17 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-meshassistant` | `88f1056e7bdb0c712757fb9feecce3d7499186f7` | 2.8.4-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 1.0.1-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
-| `apps/luci-app-oxidns` | `2ab3ffe5927b295931cf41e4d83d6c71321c511f` | v1.5.5（tag；PKG_VERSION 1.5.5；overview 的 dnsmasq 上游改为显示实际生效值） |
+| `apps/luci-app-oxidns` | `851ceb403f485c7382620897e8eb84364d92ef5e` | v1.5.6（tag；PKG_VERSION 1.5.6；手机宽度下引导行改为堆叠；2026-11-24 刷新） |
 | `apps/luci-app-smartnetpilot` | `14b42cc05d81a72e15dba461880b0a851175a219` | 1.2.7-r1（tag；2026-11-22 刷新） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
-| `apps/luci-app-tasks` | `f63abacfd7222619869551df325259f7de861fa1` | 1.1.2-r1（tag） |
+| `apps/luci-app-tasks` | `4030f7c7cd282a7ae959f9e0c43e20347c5d2e2c` | 1.1.8-r1（tag；PKG_VERSION 1.1.8；表单校验失败时丢弃新增分段；2026-11-24 刷新） |
 | `apps/luci-app-turboacc` | `d10cc9337a2a04dcdadd42ceac04aa272c780454` | 1.3.2-r1（tag；PKG_VERSION 1.3.2；GPL-3.0-only；po/zh_Hans；2026-11-19 刷新） |
-| `repo argon` | `c5c0873e122dc767c7ab0198c8bffc6e952b5cfb` | thirdparty/luci-theme-argon |
+| `repo argon` | `1917d2f0c02d084bf1311310d0fe55f1803ae121` | thirdparty/luci-theme-argon |
 | `repo mosdns-luci` | `dbdd91ab8ac8b079b6a3ca1a48d99e970d17111b` | thirdparty/luci-app-mosdns |
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
-| `repo passwall` | `5f03390adf4561c2375def4b5406645ecf3f96a9` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `65ae3f5ec70c9613ae3ec41ee6e9baecb1828ff9` | thirdparty/openwrt-passwall-packages |
+| `repo passwall` | `c3a2c54390d7bbfcce8920e81ca72521b2ad38ed` | thirdparty/openwrt-passwall |
+| `repo passwall-packages` | `a7e65d1d5d624f4b7910ba738ba7045fc2f534ce` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
