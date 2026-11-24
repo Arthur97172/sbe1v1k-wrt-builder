@@ -57,10 +57,38 @@ eth1=dp2=2.5G（QCA8081）、eth2/eth3=qca8075。
 
 ## 发现与注意点
 
-1. **board.json 在非默认角色下重建失败**：场景 1/2 的 S19 日志出现
+1. **board.json 在非默认角色下重建失败（根因已定位，已修复）**：场景 1/2 的 S19 日志出现
    `board.json 重建失败，已还原上一份` 与 `board.json 网络段未同步`，
    `sbe-port-roles status` 报「与角色不一致」；场景 3 下正常且一致。
-   影响仅为 LuCI 端口面板显示旧角色，数据面不受影响；根因未查，暂记录。
+   影响仅为 LuCI 端口面板显示旧角色，数据面不受影响。
+
+   根因：6.18 树（上游 main）的 `/bin/board_detect` 改成了「缓存」模型——
+   `/etc/board-base.json` 在**首次启动** preinit 时由 board.d 生成一次，
+   `/etc/board.json` 只是指向 `/tmp/sysinfo/board.json` 的符号链接，
+   普通 `board_detect` 仅把 base 复制到运行时文件，**不再执行 board.d**。
+   `sbe-port-roles` 的 `board_sync()` 却按旧行为「删 board.json 再跑
+   board_detect」，于是复制回同一份首启时生成的默认映射（eth1 WAN），
+   永远与角色不一致。真机验证（仅改 UCI 值、不动物理角色）：
+   - `board_detect`（普通）在 `wan_port=none/eth0` 下仍输出默认映射；
+   - `board_detect -f` 会重跑 board.d 并正确读取 `sbe_ports.main.wan_port`：
+     `none` → `lan = eth1 eth2 eth3 eth0`（无 wan 段），
+     `eth0` → `lan = eth1 eth2 eth3`、`wan.device = eth0`。
+
+   修复：6.18 的 `board_sync()` 在存在 `/etc/board-base.json` 时改用
+   `board_detect -f`，并把 base 与 board.json 一起备份；重建失败时两者一起
+   还原。注意 6.12 树的 `board_detect` 是旧逻辑（每次运行 board.d），
+   没有 `-f` 参数，不能照搬，该树不改。
+
+   修复真机验证（同一设备刷入含修复的 NSS 镜像后）：
+   - 默认角色 eth1：boot 后 `status` 报「board.json 与角色一致」，
+     WAN 拿回 `192.168.10.237`，上游网关 ping PASS。
+   - live `sbe-port-roles set eth0`：日志出现
+     `board.json 网络段已按角色 eth0 重建`，`status` 由「不一致」变为
+     「一致」，`board.json` 的 `wan.device=eth0`——旧版在此必报重建失败。
+   - **boot 路径（eth0/none 角色下重启后由 S19 重建）NOT TESTED**：
+     修复后的镜像未在非默认角色下重启过（验证中途设备被改接线路、
+     管理通路中断），live 路径与 S19 走同一个 `board_sync()`，但 boot
+     场景的日志与回滚分支仍待补测。
 2. **br-lan MAC 随成员变化**：eth1 不入桥时 br-lan MAC 是 `:83`（eth2 派生），
    eth1 入桥后变 `:82`（eth1 派生）。桥 MAC 派生规则使然，非缺陷；
    6.18 没有 24.10 的桥 MAC 钉死机制（S19），如需恒定需另行处理。
@@ -100,5 +128,6 @@ wan6 依上游现状无 IPv6，保持 pending（预期）。
 
 ## 遗留
 
-- board.json 非默认角色重建失败：根因未查，仅影响 LuCI 端口面板。
+- board.json 非默认角色重建：已修复（`board_detect -f`），live 路径真机
+  PASS；非默认角色下的 boot 路径未重启验证（见「发现与注意点」第 1 点）。
 - 角色数据面 live 切换未验证（见「发现与注意点」第 3 点）。

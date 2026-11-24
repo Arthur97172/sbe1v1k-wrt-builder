@@ -249,26 +249,37 @@ board_matches() {
 	return 0
 }
 
-# board.json 由 /bin/board_detect 从 board.d 生成，而 board.d 只认「文件不存在」
-# 才写，所以先备份再删、重建成功后删除备份；失败还原。整个文件都是 board.d
-# 的确定性输出（同一套脚本、同一份 /tmp/sysinfo），重建不会丢字段。
+# board.json 由 /bin/board_detect 从 board.d 生成。新版本 board_detect
+# （/etc/board-base.json 缓存模型）的普通调用只把 base 复制成运行时文件，
+# board.d 不会重跑，必须 -f 才会按当前 UCI 角色重新生成；-f 同时改写
+# base，所以失败时 base 和 board.json 都要还原。
+# 整个文件都是 board.d 的确定性输出（同一套脚本、同一份 /tmp/sysinfo），
+# 重建不会丢字段。
 board_sync() {
-	local role=$1
+	local role=$1 detect="/bin/board_detect"
 	board_matches "$role" && return 0
 	if ! command -v jsonfilter >/dev/null 2>&1; then
 		log "无 jsonfilter，跳过 board.json 同步（只影响 LuCI 端口面板）"
 		return 0
 	fi
 	[ -f /etc/board.json ] || return 0
+	if [ -s /etc/board-base.json ]; then
+		detect="/bin/board_detect -f"
+		cp -f /etc/board-base.json /tmp/board-base.json.sbe-prev || return 1
+	fi
 	cp -f /etc/board.json /tmp/board.json.sbe-prev || return 1
 	rm -f /etc/board.json
-	if /bin/board_detect && board_matches "$role"; then
-		rm -f /tmp/board.json.sbe-prev
+	if $detect && board_matches "$role"; then
+		rm -f /tmp/board.json.sbe-prev /tmp/board-base.json.sbe-prev
 		log "board.json 网络段已按角色 $role 重建"
 		return 0
 	fi
-	if [ -s /tmp/board.json.sbe-prev ]; then
-		mv -f /tmp/board.json.sbe-prev /etc/board.json
+	if [ -s /tmp/board-base.json.sbe-prev ]; then
+		cp -f /tmp/board-base.json.sbe-prev /etc/board-base.json
+		rm -f /tmp/board-base.json.sbe-prev
+		/bin/board_detect >/dev/null 2>&1
+	else
+		[ -s /tmp/board.json.sbe-prev ] && mv -f /tmp/board.json.sbe-prev /etc/board.json
 	fi
 	log "board.json 重建失败，已还原上一份（只影响 LuCI 端口面板）"
 	return 1
