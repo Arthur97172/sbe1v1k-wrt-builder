@@ -1,0 +1,32 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: SUPPORTED_DEVICES 同时声明
+ spectrum,sbe1v1k 与 askey,sbe1v1k
+
+本树（以及 24.10）的设备树 compatible 是 "spectrum,sbe1v1k"，而
+25.12-6.18 树沿用上游设备树 "askey,sbe1v1k"。sysupgrade/LuCI 的设备
+校验拿运行期 board_name（设备树 compatible 的第一项）与镜像元数据
+supported_devices 逐项比较（lib/upgrade/fwtool.sh）；默认值只取设备名
+（spectrum,sbe1v1k），从 6.18 树跑着的设备（board_name=askey,sbe1v1k）
+升级回来时会被拒绝，必须 -F。
+
+两个名字都显式声明后，24.10 <-> 6.12 <-> 6.18 任意方向升级都不再需要
+-F。-F 只绕过设备名校验，不能解决写盘布局差异；跨树互刷仍需真机验证。
+
+对应 25.12-6.18/patches/0037（那边的镜像已声明两个名字）。
+
+---
+diff -ruN a/target/linux/qualcommbe/image/ipq95xx.mk b/target/linux/qualcommbe/image/ipq95xx.mk
+--- a/target/linux/qualcommbe/image/ipq95xx.mk	2026-11-24 15:00:40.442361361 +0000
++++ b/target/linux/qualcommbe/image/ipq95xx.mk	2026-11-24 15:00:40.472761396 +0000
+@@ -51,6 +51,11 @@
+ 	DEVICE_MODEL := SBE1V1K
+ 	DEVICE_VARIANT :=
+ 	BOARD_NAME := spectrum_sbe1v1k
++	# 运行期 board_name 取设备树 compatible 的第一项（spectrum,sbe1v1k），
++	# 而 25.12-6.18 树沿用上游设备树（askey,sbe1v1k）。两边都声明，跨树
++	# sysupgrade/LuCI 升级不带 -F 也能通过设备名校验（lib/upgrade/fwtool.sh
++	# 逐项比较 supported_devices 与 board_name）。
++	SUPPORTED_DEVICES := spectrum,sbe1v1k askey,sbe1v1k
+ 	DEVICE_DTS := ipq9574-sbe1v1k
+ 	DEVICE_DTS_CONFIG := config@rdp433
+ 	SOC := ipq9574
