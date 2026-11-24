@@ -168,6 +168,8 @@ sbe-port-roles status               # 打印角色与三处现状
 是 eth0、或 `live` 的当前角色是 eth0 时，stderr 输出「RTL8261N 假 10G 环回，
 重启前该口不可用」并建议重启，应用后再补一行提示。只加提示，不改变切换
 行为（`set` 仍立即 live 收敛）。桩测试覆盖 10 个场景 PASS；真机 `NOT TESTED`。
+「运行期脉冲 GPIO 41 硬复位 PHY」这一未验证的可选缓解已登记为探针计划
+（未启动，含触发条件与风险边界）：`docs/RTL8261N_GPIO41_PROBE_PLAN-2026-11-24.md`。
 
 eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp1 打进 10G
 假环回。所以 board.json 只负责“显示”，首启脚本 `99-spectrum-eth0-unmanaged-lan`

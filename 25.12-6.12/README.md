@@ -799,6 +799,8 @@ nss-dp 0009（摘桥时置 STP FORWARDING）修复，v88-1 真机复查 PASS；e
 是 eth0、或 `live` 的当前角色是 eth0 时，stderr 输出「RTL8261N 假 10G 环回，
 重启前该口不可用」并建议重启，应用后再补一行提示。只加提示，不改变切换
 行为（`set` 仍立即 live 收敛）。桩测试覆盖 10 个场景 PASS；真机 `NOT TESTED`。
+「运行期脉冲 GPIO 41 硬复位 PHY」的可选探针（未启动，含触发条件与风险边界）
+登记在 `../24.10-6.6/docs/RTL8261N_GPIO41_PROBE_PLAN-2026-11-24.md`。
 
 **LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
 通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3
