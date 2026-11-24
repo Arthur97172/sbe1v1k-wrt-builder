@@ -252,9 +252,12 @@ check_rootfs() {
 	           etc/uci-defaults/99-spectrum-eth0-unmanaged-lan; do
 		[ -f "$R/$rel" ] && ok "[$tag] /$rel 在镜像中" || bad "[$tag] 镜像缺少 /$rel"
 	done
-	grep -q '^tier=wired' "$R/etc/nss.conf" \
-		&& ok "[$tag] nss.conf 首个 NSS 镜像档位 = wired" \
-		|| bad "[$tag] nss.conf tier 不是 wired（首个 NSS 镜像应先用有线档）"
+	grep -q '^tier=full' "$R/etc/nss.conf" \
+		&& ok "[$tag] nss.conf 默认档位 = full（S4 真机 PASS 后已切换）" \
+		|| bad "[$tag] nss.conf tier 不是 full（S4 起 NSS 镜像默认全加速档）"
+	grep -q '^fallback=wired' "$R/etc/nss.conf" \
+		&& ok "[$tag] nss.conf fallback = wired（防锁死兜底仍在）" \
+		|| bad "[$tag] nss.conf fallback 不是 wired（预算耗尽时没有安全档）"
 	for svc in 'S15nss:../init.d/nss' 'S19sbe-lan-mac:../init.d/sbe-lan-mac' \
 	           'S19sbe-port-roles:../init.d/sbe-port-roles'; do
 		check_rc_link "/etc/rc.d/${svc%%:*}" "${svc#*:}"

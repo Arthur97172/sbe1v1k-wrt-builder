@@ -369,3 +369,107 @@ AN 寄存器最终 0x7000。这是 qca-ssdk 0018 re-init 补丁第一次在真�
 驻留、无看门狗日志、`ssdk_sh` 为原版。**注意**：本验证只证明控制流；
 真实硬件坏启动的判定仍依赖上一节 10 轮统计里已验证过的寄存器读取
 路径（`an_ok` 的掩码判据在 10 次健康启动中均返回真）。
+
+## 8. S4：NSS full 档默认 + 蓝灯常亮 + MAC 固定（2026-11-24）
+
+本轮三件事：把 6.18 NSS 默认档从 `wired` 切到 `full`（S4）、设备树蓝灯
+常亮、修复「每次重启后上游看到的 MAC 都变」。前两项分别先在线验证与
+静态落补丁，然后一起进新镜像刷机复验。
+
+### 8.1 S4 在线切档验证（E5 镜像，3 次热重启）
+
+在 E5 镜像（`sbe1v1k-6.18-bae017a5`）上执行 `nss-load tier full`（保持
+`fallback=wired`、`budget=3`），连续 3 次重启，每轮检查：
+
+| 轮次 | full 装载 | ECM 计数（TCP 转发） | WAN DHCP/ping/DNS | 330 s 提交 |
+|---|---|---|---|---|
+| 1 | sdk→dp→ppe 全家→ecm 全 loaded | 0→1 | PASS（192.168.10.117） | 计数清零 |
+| 2 | 同上（sfe 随 ecm 依赖带起） | 0→1 | PASS（.116） | 计数清零 |
+| 3 | 同上 | 0→1（补测） | 见下 | 计数清零 |
+
+- **循环 3 的 WAN 检查点是误报**：快照时（uptime ~75 s）eth1 还没拿到
+  DHCP 地址，是上游 Spectrum 网关 ACK 慢（已知 30–65 s；叠加每次重启
+  随机 MAC 被上游当作新客户端）。稍后复测地址、ping、DNS、ECM 全部正常。
+- ECM 计数只统计 TCP/UDP 流（ICMP 不计）；证据用主机 `curl` 经路由器
+  的 HTTP 请求产生，`/sys/kernel/debug/ecm/ecm_db/connection_count`
+  0→1。
+- dmesg 噪声：3 条 `__reset_control_get_internal`（0040 设计内的 xpcs
+  复位，基线）+ 1 条 `nf_conntrack_ecache.c:281 WARN_ON_ONCE`。
+  后者是 `nft_flow_offload` 先注册了 conntrack 事件回调、ECM 装载时
+  顶掉它的一次性告警；ECM 初始化完成后功能正常，默认配置未开 flow
+  offloading，无实际影响。属已知噪声，不阻塞。
+- 结论 **PASS**：仓库 `files/etc/nss.conf` 默认档切 `tier=full`，保留
+  `fallback=wired`；`verify-image.sh` 断言同步改为要求镜像内
+  `tier=full` 且 `fallback=wired`（旧断言要求 `tier=wired`，已删）。
+
+### 8.2 补丁 0041：蓝灯常亮
+
+mainline 与 NSS 两块 DTS 的 `led_blue` 原本没有 `default-state`（开机
+后只能靠用户态点亮）。补丁 0041 给两处都加 `default-state = "on"`
+（`max-brightness` 已是 255，LED 核心把 "on" 映射到 max），与 6.12 的
+生产形态（该树 patches/0040）一致，作为上电常亮电源指示。
+
+### 8.3 补丁 0041：NSS dp 口 MAC 固定
+
+**根因**（设备取证）：NSS 变体 `dp1..dp4` 节点没有 MAC 来源，`qca-nss-dp`
+的 `of_get_mac_address()` 失败后走 `eth_hw_addr_random()`——旧镜像每次
+启动 dmesg 固定 4 条 `GMAC6/5/3/4 Invalid MAC@ - using …`，eth0–eth3
+每次重启全变（实测 `7a:58…`→`8e:b4…`→`3e:45…`），上游路由器看到的
+WAN MAC 随之漂移，DHCP 每隔一启换地址（.117/.116 交替漂移）。
+
+**修法**：mainline DTS 早已用 ART 的 `ethaddr` mac-base（`base+index`），
+按同一语义给 dp 节点补 `nvmem-cells`/`nvmem-cell-names`：
+
+| 节点 | SSDK 口 | 角色 | ethaddr index |
+|---|---|---|---|
+| dp1 | port6 | 10G LAN（eth0） | 0 |
+| dp2 | port5 | 2.5G WAN（eth1） | 1 |
+| dp3 | port3 | LAN（eth2） | 2 |
+| dp4 | port4 | LAN（eth3） | 3 |
+
+nvmem provider（`0:ART` 分区）在内核探测 MMC 时注册，先于用户态 S15
+装载 `qca-nss-dp`，无 probe 期拿不到 cell 的问题。`sbe-lan-mac` 保持
+原样：它只在 eth2/eth3 为随机 MAC 时才改写，现在自然空转（mainline
+路径本来就不需要它）。
+
+### 8.4 刷机复验（新镜像，`sysupgrade -n`）
+
+镜像 `openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-nss-squashfs-sysupgrade.bin`
+（sha256 `c365b828…`，93,071,656 字节；`verify-image` PASS=150 FAIL=0）。
+刷机后共 4 次启动（首启 + 3 次热重启），每轮：
+
+| 项目 | 结果 |
+|---|---|
+| `Invalid MAC` 行数 | 0（4 次启动全 0） |
+| eth0–eth3 MAC | `90:d3:cf:4b:eb:81`–`84`，br-lan=`:83`（4 次启动全同） |
+| 上游 ARP 视角 WAN MAC | `90:d3:cf:4b:eb:82`（与 eth1 一致，全轮不变） |
+| 上游 DHCP 地址 | 192.168.10.237（首启后全程不变） |
+| 蓝灯亮度 | 255/255（4 次启动全 255） |
+| `nss-load status` | tier=full，sdk/dp/ppe 全家/ecm 全 loaded |
+| ECM 计数（TCP 转发） | 0→1（每轮） |
+| WAN | eth1 地址、ping 0% 丢包、DNS 正常 |
+| Wi-Fi | 三频 AP（WiFi_6G/5G/2.4G）全在 |
+| 提交 | logread `commit: tier=full survived; boot counter reset (was 1)`，最终计数 0 |
+
+DTB 静态反编译另证：NSS DTB 的 dp1–dp4 分别为 ethaddr 0–3，`led-blue`
+带 `default-state = "on"`；mainline DTB 同样有蓝灯常亮。
+
+**结论：三项全部真机 PASS**——full 档成为默认（防锁死 fallback 保留）、
+蓝灯设备树常亮、MAC 固定为出厂连续值且上游看到的值不再漂移。
+
+### 8.5 构建基础设施修复：prepare-tree 补丁幂等重放
+
+首次重建在补丁阶段失败：`0031` 报「补丁与树不匹配」。根因是判断
+「已应用」用的单补丁 reverse dry-run 不可靠——0036/0039/0040 等后序
+补丁改写在 0031 **创建**的文件上之后，0031 的反向试运行必然匹配不上
+（此前能过只是因为当时树恰好等于 0031 原样）。`prepare-tree.sh` 改为
+两阶段：先按逆序把整条链撤掉、再正序统一应用；撤不动的补丁在正序
+阶段以明确错误停下。另清理 patch 反向应用留下的 `*.orig` 备份。
+对全新树行为不变（逆序阶段自然空转）。
+
+### 8.6 遗留与未测
+
+- ECM 装载顶掉 `nft_flow_offload` 回调的一次性 WARN：已知噪声，若未来
+  启用 flow offloading 再单独评估。
+- 冷上电（断电重启）冷启动路径未测，本轮均为热重启。
+- 刷机为 `-n`（不保留配置），root 密码为空、SSH 仅限 LAN，需用户设置。

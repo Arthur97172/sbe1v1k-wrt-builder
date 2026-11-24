@@ -1,0 +1,77 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: 蓝灯常亮 + NSS dp 口 MAC 从 ART 派生
+
+蓝灯：两块 DTS 的 led_blue 都没有 default-state，开机后只能靠用户态
+点亮；补 default-state = "on"，与 25.12-6.12 生产形态
+（该树 patches/0040）一致，作为上电常亮电源指示。max-brightness 已是
+255，LED 核心把 default-state "on" 映射到 max_brightness。
+
+MAC 固定：NSS 变体 dp1..dp4 节点没有 MAC 来源，qca-nss-dp 的
+of_get_mac_address() 失败后走 eth_hw_addr_random()（dmesg
+"GMACn Invalid MAC@ - using …"），每次启动 MAC 都变，上游路由器看到的
+WAN MAC 随之漂移。mainline DTS 早已从 ART 的 ethaddr mac-base（base +
+index）取 MAC，这里按同一语义给 dp 节点补 nvmem-cells / nvmem-cell-names：
+
+  dp1（port6 / 10G LAN）  -> ethaddr 0
+  dp2（port5 / 2.5G WAN） -> ethaddr 1
+  dp3（port3 / LAN）      -> ethaddr 2
+  dp4（port4 / LAN）      -> ethaddr 3
+
+nvmem provider（0:ART 分区）在内核探测 MMC 时注册，先于用户态 S15 装载
+qca-nss-dp，不存在 probe 期拿不到 cell 的时序问题。
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k.dts
+@@ -79,6 +79,7 @@
+ 			function = LED_FUNCTION_STATUS;
+ 			pwms = <&pwm 2 16000 0>;
+ 			max-brightness = <255>;
++			default-state = "on";
+ 		};
+ 
+ 		led_red: led-red {
+--- a/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
++++ b/target/linux/qualcommbe/dts/ipq9570-sbe1v1k-nss.dts
+@@ -84,6 +84,7 @@
+ 			function = LED_FUNCTION_STATUS;
+ 			pwms = <&pwm 2 16000 0>;
+ 			max-brightness = <255>;
++			default-state = "on";
+ 		};
+ 
+ 		led_red: led-red {
+@@ -799,6 +800,8 @@
+ 		qcom,id = <6>;
+ 		reg = <0x3a514000 0x4000>;
+ 		qcom,mactype = <1>;
++		nvmem-cells = <&ethaddr 0>;
++		nvmem-cell-names = "mac-address";
+ 	};
+ 
+ 	dp2: dp2 {
+@@ -807,6 +810,8 @@
+ 		qcom,id = <5>;
+ 		reg = <0x3a001800 0x200>;
+ 		qcom,mactype = <0>;
++		nvmem-cells = <&ethaddr 1>;
++		nvmem-cell-names = "mac-address";
+ 	};
+ 
+ 	dp3: dp3 {
+@@ -815,6 +820,8 @@
+ 		qcom,id = <3>;
+ 		reg = <0x3a001400 0x200>;
+ 		qcom,mactype = <0>;
++		nvmem-cells = <&ethaddr 2>;
++		nvmem-cell-names = "mac-address";
+ 	};
+ 
+ 	dp4: dp4 {
+@@ -823,6 +830,8 @@
+ 		qcom,id = <4>;
+ 		reg = <0x3a001600 0x200>;
+ 		qcom,mactype = <0>;
++		nvmem-cells = <&ethaddr 3>;
++		nvmem-cell-names = "mac-address";
+ 	};
+ };
+ 

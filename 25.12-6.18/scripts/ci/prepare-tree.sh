@@ -108,21 +108,28 @@ echo "[prepare] 安装第三方插件（SBE_PLUGIN_MODE=${SBE_PLUGIN_MODE:-lates
 
 echo "[prepare] 应用本树补丁"
 if compgen -G "$PROJ/patches/*.patch" >/dev/null; then
-	for p in "$PROJ"/patches/*.patch; do
-		if ( cd "$BR" && patch -p1 --fuzz=0 -s -R --dry-run < "$p" ) >/dev/null 2>&1; then
-			echo "[prepare]   已应用：$(basename "$p")"
-		elif ( cd "$BR" && patch -p1 --fuzz=0 -s --dry-run < "$p" ) >/dev/null 2>&1; then
-			( cd "$BR" && patch -p1 --fuzz=0 -s < "$p" ) \
-				|| { echo "[prepare] 补丁应用失败：$(basename "$p")" >&2; exit 1; }
-			echo "[prepare]   应用：$(basename "$p")"
-		else
-			echo "[prepare] 补丁与树不匹配：$(basename "$p")" >&2
-			exit 1
-		fi
+	# 幂等重放：先按逆序把已应用的项目补丁撤掉，再正序统一应用。
+	# 单个补丁的 reverse dry-run 不可靠——后序补丁（如 0036/0039/0040）
+	# 会改在 0031 创建的文件上，此时 0031 的反向试运行已经匹配不上，
+	# 但整条链的反向重放（逆序）是精确的。对未应用的补丁，patch 检测到
+	# 「Unreversed patch」会跳过且不改文件。撤不动的直接留给正序阶段报错。
+	mapfile -t _patches < <(ls "$PROJ"/patches/*.patch | sort)
+	for ((i = ${#_patches[@]} - 1; i >= 0; i--)); do
+		( cd "$BR" && patch -p1 --fuzz=0 -s -R < "${_patches[i]}" ) >/dev/null 2>&1 || true
+	done
+	for p in "${_patches[@]}"; do
+		( cd "$BR" && patch -p1 --fuzz=0 -s --dry-run < "$p" ) >/dev/null 2>&1 \
+			|| { echo "[prepare] 补丁与树不匹配：$(basename "$p")" >&2; exit 1; }
+		( cd "$BR" && patch -p1 --fuzz=0 -s < "$p" ) \
+			|| { echo "[prepare] 补丁应用失败：$(basename "$p")" >&2; exit 1; }
+		echo "[prepare]   应用：$(basename "$p")"
 	done
 else
 	echo "[prepare]   无补丁"
 fi
+# patch 反向应用时会在被撤文件旁留 .orig 备份；撤+放成对执行后它是陈旧
+# 产物（如 dts 目录里的 ipq9570-sbe1v1k-nss.dts.orig），清掉避免混进源码树。
+find "$BR" -name '*.orig' -type f -delete 2>/dev/null || true
 
 # overlay 只在本阶段存在时才拷贝；Stage 1 基线保持上游原样。
 if [ -d "$PROJ/files" ] && [ -n "$(ls -A "$PROJ/files" 2>/dev/null)" ]; then
