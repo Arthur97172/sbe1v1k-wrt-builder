@@ -36,6 +36,12 @@
 #   sbe-port-roles live           apply 后断/挂 eth0 并重载 network、firewall
 #   sbe-port-roles status         打印角色、SSDK 成员表与 UCI 状态
 #   sbe-port-roles set <role>     写 sbe_ports.main.wan_port 后按 live 收敛
+#
+# 注意：涉及 eth0（RTL8261N 10G）的 live 切换有假 10G 环回风险。24.10 与
+# 6.12 已真机实证：eth0 在运行期被摘桥/重连后驱动报 10G Up、对端 NO-CARRIER，
+# down/up 无法自愈，重启前该口不可用；6.18 的 live 数据面路径尚未验证（重启
+# 路径正常）。脚本不改变切换行为，只在涉及 eth0 时打印警告并提示重启；推荐
+# 的切换方式是写角色后重启设备。
 
 SBE_CONF=sbe_ports
 DEFAULT_ROLE=eth1
@@ -51,7 +57,8 @@ usage() {
 		"  apply   按 sbe_ports.main.wan_port 收敛（开机 S19；不重载网络）" \
 		"  live    apply 并断/挂 eth0、重载 network 与 firewall" \
 		"  status  打印当前角色、SSDK 成员表与 UCI 状态" \
-		"  set R   写入角色后按 live 收敛"
+		"  set R   写入角色后按 live 收敛（涉及 eth0 时建议随后重启）" \
+		"  注意：涉及 eth0 的 live 切换可能触发 RTL8261N 假 10G 环回，重启前该口可能不可用"
 }
 
 read_role() {
@@ -299,6 +306,19 @@ live_reload() {
 	fi
 }
 
+# 涉及 eth0 的 live 切换风险提示（2026-11-24）。只在切换确实会摘/挂 eth0 时
+# 调用，不改变切换行为。RTL8261N 在运行期 teardown 后进入假 10G 环回，
+# 唯有重启能恢复；角色本身不受影响，开机路径（S19）照常收敛。
+warn_eth0_live() {
+	printf '%s\n' \
+		'警告：这是 live 切换（不重启），且涉及 10G 口 eth0（RTL8261N）。' \
+		'24.10/6.12 已实证：eth0 在运行期被摘桥/重连后进入假 10G 环回（驱动报' \
+		'10G Up、对端 NO-CARRIER），down/up 无法自愈，重启前该口不可用；' \
+		'6.18 的 live 数据面路径尚未验证。' \
+		'推荐做法：切换后重启设备，让角色在开机路径（S19）生效。' >&2
+	log "live 切换涉及 eth0：已提示 RTL8261N 假 10G 环回风险，建议重启生效"
+}
+
 apply_role() {
 	local role=$1 force=$2 brsec want_ports changed=0
 
@@ -356,7 +376,7 @@ do_status() {
 }
 
 do_set() {
-	local role=$1
+	local role=$1 prev
 	case "$role" in
 	eth0 | eth1 | none) ;;
 	*)
@@ -365,6 +385,10 @@ do_set() {
 		exit 2
 		;;
 	esac
+	prev=$(read_role)
+	if [ "$role" = eth0 ] || [ "$prev" = eth0 ]; then
+		warn_eth0_live
+	fi
 	# uci set 对该版本 uci 只在配置文件已存在时生效：文件不存在时直接
 	# "Entry not found"（-q 吞掉后只剩 rc=1），必须先建空文件。
 	[ -f "/etc/config/$SBE_CONF" ] || touch "/etc/config/$SBE_CONF" ||
@@ -374,6 +398,9 @@ do_set() {
 	uci -q commit "$SBE_CONF" || die "commit $SBE_CONF 失败"
 	say "角色已写入 $SBE_CONF.main.wan_port=$role"
 	apply_role "$role" 1
+	if [ "$role" = eth0 ] || [ "$prev" = eth0 ]; then
+		say "提示：10G 口（eth0）若在切换后不可用，重启设备即按新角色恢复"
+	fi
 }
 
 # 非 NSS 通路上 SSDK 不装载、成员表不存在：整个脚本不适用（判据见
@@ -392,7 +419,13 @@ apply)
 live)
 	role=$(read_role)
 	say "端口角色：$role（live 生效）"
+	if [ "$role" = eth0 ]; then
+		warn_eth0_live
+	fi
 	apply_role "$role" 1
+	if [ "$role" = eth0 ]; then
+		say "提示：10G 口（eth0）若不可用，重启设备后按当前角色生效"
+	fi
 	;;
 status) do_status "$(read_role)" ;;
 set) do_set "${2:-}" ;;

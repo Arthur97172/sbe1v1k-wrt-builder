@@ -164,6 +164,11 @@ sbe-port-roles status               # 打印角色与三处现状
 后 2.5G 口直接恢复转发**（25.12 不会，见对照）。`none` 角色仍 `NOT TESTED`。
 全过程取证：`docs/WAN_LAN_ROLE_TESTS-2026-11-21.md`。
 
+2026-11-24 起脚本在 live 切换涉及 eth0 时打印显式警告：`set` 的目标或原角色
+是 eth0、或 `live` 的当前角色是 eth0 时，stderr 输出「RTL8261N 假 10G 环回，
+重启前该口不可用」并建议重启，应用后再补一行提示。只加提示，不改变切换
+行为（`set` 仍立即 live 收敛）。桩测试覆盖 10 个场景 PASS；真机 `NOT TESTED`。
+
 eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp1 打进 10G
 假环回。所以 board.json 只负责“显示”，首启脚本 `99-spectrum-eth0-unmanaged-lan`
 会在 `config_generate` 之后把它从生成的 `network.<br-lan>.ports` 里再删掉，

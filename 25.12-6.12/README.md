@@ -791,7 +791,14 @@ RTL8261N 假 10G 环回（链路报 10G，对端 2.5G 网卡无载波），down/
 `2.5Gbps/Full` 但 RX/TX 恒 0、udhcpc 只发不出、WAN pending，dmesg 伴随
 `uniphy autoneg time out!`，只能重启。24.10 线上同样测试的回切可恢复转发，
 两棵树表现不同（见对照）。`none` 角色仍 `NOT TESTED`。全过程取证：
-`../24.10-6.6/docs/WAN_LAN_ROLE_TESTS-2026-11-21.md`。
+`../24.10-6.6/docs/WAN_LAN_ROLE_TESTS-2026-11-21.md`。上述回切丢帧已由
+nss-dp 0009（摘桥时置 STP FORWARDING）修复，v88-1 真机复查 PASS；eth0 的假
+10G 环回不受该补丁影响。
+
+2026-11-24 起脚本在 live 切换涉及 eth0 时打印显式警告：`set` 的目标或原角色
+是 eth0、或 `live` 的当前角色是 eth0 时，stderr 输出「RTL8261N 假 10G 环回，
+重启前该口不可用」并建议重启，应用后再补一行提示。只加提示，不改变切换
+行为（`set` 仍立即 live 收敛）。桩测试覆盖 10 个场景 PASS；真机 `NOT TESTED`。
 
 **LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
 通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3
