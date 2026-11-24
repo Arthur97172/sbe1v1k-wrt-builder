@@ -114,7 +114,7 @@
 │   ├── etc/rc.d/S95wireless-defaults            # -> ../init.d/wireless-defaults
 │   ├── etc/uci-defaults/                        # 首启：WAN 放行、ttyd、时区、无线
 │   └── usr/lib/sbe1v1k/wireless-defaults        # 无线策略实现（与 6.12 同源）
-├── patches/                                     # 装配时整链重放、可重复（0001–0041）
+├── patches/                                     # 装配时整链重放、可重复（0001–0042）
 │   ├── 0001-qualcommbe-sbe1v1k-swap-port5-port6-labels.patch
 │   ├── 0002-wifi-scripts-pin-radio-numbering-by-band.patch
 │   ├── 0003-qualcommbe-sbe1v1k-distinct-mac-per-port.patch
@@ -123,7 +123,8 @@
 │   ├── 0033-qualcommbe-ipq95xx-nss-board-network.patch # 02_network 按设备树分支
 │   ├── 0034-qualcommbe-qca808x-drop-qca8084-for-nss.patch # 6.18 内置 qca8084 抢名
 │   ├── 0036..0040-*                                  # PCS 时钟、MDIO 复位、看门狗、reset 所有权
-│   └── 0041-qualcommbe-sbe1v1k-blue-led-and-dp-mac.patch # 蓝灯常亮 + dp 口 MAC 固定
+│   ├── 0041-qualcommbe-sbe1v1k-blue-led-and-dp-mac.patch # 蓝灯常亮 + dp 口 MAC 固定
+│   └── 0042-luci-version-drop-detached-head.patch  # 概览版本串去掉 detached HEAD 伪分支
 └── scripts/
     ├── ci/prepare-tree.sh                       # 克隆 main + 钉 feed + 插件装配
     ├── ci/fetch-plugins.sh                      # 18 插件按最新 tag 安装

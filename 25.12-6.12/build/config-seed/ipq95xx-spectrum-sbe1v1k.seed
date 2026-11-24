@@ -43,10 +43,13 @@ CONFIG_PACKAGE_kmod-qca-nss-ecm-standard=y
 # DEPENDS 带入；模块何时装载仍归 nss-load 档位。
 CONFIG_PACKAGE_qca-ssdk-shell=y
 
-# Version string: left at the upstream defaults — VERSIONOPT is off, so
-# VERSION_NUMBER resolves to 25.12-SNAPSHOT (branch default) and VERSION_CODE
-# to the tree's `version` file (sbe1v1k-25.12-<builder-commit-sha8>).  The banner
-# itself is rendered from files/ by scripts/render-overlay.sh.
+# Version string: the seed sets no CONFIG_VERSION_* and VERSIONOPT is off,
+# so include/version.mk supplies the defaults: VERSION_NUMBER comes from
+# patch 0042 (SNAPSHOT, same as the main branch; LuCI 状态→概览 shows
+# "OpenWrt SNAPSHOT sbe1v1k-25.12-<sha>") and VERSION_CODE from the tree's
+# `version` file (sbe1v1k-25.12-<builder-commit-sha8>).  The login banner is
+# rendered from files/ by scripts/render-overlay.sh and keeps its own
+# 25.12-SNAPSHOT fallback, so it is independent of version.mk.
 
 # LuCI, kept identical to the 24.10-6.6 image: luci-light collection
 # (system/status/network/firewall + bootstrap), uhttpd on 80/443 with a

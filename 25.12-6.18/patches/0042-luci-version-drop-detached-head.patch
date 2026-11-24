@@ -1,0 +1,36 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] luci: 版本串去掉 detached HEAD 伪分支
+
+prepare-tree.sh 把 feeds/luci 检出到钉定的 feed_sha（detached HEAD）。luci.mk
+的 PKG_GITBRANCH 用 `git branch --format='%(refname:strip=2)'` 取本地分支名，
+在 detached 状态下拿到的是 git 的占位串 `(HEAD detached at <sha>)`（旧版 git
+是 `(no branch)`），于是 modules/luci-base 编译出的 luci.version.branch 变成
+`LuCI (HEAD detached at f7675c0) branch`，状态→概览里的固件版本显示为
+
+  OpenWrt SNAPSHOT sbe1v1k-6.18-<sha> / LuCI (HEAD detached at f7675c0) branch 26.326.23302~f7675c0
+
+本补丁在“分支名不是 master”的分支里先判占位分支（`*HEAD detached` 前后缀剥离
+比较，或等于 `(no branch)`），命中时 variant 直接用 `LuCI branch`，显示为
+
+  OpenWrt SNAPSHOT sbe1v1k-6.18-<sha> / LuCI branch 26.326.23302~f7675c0
+
+正常分支（master / 命名分支）的显示逻辑不变。注意这里不能用 shell `case`
+语句：case 的 `*)` 模式里带未配对的右括号，会提前截断 GNU make 对
+`$$(shell ...)` 的括号匹配，make 直接报 unterminated call。
+
+---
+--- a/feeds/luci/luci.mk
++++ b/feeds/luci/luci.mk
+@@ -153,7 +153,11 @@ PKG_GITBRANCH:=$(if $(DUMP),x,$(strip $(shell \
+ 		branch=$$(git branch --format='%(refname:strip=3)' --remote --no-abbrev --contains 2>/dev/null | tail -n1); \
+ 		branch=$${branch:-$$(git -c core.abbrev=7 branch --format='%(refname:strip=2)' --contains 2>/dev/null | tail -n1)}; \
+ 		if [ "$$branch" != "master" ]; then \
+-			variant="LuCI $${branch:-unknown} branch"; \
++			if [ "$${branch#*HEAD detached}" != "$$branch" ] || [ "$$branch" = "(no branch)" ]; then \
++				variant="LuCI branch"; \
++			else \
++				variant="LuCI $${branch:-unknown} branch"; \
++			fi; \
+ 		else \
+ 			variant="LuCI Master"; \
+ 		fi; \

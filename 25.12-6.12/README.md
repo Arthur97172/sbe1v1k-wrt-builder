@@ -90,6 +90,9 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0029-qualcommbe-sbe1v1k-disable-qpic-nand.patch       关掉 RDP433 基线的 QPIC NAND（v32 无 eMMC 的根因）
 │   ├── 0030-qualcommbe-qca808x-keep-8081-drop-8084.patch      保留 QCA8081 驱动、只删 QCA8084 注册（eth1 2.5G）
 │   ├── 0031-qualcommbe-kernel-initramfs-xz-dict.patch        initramfs XZ 128 MiB 字典（诊断镜像尺寸）
+│   ├── 0032-0041-…patch      内核/无线/LuCI/风扇补丁（PCS 时钟复位、radio 命名、LuCI 排序、PWM LED）
+│   ├── 0042-version-number-snapshot.patch                   VERSION_NUMBER 兜底值改 SNAPSHOT（概览版本串）
+│   ├── 0043-luci-version-drop-detached-head.patch           LuCI 版本串去掉 detached HEAD 伪分支
 │   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树

@@ -1,0 +1,32 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] version: 默认 VERSION_NUMBER 用 SNAPSHOT
+
+25.12-6.12 分支上游 include/version.mk 的 VERSION_NUMBER 兜底值仍是
+25.12-SNAPSHOT，main（6.18 树）早已改为 SNAPSHOT。本项目未开启
+CONFIG_VERSIONOPT，种子也不写 CONFIG_VERSION_*，因此实际生效的就是这一行
+兜底值：LuCI 状态→概览的固件版本会显示
+
+  OpenWrt 25.12-SNAPSHOT sbe1v1k-25.12-<sha> / LuCI ...
+
+本补丁把兜底值对齐到 main 的写法，显示为
+
+  OpenWrt SNAPSHOT sbe1v1k-25.12-<sha> / LuCI ...
+
+影响面：/etc/openwrt_release 的 DISTRIB_RELEASE/DISTRIB_DESCRIPTION 与
+ubus system board 的 release 字段（LuCI 概览即读它）。开机 banner 由
+scripts/render-overlay.sh 从 files/ 渲染、读 .config（兜底 25.12-SNAPSHOT），
+不经过 version.mk，所以 banner 与 verify-image.sh 的版本行断言不受影响。
+VERSION_REPO 仍是上游的 25.12-SNAPSHOT 下载源，未改动。
+
+---
+--- a/include/version.mk
++++ b/include/version.mk
+@@ -27,7 +27,7 @@ PKG_CONFIG_DEPENDS += \
+ sanitize = $(call tolower,$(subst _,-,$(subst $(space),-,$(1))))
+ 
+ VERSION_NUMBER:=$(call qstrip,$(CONFIG_VERSION_NUMBER))
+-VERSION_NUMBER:=$(if $(VERSION_NUMBER),$(VERSION_NUMBER),25.12-SNAPSHOT)
++VERSION_NUMBER:=$(if $(VERSION_NUMBER),$(VERSION_NUMBER),SNAPSHOT)
+ 
+ VERSION_CODE:=$(call qstrip,$(CONFIG_VERSION_CODE))
+ VERSION_CODE:=$(if $(VERSION_CODE),$(VERSION_CODE),$(REVISION))
