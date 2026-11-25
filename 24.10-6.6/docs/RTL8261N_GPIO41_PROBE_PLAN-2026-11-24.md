@@ -1,8 +1,10 @@
 # RTL8261N 假 10G 环回：GPIO 41 硬复位探针计划（可选，未启动）
 
-状态：**部分执行（2026-11-25，v117-2）**：预检、诱发、3a 已完成并取证；
-3b（mdio unbind/rebind）被本地权限拦截未执行；设备已恢复已知状态。
-执行记录见文末「2026-11-25 执行记录」。
+状态：**已执行（2026-11-25，v117-2）**：预检、诱发、3a 完成；3b
+（mdio unbind/rebind，用户批准后执行）触发**内核 panic 整机复位**
+（`reset_reason : HLOS Panic [0x47]`），「硬复位能否清除假环回」
+未取得可判读结果，且 mdio unbind 路径本身判定为运行期不可用。
+设备已恢复已知状态。执行记录见文末「2026-11-25 执行记录」。
 
 2026-11-24 与用户确认：不列为本期必修，作为「下一次 24.10 现场会话的
 可选 10 分钟探针」登记；只有触发条件（见文末）成立时才启动。任何涉及
@@ -115,16 +117,31 @@ step3a-ethx-r / recovery 四份）。
    autonegotiation: Not supported`（rc=255）——eth0 由 nss-dp 呈现，
    无 `restart_an` 实现；执行前后两端链路状态零变化（路由器保持
    10000/1，对端保持 NO-CARRIER），dmesg 无新行。
-4. **3b mdio unbind/rebind：未执行（被拦）**。目标命令：
-   `echo 90000.mdio > /sys/bus/platform/drivers/ipq4019-mdio/unbind`，
-   3 s 后写回 `bind`（总线驱动 = `ipq4019-mdio`，设备 = `90000.mdio`）。
-   Claude Code 权限分类器以「Remote Shell Writes」两次拒绝，拆成最小
-   命令仍被拒；按边界停手，未绕行。**待用户批准或用户以 `!` 前缀自行
-   执行后继续**（需先重新诱发假环回）。
+4. **3b mdio unbind/rebind：执行后内核 panic，整机复位**。命令
+   `echo 90000.mdio > /sys/bus/platform/drivers/ipq4019-mdio/unbind`
+   （总线驱动 `ipq4019-mdio`，设备 `90000.mdio`）第一次尝试被 Claude
+   Code 权限分类器以 Remote Shell Writes 拒绝两次、未绕行；用户批准后
+   重试，诱发（假环回再次复现：路由器 10000/1、对端 NO-CARRIER）后
+   执行：**unbind 写入在返回前挂死**（`unbind_rc` 从未打印），约 20 s
+   内 WiFi 管理全面失联（ping 100% 丢失、AP 不可见），约 20–40 s 后
+   设备自行复位；重启后 `reset_reason : HLOS Panic [0x47]`，结合
+   `kernel.panic=3` 判定为 mdio unbind 路径触发内核 panic（无 pstore，
+   无 live watchdog 设备，排除看门狗复位）。复位后 role 仍为 eth0
+   （UCI 已持久化），eth0 开机 AN 正常回到真 2500 链路。
+   **结论：`ipq4019-mdio` 总线 unbind 在 nss-dp 挂有 PHY 的平台上直接
+   panic，不能用它做运行期整组复位脉冲；「GPIO 硬复位能否清除假环回」
+   的原始问题本轮未取得可判读结果**（系统复位掩盖了 PHY 级行为）。
+   若还要验证，只能走驱动内定向复位（phydev 级复位、非总线 unbind）
+   或 devmem 直捅 41（已在本计划「不做」之列）。
 5. **恢复 PASS**：`sbe-port-roles set eth1`（rc=0）+ `sync; reboot`；
    重启后复核：wan_port=eth1、eth0 回 br-lan 且 2500 真链路、对端
    USB 网卡恢复载波、eth1 拿上游 DHCP `192.168.10.237`、dmesg 正常
-   2.5G/2.5G Link Up，无假环回残留。
+   2.5G/2.5G Link Up、`reset_reason : System reset or reboot [0x10]`，
+   无假环回残留。
 
-结论（截至 3a）：运行期假环回可用一次 live 角色切换稳定复现；`ethtool -r`
-在该镜像上不可用，故 3b 的 mdio 整组复位脉冲是唯一剩余探针手段。
+结论（最终）：运行期假环回可用一次 live 角色切换稳定复现；`ethtool -r`
+在 nss-dp 上不支持；mdio 总线 unbind 会内核 panic——三个候选手段里已有
+两个被排除，剩余唯一未测的运行期硬复位是驱动内的 PHY 级复位。对「根治
+方向」的输入：不支持「驱动 `.resume` 重做 MMD30 0x145 复位 + phy_patch」
+这一候选的任何 PHY 级证据（本轮没测到），但明确排除了外场「mdio unbind
+冲一下」这种运维手段。
