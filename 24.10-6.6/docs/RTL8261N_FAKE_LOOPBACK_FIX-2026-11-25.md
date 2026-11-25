@@ -1,7 +1,8 @@
 # RTL8261N 假 10G 环回：根因定位与修复（2026-11-25）
 
-状态：**根因已定位，修复补丁 `build-fixes/0032` 已写好；真机 NOT TESTED**
-（待刷机验证 live 角色切换后 eth0 能否回到 2500 真链路）。
+状态：**根因已定位；0032 已写好并在 v128-2 真机验证——重初始化路径确实
+执行、旧假 10G 幻影未再复现，但 live 角色切换后 eth0 仍拿不回链路（判据 #2
+FAIL），只有重启恢复；开机路径正常。**
 
 ## 结论摘要
 
@@ -82,13 +83,57 @@ after suspend")` 便于真机确认路径。本地装配树 dry-run 应用通过
 侧**取消**（conclusion=cancelled，未创建任何 job；与同时段的 6.12 构建
 无并发组冲突，原因未明）。本次补记 push 重新触发装配与构建。
 
+## 2026-11-25 真机验证（24.10 v128-2-0ea26d29，含 0032）
+
+接线：本机 USB 2.5G 网卡（192.168.1.2）↔ 路由器 eth0（10G 口，LAN，
+192.168.1.1）；eth1（2.5G）= WAN ↔ 上游。重启相关操作已获用户批准。
+
+- **版本确认**：刷入 GitHub Release v128-2 的 sysupgrade 镜像（82,576,182
+  字节，sha256 `912fb16c…a918` 与 release 记录一致），`sysupgrade -n`。
+  设备版本串是冻的 `sbe1v1k-g3.5c` 不能区分构建，**以 dmesg 指纹为准**。
+- **开机路径（判据 #1 方向）**：每次重启后 dmesg 都有
+  `rtkphy_config_init:69 ... phy_id: 0x1CCAF3`，eth0 在开机约 30.6 s 处
+  `Link is Up - 2.5Gbps/Full`，对端 USB 网卡载波恢复。多轮重启已见
+  6 次以上，均正常（10 次系统化热重启回归进行中）。
+- **resume 指纹（判据 #2 前半）**：干净启动后做一次规范往返
+  `sbe-port-roles set eth0`（live）→ 84.667 s `Link is Down` →
+  84.687 s `configuring for phy/usxgmii` → **84.694 s
+  `RTL8261N: re-initializing after suspend`**，随后完整 config_init
+  （MDD30 复位+固件 patch）执行；`set eth1` 返回时（126.990 s）再次重初始化。
+  即 0032 的 resume 重初始化路径**确实执行**。
+- **旧幻影消失**：往返全程未再出现「路由器侧 10G Up、对端
+  NO-CARRIER」的假环回状态。
+- **但判据 #2 后半 FAIL**：两次 live 切换后 eth0 都**没有任何链路**——
+  路由器 `carrier=0`、`speed` 不可读，对端 USB 网卡 NO-CARRIER，ping
+  100% 丢包；对端 `ip link set … down/up` 重 AN、`ssdk_sh port
+  autoNeg restart 6` 均无效。只有重启（完整开机 config_init）能恢复
+  2500 真链路。
+- **判据 #3 未测**：链路都起不来，新角色 WAN DHCP 无从谈起。
+- **限制**：该镜像无 ethtool、QSDK mdio 不支持 SIOCGMIIREG、ssdk_sh 无
+  PHY 寄存器命令，故无寄存器级证据（自建静态 mdio-read 工具报
+  `SIOCGMIIREG: Not supported`）。为遵守设备操作约束，未安装任何软件。
+
+**解读与下一候选**：0032 把危险态（假 10G 误报）变成了安全态（无链路），
+但 live 切换后 eth0 仍不可用，开机路径完全正常。时序假设：开机时
+config_init（13.4 s）与 AN config/restart（~30 s）之间有十余秒间隔，
+而 resume 路径里硬复位+固件 patch 之后几毫秒 AN config 就落地，PHY 可能
+需要复位后静置。候选修法：resume 重初始化后延迟（例如 1-2 s 的工作队列）
+补一次 `genphy_c45_restart_aneg`；或接受「eth0 不支持 live 切换」的边界。
+
 ## 待真机验证的判据
 
 1. 刷入带 0032 的新镜像，热启动 10 次 eth0 开机链路正常（回归）；
+   **→ v128-2 PASS：10/10 次开机 eth0 均在 30.4–31.1 s 以真 2500 建链
+   （每轮 dmesg 的 `Link is Up - 2.5Gbps/Full` 时间戳独立，carrier=1
+   speed=2500）。回归脚本早期版本因 host RTL8156B sysfs carrier 假死读数
+   和 SSH known_hosts 密钥冲突产生过假 FAIL，已作废重跑；v2 中 3 轮
+   `fresh=0` 是 uptime 判据在短命启动下的记账误判，链路证据本身全部正常。**
 2. `sbe-port-roles set eth0`（live）后再 `set eth1`（live）往返：每次
    eth0 都应回到 2500 真链路，对端恢复载波，dmesg 出现
    `RTL8261N: re-initializing after suspend`；
+   **→ v128-2 FAIL（指纹出现、幻影消失，但 eth0 往返后无链路，仅重启可救）**；
 3. WAN 在新角色下拿到 DHCP，`sbe-port-roles status` 与 board.json 一致。
+   **→ 未测（eth0 无链路）**。
 
 ## 证据
 
