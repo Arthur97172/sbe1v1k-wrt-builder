@@ -78,6 +78,10 @@ after suspend")` 便于真机确认路径。本地装配树 dry-run 应用通过
 的 24.10 构建 workflow 随本次 push 启动（source_tag=auto → sources-v38），
 约 3 小时。
 
+2026-11-25 13:06Z：该构建 run 45615850648 在排队约 27 分钟后被 GitHub
+侧**取消**（conclusion=cancelled，未创建任何 job；与同时段的 6.12 构建
+无并发组冲突，原因未明）。本次补记 push 重新触发装配与构建。
+
 ## 待真机验证的判据
 
 1. 刷入带 0032 的新镜像，热启动 10 次 eth0 开机链路正常（回归）；
