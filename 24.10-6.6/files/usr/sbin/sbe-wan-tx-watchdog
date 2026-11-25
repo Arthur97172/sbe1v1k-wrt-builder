@@ -1,0 +1,186 @@
+#!/bin/sh
+# WAN eth1 TX 冻结看门狗（24.10-6.6 / NSS 数据通路）。
+#
+# 背景：持续 NAT 下载后 eth1（WAN，QCA8081 2.5G，SSDK port 5）TX 侧会静默
+# 冻结——载波在、速率 2500、RX 仍在走，但 eth1 一个包都发不出去，上游和
+# 互联网全部不可达。已取证的全部 in-band 自愈手段都无效：txmac 翻转、
+# flowctrl 位改写、PHY 关/开、eth1 down/up 整口重建、QW flush、TM DEQ_DIS、
+# QM 时钟门控解除、PSCH TDM slot / L0/L1 flow map 同值重写，全部不能恢复，
+# 只有整机重启有效。两组指纹交替出现（q208 积压 + COMP p5 归零；或 q208
+# 空、COMP 健康但 PPE 吞包），均位于 PPE 端口 TX 数据通路内部，软件不可达。
+#
+# 因此做有界自愈：检测到「RX 持续推进而 TX 冻结」并用自己的 ARP 探针确认
+# 后，取证、落盘、重启。重启上限见 /etc/config/sbe_wan_tx_watchdog，防止
+# 重启风暴。
+#
+# 判定：
+#   每 15 s 采样 eth1 的 carrier / tx_packets / rx_packets；
+#   carrier=1、eth1 有 IPv4 地址、tx 不增且 rx 增量 >0，连续累计 >=90 s
+#   判为可疑；随后向 169.254.255.254（假邻居）发 ARP 探针：
+#   若探针前后 tx_packets 仍不动 -> 确认冻结 -> 重启。
+#   探针把 tx 推动了 -> 误报，清零继续。
+# 探针只依赖链路层 ARP，不需要上游/互联网可用。
+#
+# 安全边界（楔死态实测）：
+#   - 只能读 sysfs netdev stats、/sys/ssdk/packet_counter、ssdk_sh debug reg；
+#   - 禁止读 /sys/kernel/debug/qca-nss-ppe/*、qca-nss-netfn/flowmgr/stats、
+#     ecm/ecm_db/*（会把整机锁死到只能物理断电）。
+#
+# 配置：/etc/config/sbe_wan_tx_watchdog
+#   option enabled '1'            # 0 关闭
+#   option max_reboots '3'        # 30 分钟窗口内最多自动重启次数
+#   option stall_seconds '90'     # TX 冻结累计阈值
+
+. /lib/functions.sh
+
+CONF=sbe_wan_tx_watchdog
+IF=${SBE_TXWD_IF:-eth1}
+INTERVAL=15
+EVIDENCE=/etc/sbe-wan-tx-watchdog-evidence.log
+COUNT=/etc/sbe-wan-tx-watchdog.count
+PROBE_IP=169.254.255.254
+PROBE_MAC=02:00:5e:00:53:02
+
+log() {
+	logger -t sbe-wan-tx-watchdog "$*"
+}
+
+ev() {
+	log "$*"
+	echo "$(date '+%F %T') [$1] uptime=$(cut -d. -f1 /proc/uptime)s tx=$2 rx=$3 carrier=$4" >> "$EVIDENCE" 2>/dev/null
+}
+
+case "$(board_name 2>/dev/null)" in
+askey,sbe1v1k | spectrum,sbe1v1k) ;;
+*) exit 0 ;;
+esac
+
+enabled=$(uci -q get $CONF.main.enabled)
+[ -n "$enabled" ] || enabled=1
+[ "$enabled" = 1 ] || exit 0
+
+max=$(uci -q get $CONF.main.max_reboots)
+case "$max" in
+'' | *[!0-9]*) max=3 ;;
+esac
+
+stall_need=$(uci -q get $CONF.main.stall_seconds)
+case "$stall_need" in
+'' | *[!0-9]*) stall_need=90 ;;
+esac
+[ "$stall_need" -ge 60 ] || stall_need=60
+
+[ -d "/sys/class/net/$IF" ] || exit 0
+
+# 重启计数：30 分钟窗口内超限就只告警不重启。上次重启时间存在
+# $COUNT 第一行，第二行是窗口内已重启次数。
+reboots_allowed() {
+	local now last cnt
+	now=$(date +%s)
+	last=0
+	cnt=0
+	[ -r "$COUNT" ] && {
+		read -r last <"$COUNT"
+		cnt=$(sed -n 2p "$COUNT" 2>/dev/null)
+	}
+	case "$last" in '' | *[!0-9]*) last=0 ;; esac
+	case "$cnt" in '' | *[!0-9]*) cnt=0 ;; esac
+	if [ $((now - last)) -gt 1800 ]; then
+		cnt=0
+	fi
+	[ "$cnt" -lt "$max" ] && return 0
+	log "CRITICAL: TX 冻结但已达重启上限（${cnt}/${max}，30 分钟内）；不再自动重启，等待人工处理"
+	return 1
+}
+
+record_reboot() {
+	local now cnt
+	now=$(date +%s)
+	cnt=1
+	[ -r "$COUNT" ] && cnt=$(sed -n 2p "$COUNT" 2>/dev/null)
+	case "$cnt" in '' | *[!0-9]*) cnt=0 ;; esac
+	cnt=$((cnt + 1))
+	printf '%s\n%s\n' "$now" "$cnt" >"$COUNT"
+}
+
+has_ipv4() {
+	ip -4 addr show dev "$IF" 2>/dev/null | grep -q 'inet '
+}
+
+snap() {
+	T=$(cat "/sys/class/net/$IF/statistics/tx_packets" 2>/dev/null)
+	R=$(cat "/sys/class/net/$IF/statistics/rx_packets" 2>/dev/null)
+	C=$(cat "/sys/class/net/$IF/carrier" 2>/dev/null)
+}
+
+# ARP 探针：把假邻居钉在 eth1 上再 ping，内核必须为它发出 ARP 请求
+# （走 eth1 的 TX），不需要任何上游可用。
+probe_tx() {
+	local before after
+	snap
+	before=$T
+	ip neigh replace "$PROBE_IP" lladdr "$PROBE_MAC" dev "$IF" nud permanent 2>/dev/null
+	ping -c 3 -W 1 -I "$IF" "$PROBE_IP" >/dev/null 2>&1
+	sleep 2
+	snap
+	after=$T
+	ip neigh del "$PROBE_IP" dev "$IF" 2>/dev/null
+	[ -n "$before" ] && [ -n "$after" ] && [ "$before" = "$after" ]
+}
+
+log "启动：if=$IF 间隔=${INTERVAL}s 阈值=${stall_need}s 重启上限=${max}"
+
+prev_tx=
+prev_rx=
+stall=0
+while :; do
+	sleep "$INTERVAL"
+	snap
+	[ -n "$T" ] || continue
+	# 启动早期与无地址阶段不做判定：eth1 还没拿到地址时 ARP 探针没有源地址。
+	if [ "$C" != "1" ] || ! has_ipv4; then
+		stall=0
+		prev_tx=$T
+		prev_rx=$R
+		continue
+	fi
+	if [ -n "$prev_tx" ] && [ "$T" = "$prev_tx" ] && [ "$R" -gt "$prev_rx" ]; then
+		stall=$((stall + INTERVAL))
+	else
+		stall=0
+	fi
+	if [ "$stall" -ge "$stall_need" ]; then
+		ev "SUSPECT" "$T" "$R" "$C"
+		if probe_tx; then
+			snap
+			ev "CONFIRMED" "$T" "$R" "$C"
+			# 取证：只读安全路径（见文件头安全边界）。
+			{
+				echo "speed=$(cat /sys/class/net/$IF/speed 2>/dev/null) \
+carrier_changes=$(cat /sys/class/net/$IF/carrier_changes 2>/dev/null) \
+tx_errors=$(cat /sys/class/net/$IF/statistics/tx_errors 2>/dev/null) \
+tx_dropped=$(cat /sys/class/net/$IF/statistics/tx_dropped 2>/dev/null)"
+				command -v ssdk_sh >/dev/null 2>&1 && {
+					reg() { ssdk_sh debug reg get "$1" 4 2>&1 | grep -o 'Data\]:0x[0-9a-f]*' | cut -d: -f2; }
+					echo "q208_ac=$(reg 0x84ed00) comp5=$(reg 0x476050) mac_en=$(reg 0x1800) flush_cfg=$(reg 0x800000)"
+					echo "--- packet_counter (port tx/drop) ---"
+					grep -E 'PORT_TX_COUNTER|QUEUE_TX_COUNTER|DROP_CPU' /sys/ssdk/packet_counter 2>/dev/null
+				}
+			} >>"$EVIDENCE" 2>/dev/null
+			if reboots_allowed; then
+				record_reboot
+				log "TX 冻结已确认（tx=$T 不动，ARP 探针发不出去）；取证已落盘，重启自愈"
+				sync
+				sleep 1
+				reboot
+				sleep 60
+			fi
+		else
+			ev "PROBE-OK" "$T" "$R" "$C"
+			log "TX 冻结疑似误报：ARP 探针成功发出，清零继续"
+		fi
+		stall=0
+	fi
+	prev_tx=$T
+	prev_rx=$R
+done

@@ -32,7 +32,10 @@ OpenWrt 24.10-SNAPSHOT + QSDK 14.0，目标板 `spectrum_sbe1v1k`（IPQ9574，Li
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
 │   ├── usr/lib/sbe1v1k/wireless-defaults       实际逻辑（UCI marker 幂等）
 │   ├── etc/init.d/ethernet-macs                每次开机固定 eth1–eth3 的 MAC（START=15，先于 network）
-│   └── usr/lib/sbe1v1k/ethernet-macs           实际逻辑（eth0 base MAC +1..+3，见 §以太网端口 MAC）
+│   ├── usr/lib/sbe1v1k/ethernet-macs           实际逻辑（eth0 base MAC +1..+3，见 §以太网端口 MAC）
+│   ├── etc/init.d/sbe-wan-tx-watchdog          WAN TX 冻结看门狗入口（START=96）
+│   ├── usr/sbin/sbe-wan-tx-watchdog            实际逻辑（见 §WAN TX 冻结看门狗）
+│   └── etc/config/sbe_wan_tx_watchdog          看门狗配置（enabled/max_reboots/stall_seconds）
 └── scripts/
     ├── render-overlay.sh     把 files/ 整体复制进 sources/buildroot/files 并替换版本占位符
     ├── custom-packages.sh    应用文件 B + defconfig + 逐包反查
@@ -314,6 +317,35 @@ base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两
 `tmux`、`curl`、`tar`、`wget-ssl`、`ca-bundle`、`ca-certificates`、`kmod-br-netfilter`、
 `kmod-nft-socket`、`kmod-nft-tproxy`、`wireguard-tools`、`kmod-wireguard`。无线侧仍是
 `wpad-mesh-openssl-noextns`（见下节）。
+
+
+### WAN TX 冻结看门狗（2026-11-25，真机 NOT TESTED）
+
+持续 NAT 下载后 `eth1`（WAN，QCA8081 2.5G，SSDK port 5）的 **TX 方向会静默
+冻结**：载波在、速率 2500、RX 仍走，但 eth1 一个包都发不出去，上游和互联网
+全部不可达，只有重启能恢复。已取证的全部 in-band 手段（txmac 翻转、MAC
+流控位改写、PHY 关/开、`eth1` down/up 整口重建、QM flush、TM DEQ_DIS、QM
+时钟门控解除、PSCH TDM slot / L0/L1 flow map 同值重写）均无效；wedge 现场
+在 PPE 端口 TX 数据通路内部，软件不可达。完整证据见
+`docs/WAN-TX-WEDGE-2026-11-25.md`。
+
+兜底在 overlay：`/etc/init.d/sbe-wan-tx-watchdog`（`START=96`，自动 enable）
+拉起 `/usr/sbin/sbe-wan-tx-watchdog`。每 15 s 采样 `eth1` 的
+`carrier`/`tx_packets`/`rx_packets`；「载波在、有 IPv4 地址、RX 前进而 TX
+不动」连续累计 ≥ `stall_seconds`（默认 90 s）后，用 169.254.255.254 假邻居
+发 ARP 探针确认（探针只走链路层，不依赖上游）：tx 仍不动即确认冻结，取证
+到 `/etc/sbe-wan-tx-watchdog-evidence.log` 后 `reboot` 自愈。配置
+`/etc/config/sbe_wan_tx_watchdog`：
+
+- `enabled`（默认 1）：0 关闭；
+- `max_reboots`（默认 3）：30 分钟窗口内最多自动重启次数，超限只告警；
+- `stall_seconds`（默认 90，下限 60）：TX 冻结累计阈值。
+
+安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
+`/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读
+`/sys/kernel/debug/qca-nss-ppe/*`、`qca-nss-netfn/flowmgr/stats`、
+`ecm/ecm_db/*` 会把整机锁死到只能物理断电，看门狗不触碰这些路径。
+
 
 ## 无线加密模式
 

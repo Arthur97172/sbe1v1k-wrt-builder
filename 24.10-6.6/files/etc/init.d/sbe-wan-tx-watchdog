@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+# WAN eth1 TX 冻结看门狗启动入口。
+# 检测与自愈逻辑、为什么只能靠重启恢复，见
+# /usr/sbin/sbe-wan-tx-watchdog 顶部说明与
+# docs/WAN-TX-WEDGE-2026-11-25.md。
+#
+# START=96：晚于 network(20) 与无线默认值(95)；worker 自身每 15 s 采样，
+# 不阻塞 rcS。
+START=96
+STOP=04
+# 不要写 USE_PROCD=0：rc.common 用 [ -n "$USE_PROCD" ] 判分支，"0" 也是
+# 非空，会进入 procd 路径并把下面的 start() 覆盖成空的 start_service，
+# 开机时 worker 根本不会被拉起。非 procd 脚本唯一的正确写法是整行省略。
+
+start() {
+	/usr/sbin/sbe-wan-tx-watchdog >/dev/null 2>&1 &
+}
+
+stop() {
+	killall sbe-wan-tx-watchdog 2>/dev/null
+}
