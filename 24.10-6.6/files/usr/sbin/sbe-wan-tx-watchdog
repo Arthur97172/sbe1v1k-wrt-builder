@@ -96,7 +96,7 @@ reboots_allowed() {
 record_reboot() {
 	local now cnt
 	now=$(date +%s)
-	cnt=1
+	cnt=0
 	[ -r "$COUNT" ] && cnt=$(sed -n 2p "$COUNT" 2>/dev/null)
 	case "$cnt" in '' | *[!0-9]*) cnt=0 ;; esac
 	cnt=$((cnt + 1))

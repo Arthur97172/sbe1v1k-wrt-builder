@@ -76,6 +76,38 @@ uniphy/L1_SHP（0x45c000/0x45e000）寄存器读取同样会挂死 SSDK，禁止
   q208/COMP/mac_en/flush_cfg + packet_counter TX/DROP 行），然后 `reboot`。
 - 防止重启风暴：30 分钟窗口内最多 `max_reboots`（默认 3）次；超限仅
   CRITICAL 日志等待人工。`enabled=0` 可整体关闭。
+
+### 6.1 真机验收（2026-11-26，v130-1-d7c112b0，PASS）
+
+测试机刷 v130-1 镜像（`sysupgrade -n`）后，默认 ECM/SFE 全开，跑单流 NAT
+下载触发真实楔死（mode-2 指纹），看门狗全链路闭环：
+
+| 时间 | 事件 |
+| --- | --- |
+| 07:17:04 | 楔死：eth1 tx 冻结在 1,227,387，RX 仍缓慢前进 |
+| 07:18:41 | `SUSPECT`（uptime 445 s，TX 冻结累计 ≥90 s） |
+| 07:18:46 | `CONFIRMED`：ARP 探针前后 tx 不变 → 自动重启 |
+| 07:19:09 | 设备回网；WAN 下载 5 MB 正常（206） |
+
+`/etc/sbe-wan-tx-watchdog-evidence.log` 内容（原样）：
+
+```
+2026-11-26 07:18:41 [SUSPECT] uptime=445s tx=1227387 rx=6360806 carrier=1
+2026-11-26 07:18:46 [CONFIRMED] uptime=450s tx=1227387 rx=6360890 carrier=1
+speed=2500 carrier_changes=2 tx_errors=0 tx_dropped=0
+q208_ac=0x0 comp5=0x18 mac_en=0x73 flush_cfg=0x80000
+PORT_TX_COUNTER_TBL TX: ... 1227581(port=0005) ...
+```
+
+（顺手修掉本次验收暴露的计数 off-by-one：首次重启曾记成 2 次。）
+
+### 6.2 判定条件说明
+
+判定要求「RX 前进而 TX 冻结」，是为了避免在 WAN 完全空闲时误报。本轮
+楔死后的 RX 增量来自上游对丢失 ACK 的 TCP 重传，因此条件成立；如果现场
+一侧完全静默（无任何入向流量），stall 不会累计、看门狗保持沉默，等下一次
+有入向流量再判。这是预期行为。
+
 - 验收（待真机，设备恢复后）：人为触发楔死 → 看门狗应在 ~2 分钟内确认、
   落盘并重启；恢复后 WAN 正常；evidence 日志含 CONFIRMED 行。
 

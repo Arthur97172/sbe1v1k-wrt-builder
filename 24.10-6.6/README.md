@@ -319,7 +319,7 @@ base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两
 `wpad-mesh-openssl-noextns`（见下节）。
 
 
-### WAN TX 冻结看门狗（2026-11-25，真机 NOT TESTED）
+### WAN TX 冻结看门狗（2026-11-25，v130-1 真机 PASS 2026-11-26）
 
 持续 NAT 下载后 `eth1`（WAN，QCA8081 2.5G，SSDK port 5）的 **TX 方向会静默
 冻结**：载波在、速率 2500、RX 仍走，但 eth1 一个包都发不出去，上游和互联网
@@ -340,6 +340,11 @@ base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两
 - `enabled`（默认 1）：0 关闭；
 - `max_reboots`（默认 3）：30 分钟窗口内最多自动重启次数，超限只告警；
 - `stall_seconds`（默认 90，下限 60）：TX 冻结累计阈值。
+
+真机验收（2026-11-26，v130-1-d7c112b0）：单流 NAT 下载触发真实楔死
+（mode-2）后，07:18:41 判 `SUSPECT`、5 s 后 ARP 探针 `CONFIRMED`、自动
+重启，07:19:09 回网且 WAN 下载正常；evidence 日志含完整现场指纹。注意
+判定要求 RX 前进（有入向流量），WAN 完全静默时不触发，属预期设计。
 
 安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
 `/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读
