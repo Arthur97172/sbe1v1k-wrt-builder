@@ -65,6 +65,7 @@ ECM 报错；SSDK `PORT_TX_DROP_CNT_TBL` 为空（无丢包计数可查）。
 | 9 | **2 并发流持续 30 min soak**（18 s 突发 / 35 s 间隔，USB+WiFi 各一流） | **第 11 轮（≈9 min）楔死**——两条流同时归零、100% 丢包、TX 冻结 |
 | 10 | **单流持续 NAT 下载**（10 min 上限，USB 入口，无突发间隔） | **第 9 轮（≈4.3 min）楔死**——单流也触发 |
 | 11 | 满速单流 NAT 下载（15 s 采样，快速鉴别） | **第 6 轮（≈84 s、eth1 rx 1.28 GB）楔死**——速率越高挂得越快 |
+| 12 | 满速单流 NAT 下载，**eth1 TSO 关闭**（同上 probe） | **第 11 轮（≈2.75 min、eth1 rx 2.93 GB）仍楔死**——TSO 路径排除 |
 
 判定修正：**并发数不是决定性因素**。30 min soak 前 10 轮（10 次突发、约
 3.6 GB）全部稳定，第 11 轮仅 2 条流也中招；随后**单流**持续下载 4.3 分钟
@@ -81,15 +82,17 @@ ECM 报错；SSDK `PORT_TX_DROP_CNT_TBL` 为空（无丢包计数可查）。
 若干 GB 转发流量即有一次挂死概率」，速率扩大单位时间内的触发次数。三次
 楔死均发生在经 eth0 入口的下载转发期间，楔死前计数器与 ping 全正常。
 
-遏制手段候选（**未实测，需用户批准**）：关掉 eth1 的 TSO
-（`ethtool -K eth1 tso off`，重启即还原）。设备本身无 ethtool，本次已从
-本机构建树 `extracted/rootfs/usr/sbin/ethtool`（aarch64 musl）拷到设备
-`/tmp/ethtool` 完成只读取证：eth1 实测
-`tx-checksumming on, scatter-gather on, tx-scatter-gather-fraglist on,
-tcp-segmentation-offload on, GRO on, GSO off[requested on]`——即 TSO 与
-fraglist SG 都开着，与机理解读吻合。关 TSO 后网卡只收 MSS 小包，
->32 段路径整体消失，是区分「TSO/EDMA 路径」与「PCS/链路层」两块的最快
-实验；同时对用户也有直接价值（若有效即为现成规避方案）。
+遏制手段鉴别（2026-11-25 已实测，用户批准）：**关掉 eth1 的 TSO 不能阻止
+楔死**。`/tmp/ethtool -K eth1 tso off` 生效确认（`tx-tcp-segmentation: off`、
+软件 GSO 接手，之后网卡只收 MSS 小包，>32 段 TSO 路径整体消失），同一满速
+单流 probe 仍在 ≈2.75 min、eth1 rx 2.93 GB 时楔死（复现矩阵 #12）。楔死时
+补查：`ethtool -a eth1` 显示对端协商了 pause（RX/TX negotiated on）但
+`rx_pause`/`tx_pause`/`rx_overflow` 计数全 0，PHY 流控假设也不成立。
+**结论：TSO/EDMA 大包路径不是根因**；问题在这条转发链更底层的位置。
+
+下一个鉴别（不涉及换线）：纯 WiFi 入口持续下载 ≥4 GB——若同样楔死，
+说明问题在出口侧（PPE/端口 5 送包路径）；若干净，则锁定 eth0 入口
+（RTL8261N RX/GRO）一段。
 
 **证据目录**：`/tmp/sbe-flash/evidence-wan-dead/`（device-dump.txt 为首次楔死
 全量 dump：links/wan/routes/neigh/ssdk/dmesg/logread；wedge-3flow.txt 为第二次
@@ -117,25 +120,24 @@ fraglist SG 都开着，与机理解读吻合。关 TSO 后网卡只收 MSS 小�
   丢包、不停队列」，所以一旦 TX 完成环不再回收，内核不会报
   NETDEV WATCHDOG、计数器也不会动——与观察到的「静默冻结」完全一致。
 
-这条链与「必须重启才恢复（HW 挂死而非软件状态）」以及「只有经 eth0 GRO
-后的转发突发才触发」都吻合，可以作为下一步驱动层排查的主假设。另一条
-未排除的候选是 uniphy/QCA8081 PCS 族问题（down/up 后重 AN 到
-`phy/2500base-x` 仍不转发，与 [[eth0-usxgmii-an-boot-stall]] 同族现象）。
+这条链与「必须重启才恢复（HW 挂死而非软件状态）」吻合，曾作为主假设；
+但 **2026-11-25 关 TSO 实验（复现矩阵 #12）否定了它作为触发条件**：TSO
+关闭后硬件根本收不到 >32 段大包，楔死照旧。该源码分析保留作背景——它
+解释了厂商注释里「HW hangs up」确实存在，但本缺陷的触发点在别处。
 
 补充鉴别（2026-11-25 同场会话）：
 
-- 设备本机 3 并发 400 MB 上传（TCP GSO 同样产生 >32 段大包，直发 eth1、
-  不经 NAT）**未触发**；NAT 上传方向（USB 入口、~90 MB）也未触发。
-  说明「任何 >32 段 TSO 都会挂死硬件」过于简单：本地生成的大包与
-  转发路径上的 GRO+frag_list 大包在 EDMA TX 上走的是不同的描述符构造，
-  嫌疑更集中在**转发路径的 frag_list GSO**（或 conntrack/NAT 改写后的
-  GSO skb）进入 edma_tx 的路径，而非普通 TSO。
+- 设备本机 3 并发 400 MB 上传（直发 eth1、不经 NAT）**未触发**；NAT 上传
+  方向（USB 入口、~90 MB）也未触发。说明触发面在**下载方向转发**这条
+  特定链路上，而非泛化的 TX 负载。
+- TSO 关闭仍楔死、pause 计数全 0 → 排除 TSO/EDMA 大包路径与 PHY 流控。
 - 楔死与累计转发量相关但没有固定阈值（满速 84 s/1.28 GB 至慢速 9 min/3.6 GB
-  都会发生），不像单包形态问题，更像某种状态/计数耗尽或环形缓冲粘连；
-  下次定位优先查 EDMA TX 环描述符回收（TX NAPI 是否停跑）、以及 SSDK
-  端口 5 的寄存器状态（soak 楔死 dump 中 PORT_TX_COUNTER port=0005=
-  1,859,106 与内核 tx_packets=1,859,104 一致冻结，QUEUE_TX_COUNTER
-  queue=0208 同值）。
+  都会发生），不像单包形态问题，更像某种状态/计数耗尽或队列粘连。剩余
+  嫌疑集中在两处：① 出口侧——PPE 端口 5 出口队列（SOAK 楔死 dump 中
+  QUEUE_TX_COUNTER queue=0208 与 PORT_TX_COUNTER port=0005、内核
+  tx_packets 同值冻结，即 PPE 停摆而非 CPU 不发）；② 入口侧——eth0
+  （RTL8261N/EDMA RX/GRO）在持续下载下的运行期退化。WiFi 入口长跑
+  与 eth0 入口长跑对比可区分二者。
 
 ## 长稳（30 min soak）
 
@@ -168,11 +170,13 @@ conntrack、温度）；轮间 35 s。
      10 min soak 对照（需要用户批准刷回旧镜像）。
    - 只有 eth0 入口（USB 2.5G）触发，还是 eth2/eth3（qca8075）入口
      也会？→ 换线到 LAN 口做同条件对照（需要用户批准换线）。
-2. **加急鉴别：关 eth1 TSO**（`/tmp/ethtool -K eth1 tso off`，瞬态、重启
-   即还原；二进制已就位）。本次尝试被权限分类器拦截（远程写操作需用户
-   批准）。若关 TSO 后不再楔死，即锁定 TSO/EDMA 路径并得到现成规避方案。
-3. **驱动层定位（不改固件）**：按报告机理解读一节，先查 EDMA TX 环回收
-   与转发路径 frag_list GSO；EDMA 驱动 `tx_requeue_stop=1` 的静默丢包
+2. **TSO 鉴别（已完成，阴性）**：关 eth1 TSO 后楔死照旧（#12），排除
+   TSO/EDMA 大包路径。下一步鉴别：纯 WiFi 入口持续下载 ≥4 GB（区分
+   出口侧 PPE ↔ 入口侧 eth0）；之后视结果再做 eth2/eth3 入口对照
+   （需要用户批准换线）。
+3. **驱动层定位（不改固件）**：出口侧优先查 PPE 端口 5 出口队列停摆
+   （queue=0208 与 port=0005 同值冻结）；入口侧查 eth0 RX（EDMA RX 环/
+   GRO/RTL8261N 运行期退化）。EDMA 驱动 `tx_requeue_stop=1` 的静默丢包
    是次生因素，可考虑改成默认 0 让队列停住以暴露 NETDEV WATCHDOG。
 4. GPIO 41 探针计划的前置预检已在 v117-2 上通过，可按原计划择机执行
    （与本缺陷无关，独立推进）。
