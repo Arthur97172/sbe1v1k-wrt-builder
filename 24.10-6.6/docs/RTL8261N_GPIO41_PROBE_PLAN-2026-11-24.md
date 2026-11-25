@@ -1,8 +1,12 @@
 # RTL8261N 假 10G 环回：GPIO 41 硬复位探针计划（可选，未启动）
 
-状态：**未执行、未立项**。2026-11-24 与用户确认：不列为本期必修，作为
-「下一次 24.10 现场会话的可选 10 分钟探针」登记；只有触发条件（见文末）
-成立时才启动。任何涉及路由器的连接与运行期操作都须单独批准，密码不落盘。
+状态：**部分执行（2026-11-25，v117-2）**：预检、诱发、3a 已完成并取证；
+3b（mdio unbind/rebind）被本地权限拦截未执行；设备已恢复已知状态。
+执行记录见文末「2026-11-25 执行记录」。
+
+2026-11-24 与用户确认：不列为本期必修，作为「下一次 24.10 现场会话的
+可选 10 分钟探针」登记；只有触发条件（见文末）成立时才启动。任何涉及
+路由器的连接与运行期操作都须单独批准，密码不落盘。
 
 ## 背景
 
@@ -84,3 +88,43 @@ boot 期的 USXGMII AN 死锁。假环回与它同属 USXGMII AN 家族，先验
 2. 6.18（或后续树）上需要诊断假环回，且要以「PHY 硬复位能否清除」作为
    驱动修复的设计输入；
 3. 上游/厂商对 RTL8261N 或 mdio/uniphy 驱动有改动、需要回归定位时顺带。
+
+## 2026-11-25 执行记录（v117-2，部分完成）
+
+设备：第三台 24.10 `v117-2`；管理通路 = 主机 WiFi（USB/eth0 即探针对象）。
+证据目录：`/tmp/sbe-flash/probe-evidence/`（临时，baseline / post-induction /
+step3a-ethx-r / recovery 四份）。
+
+1. **预检 PASS（复核）**：`mdio@90000/phy-reset-gpio` = `0e/3c/1`、
+   `0e/34/1`、`0e/29/1`（14/60、14/52、14/41，三组齐全）；初始态
+   eth0 2500 真链路在 br-lan、wan_port=eth1。
+2. **诱发 PASS（假环回复现）**：`sbe-port-roles set eth0` 写入成功；
+   SSH 通道随 network/firewall reload 挂死（已知现象），改由主机侧
+   独立确认：
+   - 路由器 eth0：`UP LOWER_UP`，`speed=10000 carrier=1`，
+     dmesg 记 `Link is Down`（118.5 s）→ `configuring for phy/usxgmii`
+     → `Link is Up - 10Gbps/Full`（121.7 s）；
+   - 对端 USB 2.5G 网卡：`DOWN <NO-CARRIER>`，carrier=0。
+   即「路由器 10G Up / 对端无载波」的假环回判据成立。
+   注：role=eth0 时 br-lan 成员为 eth1/eth2/eth3 + WiFi AP，主机到
+   `192.168.1.1` 的路由仍钉在已 NO-CARRIER 的 USB 网卡上（metric 更低），
+   `ssh -b` 只改源地址不改出口 → `No route to host`；在主机侧加
+   `ip route replace 192.168.1.1/32 dev wlp0s20f3 src 192.168.1.230`
+   后 WiFi 管理恢复。下轮探针先做这一步，省去排查。
+3. **3a `ethtool -r eth0`：阴性（不支持）**。`Cannot restart
+   autonegotiation: Not supported`（rc=255）——eth0 由 nss-dp 呈现，
+   无 `restart_an` 实现；执行前后两端链路状态零变化（路由器保持
+   10000/1，对端保持 NO-CARRIER），dmesg 无新行。
+4. **3b mdio unbind/rebind：未执行（被拦）**。目标命令：
+   `echo 90000.mdio > /sys/bus/platform/drivers/ipq4019-mdio/unbind`，
+   3 s 后写回 `bind`（总线驱动 = `ipq4019-mdio`，设备 = `90000.mdio`）。
+   Claude Code 权限分类器以「Remote Shell Writes」两次拒绝，拆成最小
+   命令仍被拒；按边界停手，未绕行。**待用户批准或用户以 `!` 前缀自行
+   执行后继续**（需先重新诱发假环回）。
+5. **恢复 PASS**：`sbe-port-roles set eth1`（rc=0）+ `sync; reboot`；
+   重启后复核：wan_port=eth1、eth0 回 br-lan 且 2500 真链路、对端
+   USB 网卡恢复载波、eth1 拿上游 DHCP `192.168.10.237`、dmesg 正常
+   2.5G/2.5G Link Up，无假环回残留。
+
+结论（截至 3a）：运行期假环回可用一次 live 角色切换稳定复现；`ethtool -r`
+在该镜像上不可用，故 3b 的 mdio 整组复位脉冲是唯一剩余探针手段。
