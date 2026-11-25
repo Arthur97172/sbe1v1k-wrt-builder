@@ -61,7 +61,10 @@ true）时，先 `power_normal` 再重跑 `rtkphy_config_init()`，与开机路�
 ## 修复补丁（0032）
 
 `24.10-6.6/build/build-fixes/0032-rtl8261n-reinit-on-resume.patch`（tree
-模式，`patch -p1` 到 buildroot），SERIES 已登记。内容：`rtkphy_c45_resume`
+模式，`patch -p1` 到 buildroot），SERIES 已登记；`build/known-delta.conf` 已把
+`rtk_phy.c` 登记为有意改动，装配脚本第 11 步新增 `RTL8261N_RESUME_REINIT_OK`
+断言（首次装配 run 45610628174 因漏登记被指纹门禁拦下：UNEXPLAINED
+changed，exit 5）。内容：`rtkphy_c45_resume`
 在 `phydev->suspended` 为 true 时先 `rtk_phylib_c45_power_normal` 再调
 `rtkphy_config_init()`，并打一行 `phydev_info("RTL8261N: re-initializing
 after suspend")` 便于真机确认路径。本地装配树 dry-run 应用通过

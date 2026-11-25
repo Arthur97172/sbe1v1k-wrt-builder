@@ -511,6 +511,21 @@ grep -q '^	if (priv->led_polarity_mode == 0) {$' "$_qph" \
 	|| die 4 "0031 未生效：qca808x_config_init 里仍有无条件写极性的旧分支"
 logmsg "  QCA808X_LED_POLARITY_OK qca808x（极性保持复位默认）"
 
+# 0032：假环回修复。phylib 在 phy_stop() 时自动 suspend、把 PHY 断电；resume
+# 只清断电位，不重跑 rtkphy_config_init（MMD30 0x145 复位 + 固件 patch），铜缆
+# AN 永不恢复（路由器报 10G Up、对端 NO-CARRIER，只有重启能救）。0032 让
+# rtkphy_c45_resume 在 phydev->suspended 仍为 true（真从 suspend 恢复）时重做
+# config_init；开机首次 phy_start（从未 suspend，suspended=false）保持原样。
+# 断言条件行、调用与 dmesg 指纹都在，不能只靠指纹白名单把差异盖过去。
+_rph="$SRC/buildroot/qca/src/linux-6.6/drivers/net/phy/rtl8261n/rtk_phy.c"
+grep -q 'if (phydev->suspended) {' "$_rph" \
+	|| die 4 "0032 未生效：rtkphy_c45_resume 缺少 suspended 条件"
+grep -q 'return rtkphy_config_init(phydev);' "$_rph" \
+	|| die 4 "0032 未生效：resume 未调用 rtkphy_config_init"
+grep -q 'RTL8261N: re-initializing after suspend' "$_rph" \
+	|| die 4 "0032 未生效：缺少重初始化的 dmesg 指纹行"
+logmsg "  RTL8261N_RESUME_REINIT_OK rtl8261n（suspend 恢复后重做 config_init）"
+
 # 0022 去掉 mac80211.sh 里两行无条件 append：disable_iface_during_cac 与
 # athnewind 只有 qcn-app-extns 解析，而镜像用 noextns 变体，hostapd 会把它们
 # 当 unknown configuration item，整份配置 2 errors 后 add_iface 失败，三个
