@@ -72,6 +72,12 @@ after suspend")` 便于真机确认路径。本地装配树 dry-run 应用通过
 的补丁上下文必然匹配。本地树不完整（缺 include/asm-generic 多个头），
 未做单文件编译；编译验证交给 CI。
 
+2026-11-25 12:38Z：补登记后 sources 装配 run 45612492056 **PASS**，
+发布 `sources-v38`（tar.zst + SHA256SUMS + TREE-FINGERPRINT.json），
+`RTL8261N_RESUME_REINIT_OK` 断言与 `FINGERPRINT_MATCH` 均通过；同次提交
+的 24.10 构建 workflow 随本次 push 启动（source_tag=auto → sources-v38），
+约 3 小时。
+
 ## 待真机验证的判据
 
 1. 刷入带 0032 的新镜像，热启动 10 次 eth0 开机链路正常（回归）；
