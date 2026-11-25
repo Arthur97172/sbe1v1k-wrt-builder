@@ -1,0 +1,65 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] rtl8261n: phylib suspend 恢复后重跑 config_init
+
+现象（2026-11-25，24.10 v117-2 真机实证；本树驱动同源）：运行期角色
+切换（或任何一次管理员 `ip link set eth0 down/up`）之后，eth0 进入
+「假 10G 环回」——路由器侧 `Link is Up - 10Gbps/Full`（carrier=1），
+对端 2.5G 网卡 NO-CARRIER；ethtool -r、ethtool -s 强制 AN、BMCR 直写
+AN restart、ssdk_sh port autoNeg restart 全部无法恢复，只有重启能救。
+
+根因链条：nss-dp close/open 的 phylink_stop/start 触发 phylib 的
+phy_stop -> PHY_HALTED -> phy_suspend（驱动 .suspend = MMD1.0 bit11
+断电，rtk_phylib_c45_power_low）；phy_start 时 __phy_resume 只清断电位
+（rtk_phylib_c45_power_normal），不重跑驱动初始化。RTL8261N 在被断电
+再上电后，如果不重做 config_init 里的 MMD30 0x145 硬件复位与固件
+patch，铜缆 autoneg 引擎就再也起不来。
+
+修法：.resume 检测到本次确实从 suspend 恢复（phydev->suspended 仍为
+true；phy_suspend/__phy_resume 的置位时序保证这一点，见
+drivers/net/phy/phy_device.c）时，先 power_normal 再重跑
+rtkphy_config_init()，与开机路径一致；无 suspend 的 resume（开机首次
+phy_start）保持原逻辑。附带一行 phydev_info 便于真机确认路径被走到。
+
+本树为 24.10 build-fixes/0032 的移植：缺陷代码逐字相同，仅补丁路径
+与 24.10 不同（本树驱动位于 target/linux/generic/files/）。
+真机 NOT TESTED。
+
+--- a/target/linux/generic/files/drivers/net/phy/rtl8261n/rtk_phy.c
++++ b/target/linux/generic/files/drivers/net/phy/rtl8261n/rtk_phy.c
+--- a/target/linux/generic/files/drivers/net/phy/rtl8261n/rtk_phy.c
++++ b/target/linux/generic/files/drivers/net/phy/rtl8261n/rtk_phy.c
+@@ -163,11 +163,32 @@
+ 
+ static int rtkphy_c45_resume(struct phy_device *phydev)
+ {
++    int ret;
++
+ #ifndef CONFIG_MACH_REALTEK_RTL
+-    return rtk_phylib_c45_power_normal(phydev);
++    ret = rtk_phylib_c45_power_normal(phydev);
+ #else
+-    return 0;
++    ret = 0;
+ #endif
++
++    if (ret)
++        return ret;
++
++    /*
++     * phylib power-cycles the PHY on every phy_stop()/phy_start() cycle
++     * (PHY_HALTED -> phy_suspend -> here), e.g. when netifd re-opens the
++     * port during a live WAN/LAN role switch.  After such a power cycle
++     * the RTL8261N never brings its copper autonegotiation back up unless
++     * the hardware reset and firmware patch of config_init() are re-run:
++     * AN restarts through BMCR / ethtool -s / ssdk_sh all leave the link
++     * dead until a full reboot (verified on SBE1V1K, 2026-11-25).
++     */
++    if (phydev->suspended) {
++        phydev_info(phydev, "RTL8261N: re-initializing after suspend\n");
++        return rtkphy_config_init(phydev);
++    }
++
++    return 0;
+ }
+ 
+ static int rtkphy_c45_config_aneg(struct phy_device *phydev)

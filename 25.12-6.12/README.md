@@ -93,6 +93,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0032-0041-…patch      内核/无线/LuCI/风扇补丁（PCS 时钟复位、radio 命名、LuCI 排序、PWM LED）
 │   ├── 0042-version-number-snapshot.patch                   VERSION_NUMBER 兜底值改 SNAPSHOT（概览版本串）
 │   ├── 0043-luci-version-drop-detached-head.patch           LuCI 版本串去掉 detached HEAD 伪分支
+│   ├── 0044-rtl8261n-reinit-on-resume.patch                 RTL8261N 假环回：suspend 恢复后重跑 config_init（24.10 0032 移植）
 │   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
