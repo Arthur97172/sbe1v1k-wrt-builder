@@ -1,8 +1,9 @@
 # WAN eth1 TX 冻结（wedge）取证与兜底方案 — 2026-11-25
 
-状态：**根因定位到 PPE 端口 TX 数据通路（软件不可达层）；兜底看门狗已进
-overlay，真机 NOT TESTED**。本文件记录 2026-11-25 全部真机取证，供后续
-追查、厂商上报与看门狗验收使用。
+状态：**根因定位到 PPE 端口 TX 数据通路；2026-11-26 找到有效 in-band 复位
+（自协商速率变化触发 `ssdk_port_clock_reset`），看门狗 v2 已实现「先原地
+复位、失败才重启」并真机 PASS**。本文件记录 2026-11-25 全部真机取证与
+2026-11-26 复位实验，供后续追查与厂商上报使用。
 
 ## 1. 现象
 
@@ -64,7 +65,7 @@ overlay，真机 NOT TESTED**。本文件记录 2026-11-25 全部真机取证，
 ——2026-11-25 实测读这些路径后整机失联（管理口无 ARP 响应），只能物理断电。
 uniphy/L1_SHP（0x45c000/0x45e000）寄存器读取同样会挂死 SSDK，禁止。
 
-## 6. 兜底：WAN TX 冻结看门狗（本版新增）
+## 6. 兜底：WAN TX 冻结看门狗（v131 起先原地复位，失败才重启）
 
 - 入口：`/etc/init.d/sbe-wan-tx-watchdog`（START=96，`include/rootfs.mk`
   自动 enable）；worker：`/usr/sbin/sbe-wan-tx-watchdog`；
@@ -73,9 +74,12 @@ uniphy/L1_SHP（0x45c000/0x45e000）寄存器读取同样会挂死 SSDK，禁止
   ≥90 s → 169.254.255.254 假邻居 ARP 探针（只走链路层）确认；探针发不
   出去即确认冻结。
 - 动作：取证写 `/etc/sbe-wan-tx-watchdog-evidence.log`（sysfs 计数 +
-  q208/COMP/mac_en/flush_cfg + packet_counter TX/DROP 行），然后 `reboot`。
-- 防止重启风暴：30 分钟窗口内最多 `max_reboots`（默认 3）次；超限仅
-  CRITICAL 日志等待人工。`enabled=0` 可整体关闭。
+  q208/COMP/mac_en/flush_cfg + packet_counter TX/DROP 行），然后按 §6.2
+  原地做一次端口时钟复位；复位成功记 `HEALED` 继续监控，失败记
+  `HEAL-FAILED` 并 `reboot`。
+- 防止自愈风暴：30 分钟窗口内最多 `max_heals`（默认 3）次原地复位、
+  `max_reboots`（默认 3）次重启；超限仅 CRITICAL 日志等待人工。
+  `heal=0` 关闭原地复位（退回纯重启），`enabled=0` 整体关闭。
 
 ### 6.1 真机验收（2026-11-26，v130-1-d7c112b0，PASS）
 
@@ -101,7 +105,52 @@ PORT_TX_COUNTER_TBL TX: ... 1227581(port=0005) ...
 
 （顺手修掉本次验收暴露的计数 off-by-one：首次重启曾记成 2 次。）
 
-### 6.2 判定条件说明
+### 6.2 原地复位自愈（v131 起，2026-11-26 真机验证）
+
+楔死态不再只能靠重启恢复。SSDK 在「链路 up 且协商速率与旧速率不同」时会
+执行 `adpt_hppe_port_speed_change_port_clock_reset()`（adpt_hppe_portctrl.c:4716），
+即 `ssdk_port_clock_reset`：XGMAC + 端口 TX/RX 硬复位。此前所有失败的
+in-band 手段都不包含这个复位。用自协商广告位图制造两次确定的速率变化：
+
+```
+ssdk_sh port autoAdv set 5 0x230   # 1000T_FD|PAUSE|ASY_PAUSE
+ssdk_sh port autoNeg restart 5     # 2500 -> 1000（第一次端口时钟复位）
+ssdk_sh port autoAdv set 5 0x123f  # QCA8081 出场广告（实测值）
+ssdk_sh port autoNeg restart 5     # 1000 -> 2500（第二次端口时钟复位）
+```
+
+真机结果（设备 3，v130-1，ECM engine=auto，看门狗停用）：
+
+| 轮次 | 楔死 | 收窄到 1G 后 | 恢复 2.5G 后 | 主机 NAT |
+| --- | --- | --- | --- | --- |
+| 1 | 07:47 tx=6038500 冻结，ping 网关 FAIL | speed=1000，tx 复活，ping OK | speed=2500，tx 前进 | HTTP 206 / 5 MB |
+| 2 | 07:52 tx=7344592 冻结，ping 网关 FAIL | speed=1000，tx 复活，ping OK | speed=2500，tx 前进 | HTTP 206 / 5 MB |
+
+每次复位链路中断约 8–10 s，无需重启。看门狗 v2 已内置该序列
+（`option heal '1'`）：CONFIRMED 后先原地复位并用 ARP 探针再确认，
+成功记 `HEALED` 继续监控；复位失败（或 30 分钟内超过 `max_heals`）
+才回退到重启。注意楔死在高负载下数分钟内可复发，复位是按次自愈而非
+杜绝根因。
+
+看门狗 v2 自动路径真机验收（同一台设备，脚本 `/tmp/wd2` = 本次提交）：
+
+| 时间 | 事件 |
+| --- | --- |
+| 07:55:10 | v2 启动（阈值 90 s，复位上限 3，重启上限 3） |
+| 07:59:43 | 单流 NAT 下载触发楔死 |
+| 08:01:10 | `SUSPECT`（uptime 2521 s，tx=9331432 冻结） |
+| 08:01:15 | `CONFIRMED`（ARP 探针发不出去） |
+| 08:01:31 | `HEALED`（speed=2500，tx 已推进；复位耗时 16 s） |
+
+复位后主机经 NAT 下载 HTTP 206 / 5 MB 正常；`/etc/sbe-wan-tx-watchdog.heal`
+记录首次复位，evidence 日志含 SUSPECT/CONFIRMED/HEALED 三行。
+
+第二次自动复位后紧接着做持续负载 soak：3 轮单流下载各 4 GB（共 12 GB、
+约 10 分钟，13–40 MB/s），**全程零楔死**，看门狗未再触发。此前楔死在持续
+负载下 1–3 分钟即复发，说明端口时钟复位不只是逐次救活，复位后的端口状态
+在相当长时间内是健康的（单次观测，未做长跑统计）。
+
+### 6.3 判定条件说明
 
 判定要求「RX 前进而 TX 冻结」，是为了避免在 WAN 完全空闲时误报。本轮
 楔死后的 RX 增量来自上游对丢失 ACK 的 TCP 重传，因此条件成立；如果现场
@@ -113,11 +162,14 @@ PORT_TX_COUNTER_TBL TX: ... 1227581(port=0005) ...
 
 ## 7. 未决与下一步
 
-1. 测试机于 16:49 因 debugfs 读挂死，需人工断电重启（设备号 3，
-   192.168.1.1）。
-2. 设备恢复后：控制实验（默认 0x73、NOLOG=1）确认基线楔死时间分布；
-   ECM/SFE `tier=wired` 对比实验（判断 flow offload 是否相关）。
-3. 若定位到可规避配置，优先发布配置修复；否则看门狗随下一版 24.10 发布，
-   并在 release notes 中如实写明"自动重启兜底"。
+1. 看门狗 v2（先原地复位、失败才重启）随下一版 24.10 发布；release notes
+   写成"TX 冻结时原地端口复位自愈，复位失败才自动重启"。
+2. 根因仍在 PPE 端口 TX 数据通路内部；触发因素已锁定 ECM/PPE flow
+   offload（A/B/A），但尚无预防手段。后续若想杜绝复发，方向是 QM/PPE
+   队列与端口 TX 通路的更深层配置（需 SSDK/PPE 寄存器级证据，楔死态只
+   可读安全路径，见 §5）。
+3. 高负载下楔死数分钟内可复发：看门狗按次复位（`max_heals` 限流），
+   单次中断 8–16 s；持续大流量场景下用户会感知周期性短暂断流，需在
+   release notes 说明。
 4. 25.12-6.12 / 6.18 尚未观察到同类楔死（6.18 10 分钟 NAT 压测 PASS），
-   暂不移植看门狗；一旦现场复现再移植。
+   暂不移植看门狗；一旦现场复现再移植（复位序列与看门狗 v2 可直接复用）。

@@ -3,21 +3,24 @@
 #
 # 背景：持续 NAT 下载后 eth1（WAN，QCA8081 2.5G，SSDK port 5）TX 侧会静默
 # 冻结——载波在、速率 2500、RX 仍在走，但 eth1 一个包都发不出去，上游和
-# 互联网全部不可达。已取证的全部 in-band 自愈手段都无效：txmac 翻转、
-# flowctrl 位改写、PHY 关/开、eth1 down/up 整口重建、QW flush、TM DEQ_DIS、
-# QM 时钟门控解除、PSCH TDM slot / L0/L1 flow map 同值重写，全部不能恢复，
-# 只有整机重启有效。两组指纹交替出现（q208 积压 + COMP p5 归零；或 q208
-# 空、COMP 健康但 PPE 吞包），均位于 PPE 端口 TX 数据通路内部，软件不可达。
+# 互联网全部不可达。大部分 in-band 手段无效（txmac 翻转、flowctrl 位改写、
+# PHY 关/开、eth1 down/up 整口重建、QM flush、TM DEQ_DIS、QM 时钟门控、
+# PSCH TDM slot / L0/L1 flow map 同值重写）。2026-11-26 真机验证：让链路
+# 以不同速率重新协商（收窄自协商广告到 1G 再恢复 2.5G）会让 SSDK 在
+# 「链路 up 且速率变化」时执行 ssdk_port_clock_reset（XGMAC + 端口 TX/RX
+# 硬复位），楔死态 TX 立即复活，2/2 次成功，无需整机重启。
 #
 # 因此做有界自愈：检测到「RX 持续推进而 TX 冻结」并用自己的 ARP 探针确认
-# 后，取证、落盘、重启。重启上限见 /etc/config/sbe_wan_tx_watchdog，防止
-# 重启风暴。
+# 后，先取证，再原地做一次端口时钟复位（收窄广告 -> 等 1G -> 恢复广告 ->
+# 等 2.5G -> ARP 探针再确认）。复位成功则记录 HEALED 继续监控；复位失败
+# 才回退到重启。重启/复位次数上限见 /etc/config/sbe_wan_tx_watchdog，防止
+# 反复自愈。
 #
 # 判定：
 #   每 15 s 采样 eth1 的 carrier / tx_packets / rx_packets；
 #   carrier=1、eth1 有 IPv4 地址、tx 不增且 rx 增量 >0，连续累计 >=90 s
 #   判为可疑；随后向 169.254.255.254（假邻居）发 ARP 探针：
-#   若探针前后 tx_packets 仍不动 -> 确认冻结 -> 重启。
+#   若探针前后 tx_packets 仍不动 -> 确认冻结 -> 复位/重启。
 #   探针把 tx 推动了 -> 误报，清零继续。
 # 探针只依赖链路层 ARP，不需要上游/互联网可用。
 #
@@ -28,6 +31,8 @@
 #
 # 配置：/etc/config/sbe_wan_tx_watchdog
 #   option enabled '1'            # 0 关闭
+#   option heal '1'               # 1 先原地复位，0 直接重启
+#   option max_heals '3'          # 30 分钟窗口内最多原地复位次数
 #   option max_reboots '3'        # 30 分钟窗口内最多自动重启次数
 #   option stall_seconds '90'     # TX 冻结累计阈值
 
@@ -38,8 +43,17 @@ IF=${SBE_TXWD_IF:-eth1}
 INTERVAL=15
 EVIDENCE=/etc/sbe-wan-tx-watchdog-evidence.log
 COUNT=/etc/sbe-wan-tx-watchdog.count
+HEALCOUNT=/etc/sbe-wan-tx-watchdog.heal
 PROBE_IP=169.254.255.254
 PROBE_MAC=02:00:5e:00:53:02
+
+# 复位用 SSDK 端口与自协商广告位图（FAL_PHY_ADV_* 位）。
+# full 为 QCA8081 出场广告（ssdk_sh port autoAdv get 5 实测）：
+#   2500T_FD|1000T_FD|100TX_FD|100TX_HD|10T_HD|10T_FD|PAUSE|ASY_PAUSE
+# narrow 只保留 1000T_FD|PAUSE|ASY_PAUSE，用于制造一次确定的速率变化。
+SSDK_PORT=${SBE_TXWD_PORT:-5}
+ADV_FULL=0x123f
+ADV_NARROW=0x230
 
 log() {
 	logger -t sbe-wan-tx-watchdog "$*"
@@ -59,9 +73,17 @@ enabled=$(uci -q get $CONF.main.enabled)
 [ -n "$enabled" ] || enabled=1
 [ "$enabled" = 1 ] || exit 0
 
+heal_enabled=$(uci -q get $CONF.main.heal)
+[ -n "$heal_enabled" ] || heal_enabled=1
+
 max=$(uci -q get $CONF.main.max_reboots)
 case "$max" in
 '' | *[!0-9]*) max=3 ;;
+esac
+
+max_heals=$(uci -q get $CONF.main.max_heals)
+case "$max_heals" in
+'' | *[!0-9]*) max_heals=3 ;;
 esac
 
 stall_need=$(uci -q get $CONF.main.stall_seconds)
@@ -72,35 +94,39 @@ esac
 
 [ -d "/sys/class/net/$IF" ] || exit 0
 
-# 重启计数：30 分钟窗口内超限就只告警不重启。上次重启时间存在
-# $COUNT 第一行，第二行是窗口内已重启次数。
-reboots_allowed() {
-	local now last cnt
+# 计数文件：第一行上次动作时间，第二行 30 分钟窗口内次数。
+# reboots_allowed / heals_allowed 超限时只告警不动作。
+count_check() {
+	local file limit label now last cnt
+	file=$1
+	limit=$2
+	label=$3
 	now=$(date +%s)
 	last=0
 	cnt=0
-	[ -r "$COUNT" ] && {
-		read -r last <"$COUNT"
-		cnt=$(sed -n 2p "$COUNT" 2>/dev/null)
+	[ -r "$file" ] && {
+		read -r last <"$file"
+		cnt=$(sed -n 2p "$file" 2>/dev/null)
 	}
 	case "$last" in '' | *[!0-9]*) last=0 ;; esac
 	case "$cnt" in '' | *[!0-9]*) cnt=0 ;; esac
 	if [ $((now - last)) -gt 1800 ]; then
 		cnt=0
 	fi
-	[ "$cnt" -lt "$max" ] && return 0
-	log "CRITICAL: TX 冻结但已达重启上限（${cnt}/${max}，30 分钟内）；不再自动重启，等待人工处理"
+	[ "$cnt" -lt "$limit" ] && return 0
+	log "CRITICAL: $label 已达上限（${cnt}/${limit}，30 分钟内），不再自动执行"
 	return 1
 }
 
-record_reboot() {
-	local now cnt
+count_bump() {
+	local file now cnt
+	file=$1
 	now=$(date +%s)
 	cnt=0
-	[ -r "$COUNT" ] && cnt=$(sed -n 2p "$COUNT" 2>/dev/null)
+	[ -r "$file" ] && cnt=$(sed -n 2p "$file" 2>/dev/null)
 	case "$cnt" in '' | *[!0-9]*) cnt=0 ;; esac
 	cnt=$((cnt + 1))
-	printf '%s\n%s\n' "$now" "$cnt" >"$COUNT"
+	printf '%s\n%s\n' "$now" "$cnt" >"$file"
 }
 
 has_ipv4() {
@@ -114,7 +140,7 @@ snap() {
 }
 
 # ARP 探针：把假邻居钉在 eth1 上再 ping，内核必须为它发出 ARP 请求
-# （走 eth1 的 TX），不需要任何上游可用。
+# （走 eth1 的 TX），不需要任何上游可用。返回 0 表示 TX 仍冻结。
 probe_tx() {
 	local before after
 	snap
@@ -128,7 +154,43 @@ probe_tx() {
 	[ -n "$before" ] && [ -n "$after" ] && [ "$before" = "$after" ]
 }
 
-log "启动：if=$IF 间隔=${INTERVAL}s 阈值=${stall_need}s 重启上限=${max}"
+speed_now() {
+	cat "/sys/class/net/$IF/speed" 2>/dev/null
+}
+
+# wait_speed <Mbps> <秒>：等到 eth1 报告目标速率，成功返回 0。
+wait_speed() {
+	local want=$1 deadline=$2 s
+	s=$(speed_now)
+	[ "$s" = "$want" ] && return 0
+	while [ "$deadline" -gt 0 ]; do
+		sleep 1
+		deadline=$((deadline - 1))
+		s=$(speed_now)
+		[ "$s" = "$want" ] && return 0
+	done
+	return 1
+}
+
+# heal_tx：原地端口时钟复位。先收窄自协商广告让链路降速，再恢复，
+# 两次速率变化都会让 SSDK 复位 MAC 与端口 TX/RX。无论中途成败都尝试
+# 恢复广告；最后用 ARP 探针确认 TX 复活。成功返回 0。
+heal_tx() {
+	command -v ssdk_sh >/dev/null 2>&1 || return 1
+
+	ssdk_sh port autoAdv set "$SSDK_PORT" "$ADV_NARROW" >/dev/null 2>&1
+	ssdk_sh port autoNeg restart "$SSDK_PORT" >/dev/null 2>&1
+	wait_speed 1000 15
+	ssdk_sh port autoAdv set "$SSDK_PORT" "$ADV_FULL" >/dev/null 2>&1
+	ssdk_sh port autoNeg restart "$SSDK_PORT" >/dev/null 2>&1
+	wait_speed 2500 15
+	sleep 2
+	# probe_tx 返回 0（TX 仍冻结）即复位失败。
+	probe_tx && return 1
+	return 0
+}
+
+log "启动：if=$IF 间隔=${INTERVAL}s 阈值=${stall_need}s 复位=${heal_enabled} 复位上限=${max_heals} 重启上限=${max}"
 
 prev_tx=
 prev_rx=
@@ -167,13 +229,33 @@ tx_dropped=$(cat /sys/class/net/$IF/statistics/tx_dropped 2>/dev/null)"
 					grep -E 'PORT_TX_COUNTER|QUEUE_TX_COUNTER|DROP_CPU' /sys/ssdk/packet_counter 2>/dev/null
 				}
 			} >>"$EVIDENCE" 2>/dev/null
-			if reboots_allowed; then
-				record_reboot
-				log "TX 冻结已确认（tx=$T 不动，ARP 探针发不出去）；取证已落盘，重启自愈"
-				sync
-				sleep 1
-				reboot
-				sleep 60
+			healed=0
+			heal_tried=0
+			if [ "$heal_enabled" = 1 ] && count_check "$HEALCOUNT" "$max_heals" "原地复位"; then
+				heal_tried=1
+				count_bump "$HEALCOUNT"
+				log "TX 冻结已确认（tx=$T 不动）；尝试原地端口时钟复位"
+				if heal_tx; then
+					healed=1
+				fi
+				snap
+				[ "$healed" = 1 ] && {
+					ev "HEALED" "$T" "$R" "$C"
+					log "原地复位成功：speed=$(speed_now) tx=$T 已恢复"
+				}
+			fi
+			if [ "$healed" = 0 ]; then
+				[ "$heal_tried" = 1 ] && ev "HEAL-FAILED" "$T" "$R" "$C"
+				[ "$heal_enabled" = 1 ] && [ "$heal_tried" = 0 ] &&
+					ev "HEAL-SKIP" "$T" "$R" "$C"
+				if count_check "$COUNT" "$max" "自动重启"; then
+					count_bump "$COUNT"
+					log "原地复位未恢复 TX；取证已落盘，重启自愈"
+					sync
+					sleep 1
+					reboot
+					sleep 60
+				fi
 			fi
 		else
 			ev "PROBE-OK" "$T" "$R" "$C"

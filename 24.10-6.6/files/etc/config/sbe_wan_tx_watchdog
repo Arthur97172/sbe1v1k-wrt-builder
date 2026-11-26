@@ -1,4 +1,6 @@
 config sbe_wan_tx_watchdog 'main'
 	option enabled '1'
+	option heal '1'
+	option max_heals '3'
 	option max_reboots '3'
 	option stall_seconds '90'

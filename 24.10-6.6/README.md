@@ -319,32 +319,46 @@ base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两
 `wpad-mesh-openssl-noextns`（见下节）。
 
 
-### WAN TX 冻结看门狗（2026-11-25，v130-1 真机 PASS 2026-11-26）
+### WAN TX 冻结看门狗（v2，2026-11-26 真机 PASS：原地复位自愈）
 
 持续 NAT 下载后 `eth1`（WAN，QCA8081 2.5G，SSDK port 5）的 **TX 方向会静默
 冻结**：载波在、速率 2500、RX 仍走，但 eth1 一个包都发不出去，上游和互联网
-全部不可达，只有重启能恢复。已取证的全部 in-band 手段（txmac 翻转、MAC
-流控位改写、PHY 关/开、`eth1` down/up 整口重建、QM flush、TM DEQ_DIS、QM
-时钟门控解除、PSCH TDM slot / L0/L1 flow map 同值重写）均无效；wedge 现场
-在 PPE 端口 TX 数据通路内部，软件不可达。完整证据见
-`docs/WAN-TX-WEDGE-2026-11-25.md`。
+全部不可达。多数 in-band 手段（txmac 翻转、MAC 流控位改写、PHY 关/开、
+`eth1` down/up 整口重建、QM flush、TM DEQ_DIS、QM 时钟门控解除、PSCH TDM
+slot / L0/L1 flow map 同值重写）均无效；但 2026-11-26 真机找到唯一有效
+复位：让链路以不同速率重新协商（收窄自协商广告到 1G 再恢复 2.5G），SSDK
+会在「链路 up 且速率变化」时执行 `ssdk_port_clock_reset`（XGMAC + 端口
+TX/RX 硬复位），楔死态 TX 立即复活，2/2 次成功。完整证据见
+`docs/WAN-TX-WEDGE-2026-11-25.md` §6.2。
 
-兜底在 overlay：`/etc/init.d/sbe-wan-tx-watchdog`（`START=96`，自动 enable）
-拉起 `/usr/sbin/sbe-wan-tx-watchdog`。每 15 s 采样 `eth1` 的
+看门狗在 overlay：`/etc/init.d/sbe-wan-tx-watchdog`（`START=96`，自动
+enable）拉起 `/usr/sbin/sbe-wan-tx-watchdog`。每 15 s 采样 `eth1` 的
 `carrier`/`tx_packets`/`rx_packets`；「载波在、有 IPv4 地址、RX 前进而 TX
 不动」连续累计 ≥ `stall_seconds`（默认 90 s）后，用 169.254.255.254 假邻居
 发 ARP 探针确认（探针只走链路层，不依赖上游）：tx 仍不动即确认冻结，取证
-到 `/etc/sbe-wan-tx-watchdog-evidence.log` 后 `reboot` 自愈。配置
+到 `/etc/sbe-wan-tx-watchdog-evidence.log`，**先原地做一次端口时钟复位**
+（`ssdk_sh port autoAdv/autoNeg`：广告收窄到 1G → 恢复 2.5G → ARP 探针再
+确认），成功记 `HEALED` 继续监控；复位失败或超限才 `reboot`。配置
 `/etc/config/sbe_wan_tx_watchdog`：
 
 - `enabled`（默认 1）：0 关闭；
+- `heal`（默认 1）：0 退回纯重启模式；
+- `max_heals`（默认 3）：30 分钟窗口内最多原地复位次数，超限转重启路径；
 - `max_reboots`（默认 3）：30 分钟窗口内最多自动重启次数，超限只告警；
 - `stall_seconds`（默认 90，下限 60）：TX 冻结累计阈值。
 
-真机验收（2026-11-26，v130-1-d7c112b0）：单流 NAT 下载触发真实楔死
-（mode-2）后，07:18:41 判 `SUSPECT`、5 s 后 ARP 探针 `CONFIRMED`、自动
-重启，07:19:09 回网且 WAN 下载正常；evidence 日志含完整现场指纹。注意
-判定要求 RX 前进（有入向流量），WAN 完全静默时不触发，属预期设计。
+真机验收（2026-11-26）：
+
+- v1 重启兜底（v130-1-d7c112b0）：07:18:41 `SUSPECT` → `CONFIRMED` → 自动
+  重启 → 07:19:09 回网；
+- v2 原地复位：手动序列 2/2 成功（中断仅 8–10 s）；看门狗自动路径两次
+  PASS（07:59:43 楔死 → 08:01:31 `HEALED` 16 s；08:06:56 楔死 →
+  08:08:46 `HEALED` 15 s），2500M 满速恢复、主机 NAT 下载 206，无需重启；
+  第二次复位后紧接 12 GB 持续下载 soak 零楔死。
+
+注意判定要求 RX 前进（有入向流量），WAN 完全静默时不触发，属预期设计；
+高负载下楔死数分钟内可复发，看门狗按次复位（计数上限见 `max_heals`），
+根因仍在 PPE 端口 TX 数据通路。
 
 安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
 `/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读
