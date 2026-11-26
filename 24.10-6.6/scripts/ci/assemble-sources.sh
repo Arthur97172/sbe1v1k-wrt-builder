@@ -526,6 +526,17 @@ grep -q 'RTL8261N: re-initializing after suspend' "$_rph" \
 	|| die 4 "0032 未生效：缺少重初始化的 dmesg 指纹行"
 logmsg "  RTL8261N_RESUME_REINIT_OK rtl8261n（suspend 恢复后重做 config_init）"
 
+# 0033：FSE 表项 metadata 由 OR 改为赋值。flow->fse_metadata 每次 add 都在
+# 零初始化结构上重建，而 HAL 槽位复用时不保证为零——OR 会把上一条规则的
+# 残余 VP/macid 位并入新规则（楔死态 FST metadata 0x542，vp_num=66 应为
+# 64），有线 WAN port5 TX 取包通路随之楔死。断言赋值行在、OR 旧写法不在。
+_hrx="$SRC/buildroot/qca/src/mac80211/wlan-open/backports-6.1-9a0dddfb3/drivers/net/wireless/ath/ath12k/wifi7/hal_rx.c"
+grep -q 'hal_fse->metadata = flow->fse_metadata;' "$_hrx" \
+	|| die 4 "0033 未生效：hal_rx.c 的 FSE metadata 不是赋值"
+! grep -q 'hal_fse->metadata |= flow->fse_metadata;' "$_hrx" \
+	|| die 4 "0033 未生效：hal_rx.c 里仍有 metadata |= 旧写法"
+logmsg "  FSE_METADATA_ASSIGN_OK ath12k（metadata 赋值，清掉复用槽位残余 VP 位）"
+
 # 0022 去掉 mac80211.sh 里两行无条件 append：disable_iface_during_cac 与
 # athnewind 只有 qcn-app-extns 解析，而镜像用 noextns 变体，hostapd 会把它们
 # 当 unknown configuration item，整份配置 2 errors 后 add_iface 失败，三个
