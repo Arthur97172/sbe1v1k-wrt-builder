@@ -6,9 +6,19 @@
 # 互联网全部不可达。大部分 in-band 手段无效（txmac 翻转、flowctrl 位改写、
 # PHY 关/开、eth1 down/up 整口重建、QM flush、TM DEQ_DIS、QM 时钟门控、
 # PSCH TDM slot / L0/L1 flow map 同值重写）。2026-11-26 真机验证：让链路
-# 以不同速率重新协商（收窄自协商广告到 1G 再恢复 2.5G）会让 SSDK 在
-# 「链路 up 且速率变化」时执行 ssdk_port_clock_reset（XGMAC + 端口 TX/RX
-# 硬复位），楔死态 TX 立即复活，2/2 次成功，无需整机重启。
+# 以不同速率重新协商（收窄自协商广告到 1G 再恢复 2.5G）会让楔死 TX 立即
+# 复活，2/2 次成功，无需整机重启。
+#
+# 机制（2026-11-26 源码复核修正）：port5 是 QGMAC + uniphy1 SGMII_CHANNEL0
+# （switch_mac_mode1=0x0f、phy-mode "sgmii"），不是 USXGMII；
+# adpt_hppe_port_speed_change_port_clock_reset 对 SGMII 分支是空操作。
+# 速率变化实际经过 adpt_hppe_sgmii_speed_clock_set ->
+# ssdk_port_speed_clock_set（NSSCC port5 RX/TX 时钟重设）+
+# ssdk_uniphy1_clock_source_set（uniphy1 TX/RX 时钟源 mux 切到原生时钟）。
+# TX 恰在「降到 1G」那一步恢复，卡点定位在 GMAC TX FIFO 与 uniphy1
+# SGMII+ 速率适配之间的 TX 方向（时钟来自 NSSCC port5 TX clock）。
+# 另注意 adpt_hppe_sgmii_speed_clock_set 没有 FAL_SPEED_2500 分支，
+# 2.5G SGMII+ 在 SSDK 时钟表里本就不完整。
 #
 # 因此做有界自愈：检测到「RX 持续推进而 TX 冻结」并用自己的 ARP 探针确认
 # 后，先取证，再原地做一次端口时钟复位（收窄广告 -> 等 1G -> 恢复广告 ->
@@ -28,6 +38,24 @@
 #   - 只能读 sysfs netdev stats、/sys/ssdk/packet_counter、ssdk_sh debug reg；
 #   - 禁止读 /sys/kernel/debug/qca-nss-ppe/*、qca-nss-netfn/flowmgr/stats、
 #     ecm/ecm_db/*（会把整机锁死到只能物理断电）。
+#   - MAC 内部调试空间没有驱动支持，只能间接读：写 MAC_DBG_ADDR(0x1820)
+#     选页、读 MAC_DBG_DATA(0x1824)。这是快照里唯一的写操作（只动调试索引，
+#     不碰 MAC 配置寄存器）；每次 ssdk_sh 调用带 5 s 超时，挂住即中止 sweep。
+#
+# 取证（Stage 1，2026-11-26 起）：标签化寄存器快照追加到 evidence：
+#   mac   port5 GMAC：ENABLE 0x1800 / SPEED 0x1804 / CTRL0-2 0x1810-1818 /
+#         DBG_CTRL 0x181c（默认 0x80701040）/ DBG_ADDR 0x1820 / DBG_DATA 0x1824
+#   qm    q208-q211 AC_UNI_CNT 0x84ed00+16i、q208 DROP_STATE 0x856d00、
+#         OQ ENQ 0x85cd00（ENQ_DISABLE bit0）、OQ DEQ 0x864d00（DEQ_DROP bit0）、
+#         OQ HEAD 0x86cd00（EMPTY bit0 / TAIL 1-11 / HEAD 12-22）、FLUSH 0x800000
+#   tm    PSCH[5] SHP_SIGN 0x470050 / SHP_CREDIT 0x472050 / SHP_CFG 0x474050 /
+#         COMP 0x476050（健康 0x18，mode-1 楔死塌成 0x0）
+#   sweep MAC 调试空间 0..255 逐项读（写 0x1820 索引后读 0x1824），
+#         HEALTHY-BOOT / CONFIRMED / HEALED 三个时点各采一次，可直接对比
+#         「冻结前 vs 冻结时 vs 复位后」内部状态哪一位变化。
+#   采样点：HEALTHY-BOOT（启动基线）、HEALTHY（周期，不 sweep）、
+#   STALL-START（TX 首次停走的那个采样）、SUSPECT、CONFIRMED（全量+sweep，
+#   在复位动作之前）、HEALED / HEAL-FAILED（复位后）。
 #
 # 配置：/etc/config/sbe_wan_tx_watchdog
 #   option enabled '1'            # 0 关闭
@@ -35,6 +63,8 @@
 #   option max_heals '3'          # 30 分钟窗口内最多原地复位次数
 #   option max_reboots '3'        # 30 分钟窗口内最多自动重启次数
 #   option stall_seconds '90'     # TX 冻结累计阈值
+#   option macdbg_sweep '1'       # 1 = 基线/冻结/复位后扫 MAC 调试空间 0..255
+#   option healthy_interval '1800'# 健康态周期快照间隔（秒），0 关闭
 
 . /lib/functions.sh
 
@@ -92,6 +122,16 @@ case "$stall_need" in
 esac
 [ "$stall_need" -ge 60 ] || stall_need=60
 
+macdbg_en=$(uci -q get $CONF.main.macdbg_sweep)
+case "$macdbg_en" in
+'' | *[!0-9]*) macdbg_en=1 ;;
+esac
+
+healthy_interval=$(uci -q get $CONF.main.healthy_interval)
+case "$healthy_interval" in
+'' | *[!0-9]*) healthy_interval=1800 ;;
+esac
+
 [ -d "/sys/class/net/$IF" ] || exit 0
 
 # 计数文件：第一行上次动作时间，第二行 30 分钟窗口内次数。
@@ -137,6 +177,80 @@ snap() {
 	T=$(cat "/sys/class/net/$IF/statistics/tx_packets" 2>/dev/null)
 	R=$(cat "/sys/class/net/$IF/statistics/rx_packets" 2>/dev/null)
 	C=$(cat "/sys/class/net/$IF/carrier" 2>/dev/null)
+}
+
+# ---- Stage 1 取证：标签化寄存器快照 ----
+# 每次 ssdk_sh 调用最多 5 s。楔死态某次寄存器读若卡在驱动里，SIGTERM 也
+# 杀不掉，所以优先用 timeout -k 再补 KILL；启动时探测一次是否支持 -k。
+TIMEOUT=""
+if command -v timeout >/dev/null 2>&1; then
+	TIMEOUT="timeout 5"
+	timeout -k 2 5 true >/dev/null 2>&1 && TIMEOUT="timeout -k 2 5"
+fi
+
+runc() {
+	[ -n "$TIMEOUT" ] && {
+		$TIMEOUT "$@"
+		return $?
+	}
+	"$@"
+}
+
+sreg() {
+	runc ssdk_sh debug reg get "$1" 4 2>&1 | grep -o 'Data\]:0x[0-9a-f]*' | cut -d: -f2
+}
+
+# evidence 超过 1 MiB 轮转一次（周期快照会长期增长）。
+cap_evidence() {
+	local size
+	[ -f "$EVIDENCE" ] || return 0
+	size=$(wc -c <"$EVIDENCE" 2>/dev/null)
+	case "$size" in '' | *[!0-9]*) return 0 ;; esac
+	[ "$size" -gt 1048576 ] && mv -f "$EVIDENCE" "$EVIDENCE.1" 2>/dev/null
+}
+
+# MAC 内部调试空间 sweep：写索引寄存器 MAC_DBG_ADDR(0x1820) 选页，
+# 读 MAC_DBG_DATA(0x1824)。唯一写操作只动调试索引；结束后恢复原索引。
+# 任何一次读取超时/失败即中止（说明 SSDK 可能卡住，不再加压）。
+sweep_macdbg() {
+	local i orig v
+	orig=$(sreg 0x1820)
+	echo "macdbg_orig=$orig"
+	i=0
+	while [ "$i" -le 255 ]; do
+		runc ssdk_sh debug reg set 0x1820 "$i" 4 >/dev/null 2>&1
+		v=$(sreg 0x1824)
+		if [ -z "$v" ]; then
+			echo "macdbg[$i]=<timeout-or-error> sweep-aborted"
+			break
+		fi
+		printf 'macdbg[%03d]=%s\n' "$i" "$v"
+		i=$((i + 1))
+	done
+	[ -n "$orig" ] && runc ssdk_sh debug reg set 0x1820 "$orig" 4 >/dev/null 2>&1
+	return 0
+}
+
+# snap_regs <label> <sweep 0|1>：追加一块带标签的取证到 evidence。
+snap_regs() {
+	local label=$1 sweep=$2
+	snap
+	cap_evidence
+	{
+		echo "== [$label] $(date '+%F %T') uptime=$(cut -d. -f1 /proc/uptime)s tx=$T rx=$R carrier=$C"
+		echo "speed=$(cat /sys/class/net/$IF/speed 2>/dev/null) carrier_changes=$(cat /sys/class/net/$IF/carrier_changes 2>/dev/null) tx_errors=$(cat /sys/class/net/$IF/statistics/tx_errors 2>/dev/null) tx_dropped=$(cat /sys/class/net/$IF/statistics/tx_dropped 2>/dev/null)"
+		if command -v ssdk_sh >/dev/null 2>&1; then
+			echo "mac: en=$(sreg 0x1800) spd=$(sreg 0x1804) ctrl0=$(sreg 0x1810) ctrl1=$(sreg 0x1814) ctrl2=$(sreg 0x1818) dbg_ctl=$(sreg 0x181c)"
+			echo "qm: q208=$(sreg 0x84ed00) q209=$(sreg 0x84ed10) q210=$(sreg 0x84ed20) q211=$(sreg 0x84ed30)"
+			echo "qm: drop208=$(sreg 0x856d00) oq_enq=$(sreg 0x85cd00) oq_deq=$(sreg 0x864d00) oq_head=$(sreg 0x86cd00) flush=$(sreg 0x800000)"
+			echo "tm: shp_sign5=$(sreg 0x470050) shp_credit5=$(sreg 0x472050) shp_cfg5=$(sreg 0x474050) comp5=$(sreg 0x476050)"
+			echo "--- packet_counter (port tx/rx, queue tx, drop) ---"
+			grep -E 'PORT_TX_COUNTER|PORT_RX_COUNTER|QUEUE_TX_COUNTER|DROP_CPU' /sys/ssdk/packet_counter 2>/dev/null
+			[ "$sweep" = 1 ] && sweep_macdbg
+		else
+			echo "(ssdk_sh unavailable)"
+		fi
+	} >>"$EVIDENCE" 2>/dev/null
 }
 
 # ARP 探针：把假邻居钉在 eth1 上再 ping，内核必须为它发出 ARP 请求
@@ -190,11 +304,16 @@ heal_tx() {
 	return 0
 }
 
-log "启动：if=$IF 间隔=${INTERVAL}s 阈值=${stall_need}s 复位=${heal_enabled} 复位上限=${max_heals} 重启上限=${max}"
+log "启动：if=$IF 间隔=${INTERVAL}s 阈值=${stall_need}s 复位=${heal_enabled} 复位上限=${max_heals} 重启上限=${max} macdbg=${macdbg_en} 健康快照=${healthy_interval}s"
+
+# 启动基线：健康态（sweep 可选）——之后与冻结态逐项对比。
+snap_regs "HEALTHY-BOOT" "$macdbg_en"
 
 prev_tx=
 prev_rx=
 stall=0
+last_healthy=$(date +%s)
+last_stall_start=0
 while :; do
 	sleep "$INTERVAL"
 	snap
@@ -207,28 +326,34 @@ while :; do
 		continue
 	fi
 	if [ -n "$prev_tx" ] && [ "$T" = "$prev_tx" ] && [ "$R" -gt "$prev_rx" ]; then
+		# TX 第一次停走的那个采样最接近「冻结瞬间」，单独留档。
+		# 限频 300 s：TX 零星吐包会让 stall 反复归零，避免刷爆 evidence。
+		if [ "$stall" -eq 0 ]; then
+			now=$(date +%s)
+			if [ $((now - last_stall_start)) -ge 300 ]; then
+				snap_regs "STALL-START" 0
+				last_stall_start=$now
+			fi
+		fi
 		stall=$((stall + INTERVAL))
 	else
 		stall=0
 	fi
+	if [ "$healthy_interval" -gt 0 ] && [ "$stall" -eq 0 ]; then
+		now=$(date +%s)
+		if [ $((now - last_healthy)) -ge "$healthy_interval" ]; then
+			snap_regs "HEALTHY" 0
+			last_healthy=$now
+		fi
+	fi
 	if [ "$stall" -ge "$stall_need" ]; then
 		ev "SUSPECT" "$T" "$R" "$C"
+		snap_regs "SUSPECT" 0
 		if probe_tx; then
 			snap
 			ev "CONFIRMED" "$T" "$R" "$C"
-			# 取证：只读安全路径（见文件头安全边界）。
-			{
-				echo "speed=$(cat /sys/class/net/$IF/speed 2>/dev/null) \
-carrier_changes=$(cat /sys/class/net/$IF/carrier_changes 2>/dev/null) \
-tx_errors=$(cat /sys/class/net/$IF/statistics/tx_errors 2>/dev/null) \
-tx_dropped=$(cat /sys/class/net/$IF/statistics/tx_dropped 2>/dev/null)"
-				command -v ssdk_sh >/dev/null 2>&1 && {
-					reg() { ssdk_sh debug reg get "$1" 4 2>&1 | grep -o 'Data\]:0x[0-9a-f]*' | cut -d: -f2; }
-					echo "q208_ac=$(reg 0x84ed00) comp5=$(reg 0x476050) mac_en=$(reg 0x1800) flush_cfg=$(reg 0x800000)"
-					echo "--- packet_counter (port tx/drop) ---"
-					grep -E 'PORT_TX_COUNTER|QUEUE_TX_COUNTER|DROP_CPU' /sys/ssdk/packet_counter 2>/dev/null
-				}
-			} >>"$EVIDENCE" 2>/dev/null
+			# 全量取证（含 MAC 调试空间 sweep），必须在复位动作之前。
+			snap_regs "CONFIRMED" "$macdbg_en"
 			healed=0
 			heal_tried=0
 			if [ "$heal_enabled" = 1 ] && count_check "$HEALCOUNT" "$max_heals" "原地复位"; then
@@ -242,10 +367,14 @@ tx_dropped=$(cat /sys/class/net/$IF/statistics/tx_dropped 2>/dev/null)"
 				[ "$healed" = 1 ] && {
 					ev "HEALED" "$T" "$R" "$C"
 					log "原地复位成功：speed=$(speed_now) tx=$T 已恢复"
+					snap_regs "HEALED" "$macdbg_en"
 				}
 			fi
 			if [ "$healed" = 0 ]; then
-				[ "$heal_tried" = 1 ] && ev "HEAL-FAILED" "$T" "$R" "$C"
+				[ "$heal_tried" = 1 ] && {
+					ev "HEAL-FAILED" "$T" "$R" "$C"
+					snap_regs "HEAL-FAILED" 0
+				}
 				[ "$heal_enabled" = 1 ] && [ "$heal_tried" = 0 ] &&
 					ev "HEAL-SKIP" "$T" "$R" "$C"
 				if count_check "$COUNT" "$max" "自动重启"; then

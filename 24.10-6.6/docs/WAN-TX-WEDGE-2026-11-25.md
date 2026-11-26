@@ -1,9 +1,10 @@
 # WAN eth1 TX 冻结（wedge）取证与兜底方案 — 2026-11-25
 
-状态：**根因定位到 PPE 端口 TX 数据通路；2026-11-26 找到有效 in-band 复位
-（自协商速率变化触发 `ssdk_port_clock_reset`），看门狗 v2 已实现「先原地
-复位、失败才重启」并真机 PASS**。本文件记录 2026-11-25 全部真机取证与
-2026-11-26 复位实验，供后续追查与厂商上报使用。
+状态：**卡点定位到 GMAC TX FIFO 与 uniphy1 SGMII+ 速率适配之间的 TX 方向
+（2026-11-26 源码复核修正，§6.2）；in-band 复位有效（自协商
+2500→1000→2500 的端口时钟重设），看门狗 v2 已实现「先原地复位、失败才
+重启」并真机 PASS**。本文件记录 2026-11-25/26 真机取证（含 Stage 1 寄存器
+取证，§6.4），供后续追查与厂商上报使用。
 
 ## 1. 现象
 
@@ -53,7 +54,8 @@
 - 触发条件：清流控位不阻断；加 1 Hz 寄存器读取可能加速（66 s vs 9 min 的
   差异，未定）。
 
-**只有整机重启能恢复。**
+**截至 2026-11-25 只有整机重启能恢复；2026-11-26 起 AN 双翻转可原地
+复位（§6.2），是按次自愈，根因未消除。**
 
 ## 5. 楔死态取证安全边界（重要）
 
@@ -107,17 +109,32 @@ PORT_TX_COUNTER_TBL TX: ... 1227581(port=0005) ...
 
 ### 6.2 原地复位自愈（v131 起，2026-11-26 真机验证）
 
-楔死态不再只能靠重启恢复。SSDK 在「链路 up 且协商速率与旧速率不同」时会
-执行 `adpt_hppe_port_speed_change_port_clock_reset()`（adpt_hppe_portctrl.c:4716），
-即 `ssdk_port_clock_reset`：XGMAC + 端口 TX/RX 硬复位。此前所有失败的
-in-band 手段都不包含这个复位。用自协商广告位图制造两次确定的速率变化：
+楔死态不再只能靠重启恢复。早先的解释是「速率变化触发
+`adpt_hppe_port_speed_change_port_clock_reset()` →
+`ssdk_port_clock_reset`：XGMAC + 端口 TX/RX 硬复位」，2026-11-26 源码复核
+否定了该机制（见下方机制段）。用自协商广告位图制造两次确定的速率变化：
 
 ```
 ssdk_sh port autoAdv set 5 0x230   # 1000T_FD|PAUSE|ASY_PAUSE
 ssdk_sh port autoNeg restart 5     # 2500 -> 1000（第一次端口时钟复位）
 ssdk_sh port autoAdv set 5 0x123f  # QCA8081 出场广告（实测值）
-ssdk_sh port autoNeg restart 5     # 1000 -> 2500（第二次端口时钟复位）
+ssdk_sh port autoNeg restart 5     # 1000 -> 2500
 ```
+
+机制（2026-11-26 源码复核修正）：port5 是 QGMAC + uniphy1 SGMII_CHANNEL0
+（`switch_mac_mode1=0x0f`、phy-mode `sgmii`、`port_mac_sel QGMAC_PORT`），
+不是 USXGMII，所以 `adpt_hppe_port_speed_change_port_clock_reset()`
+（adpt_hppe_portctrl.c:4716）里的 `ssdk_port_clock_reset` 在 SGMII 分支是
+空操作。真正生效的是速率变化本身：2500→1000 触发
+`adpt_hppe_sgmii_speed_clock_set` → `ssdk_port_speed_clock_set`（NSSCC
+port5 RX/TX 时钟 clk_set_rate 125 MHz）+ `ssdk_uniphy1_clock_source_set`
+（uniphy1 TX/RX 时钟源 mux 切到原生时钟）；TX 恰在「降到 1G」这一步恢复。
+卡点因此改为 **GMAC TX FIFO 与 uniphy1 SGMII+ 速率适配之间的 TX 方向**
+（时钟由 NSSCC port5 TX clock 提供），而不是 PPE port wrapper 内部。另一个
+关键事实：`adpt_hppe_sgmii_speed_clock_set` 没有 `FAL_SPEED_2500` 分支
+（走 default 空），2.5G SGMII+ 在 SSDK 时钟表里本就不完整；而 QCA 参考板
+（rdp453/475/459）与我们 6.18 上游 DTS 都把 2.5G QCA8081 口配成 USXGMII
+（`switch_mac_mode1=0x0d`）。
 
 真机结果（设备 3，v130-1，ECM engine=auto，看门狗停用）：
 
@@ -157,19 +174,73 @@ ssdk_sh port autoNeg restart 5     # 1000 -> 2500（第二次端口时钟复位�
 一侧完全静默（无任何入向流量），stall 不会累计、看门狗保持沉默，等下一次
 有入向流量再判。这是预期行为。
 
-- 验收（待真机，设备恢复后）：人为触发楔死 → 看门狗应在 ~2 分钟内确认、
-  落盘并重启；恢复后 WAN 正常；evidence 日志含 CONFIRMED 行。
+- 看门狗验收已在 §6.1 与本轮 Stage 1 真机测试中完成（约 2 分钟内确认、
+  落盘、复位或重启、WAN 恢复）。
+
+### 6.4 Stage 1 寄存器取证（2026-11-26，v131-stage1 真机）
+
+看门狗取证扩展（`macdbg_sweep=1`）在 HEALTHY-BOOT / STALL-START / SUSPECT
+/ CONFIRMED / HEALED 各时点落盘 port5 GMAC、q208、PSCH COMP 寄存器，并在
+HEALTHY-BOOT / CONFIRMED / HEALED 三态各扫一遍 MAC 内部调试空间 0..255 字
+（写 MAC_DBG_ADDR 0x1820 选索引、读 MAC_DBG_DATA 0x1824；这是快照里唯一
+的写操作，只动调试索引，不碰 MAC 配置寄存器）。
+
+三态对比（同一轮楔死，mode-1 指纹，单流 NAT 下载第 3 轮触发）：
+
+| 寄存器 | HEALTHY-BOOT | 楔死（CONFIRMED） | HEALED |
+| --- | --- | --- | --- |
+| q208 AC_UNI_CNT（0x84ed00） | 0x0 | 0x44 → 0x7c → 0x81（随探针增长） | 0x0 |
+| PSCH[5] COMP（0x476050） | 0x18 | 0x0 | 0x18 |
+| MAC_CTRL2（0x1818） | 0xc300008 | 0xc300000（bit3 掉） | 0xc300008 |
+| MAC_ENABLE / SPEED | 0x73 / 0x2 | 不变 | 不变 |
+| flush / drop / enq / deq | — | 全不变 | — |
+
+- **MAC_CTRL2 bit3 = MAC_LPI_TX_IDLE**（hppe_portctrl_reg.h）：健康 1 →
+  楔死 0 → 复位后回 1，即 GMAC TX 引擎闩在「非空闲」，与 §6.2 修正后的
+  卡点（GMAC TX FIFO ↔ uniphy1 SGMII+ TX）一致。
+- **EEE/LPI 路径已排除**：`ssdk_port_eee_init()` 只在 `phydev->eee_enabled`
+  时开 LPI，qca808x 驱动（eth1 PHY）完全没有 EEE 代码 → LPI 实际关闭，
+  bit3 是 TX 空闲状态位，不是 EEE 卡死。
+- **bit3 写实验已否决**：楔死态 `ssdk_sh debug reg set 0x1818 0xc300008`
+  执行成功但读回仍是 0xc300000（bit3 硬件驱动、软件锁存不进去），TX 无
+  恢复 → bit3 只是症状，不是自愈旋钮。
+- **MAC_DBG 256 字扫描**：楔死稳定差异 idx 177（bit22 掉，0x4001c0 →
+  0x1c0/0x1c6）、179、180、181（mode-1 掉 bit13 / mode-2 掉 bit6）、196、
+  198；易变项 1、161、162、163、178、197 两次健康扫描互异，勿当指纹；
+  mode-1 与 mode-2 的扫描差异集中在 192–195（q208 有无流量所致）。
+
+两模式对比（2026-11-25/26 多次真机）：
+
+| | mode-1 | mode-2 |
+| --- | --- | --- |
+| q208 AC | 0x44+ 积压且随探测增长 | 0x0 恒空 |
+| PSCH COMP[5] | 0x18 → 0x0 | 保持 0x18 |
+| MAC_CTRL2 bit3 | 0 | 1 |
+| 卡点判读 | PPE 不再取队列 | PPE 取包、端口 TX 吞包（卡点更靠上游） |
+| idx177 bit22 | 掉 | 掉（共同标记） |
+| AN 双翻转 | 可复活 | 可复活 |
+
+mode-2 经 AN 双翻转同样复活（§6.2 表只覆盖了 mode-1）。翻转会拆掉 eth1
+的 DHCP 租约，上游重新分配要等 20–65 s；这段窗口 ping 不通是「没有地址」
+而不是「没修好」，勿误判为自愈失败。
+
+取证日志：本机 `/tmp/sbe-flash/evidence-stage1.log`，mode-2 扫描
+`/tmp/sbe-flash/macdbg-mode2-wedged.txt`。
 
 ## 7. 未决与下一步
 
 1. 看门狗 v2（先原地复位、失败才重启）随下一版 24.10 发布；release notes
    写成"TX 冻结时原地端口复位自愈，复位失败才自动重启"。
-2. 根因仍在 PPE 端口 TX 数据通路内部；触发因素已锁定 ECM/PPE flow
-   offload（A/B/A），但尚无预防手段。后续若想杜绝复发，方向是 QM/PPE
-   队列与端口 TX 通路的更深层配置（需 SSDK/PPE 寄存器级证据，楔死态只
-   可读安全路径，见 §5）。
+2. 根因仍未消除：触发因素已锁定 ECM/PPE flow offload（A/B/A），卡点修正
+   为 GMAC TX FIFO ↔ uniphy1 SGMII+ TX（§6.2）。当前优先级最高的预防实验
+   是单变量把 port5 从 SGMII_CHANNEL0(0x0f) 改为 USXGMII(0x0d)（QCA 参考
+   板/6.18 配法，SSDK 的 SGMII+ 2500 时钟表本就不完整），在同一 24.10 树
+   上跑同一 wedge-loop 压测 A/B 判定。
 3. 高负载下楔死数分钟内可复发：看门狗按次复位（`max_heals` 限流），
    单次中断 8–16 s；持续大流量场景下用户会感知周期性短暂断流，需在
    release notes 说明。
-4. 25.12-6.12 / 6.18 尚未观察到同类楔死（6.18 10 分钟 NAT 压测 PASS），
-   暂不移植看门狗；一旦现场复现再移植（复位序列与看门狗 v2 可直接复用）。
+4. 25.12-6.12 与 24.10 的 qca-ssdk/qca-nss-ppe 源码逐字节相同，楔死风险
+   按同构对待；6.18 尚未观察到楔死，但样本短（10 分钟 NAT 压测、1.67 GB，
+   而楔死历史上 66 s–16 min 均出现过），且 6.18 的内核、nss-dp、PHY 驱动
+   均不同，不能单独归因于 mac mode。暂不移植看门狗到 25.12；一旦现场复现
+   再移植（复位序列与看门狗 v2 可直接复用）。
