@@ -359,18 +359,17 @@ enable）拉起 `/usr/sbin/sbe-wan-tx-watchdog`。每 15 s 采样 `eth1` 的
 注意判定要求 RX 前进（有入向流量），WAN 完全静默时不触发，属预期设计；
 高负载下楔死数分钟内可复发，看门狗按次复位（计数上限见 `max_heals`）。
 
-触发点规避（v132 起，2026-11-26 真机判别定案）：楔死的触发点是 ath12k
-经 `qca_nss_wifi_plugins` 向 PPE 注册 FSE/PPE 回调——Wi-Fi 数据面工作时
-编程 PPE 流表会污染有线 WAN 口（SSDK port5）的 TX 取包通路。镜像内
-`/etc/modules.conf` 现已带 `options ath12k fse=0`，关闭该注册
-（`ath12k fse=N`）：三频 Wi-Fi 与客户端关联完全正常，有线 ECM/PPE 加速
-不受影响，同形状 30 分钟压测零楔死；v132 真机已从镜像验证（fse=N 出厂
-生效，30 min/4 轮/port5 TX 93 万包零楔，ECM ppe=1 全程，见 §11.7）；
-代价是 Wi-Fi 客户端流量不走 PPE FSE 加速——2026-11-26 本地路由台架
-A/B 实测该代价≈0（2.4G 286 Mbps 链路：fse=0 23.8 MB/s vs fse=1
-24.1 MB/s，§11.8）。看门狗保留为兜底。判别实验（ARM B/C/D/F）、
-Wi-Fi 代价 A/B 与源码根因调查报告见
-`docs/WAN-TX-WEDGE-2026-11-25.md` §11。
+触发点规避与根因修复（v132 起，2026-11-26 真机判别定案）：楔死的触发点是
+ath12k 经 `qca_nss_wifi_plugins` 向 PPE 注册 FSE/PPE 回调——Wi-Fi 数据面
+工作时编程 PPE 流表会污染有线 WAN 口（SSDK port5）的 TX 取包通路。v132
+曾用镜像内 `/etc/modules.conf` 的 `options ath12k fse=0` 规避（真机 30
+min 零楔、Wi-Fi 吞吐代价 A/B 实测≈0，§11.7/§11.8）。**根因已由
+`build/build-fixes/0033` 修复**（FSE 表项 metadata 由 `|=` 改赋值，不再
+把复用槽位的残余 VP 位并进新规则）：fse=Y 冷启动同形状 15 min / 72 GiB
+NAT 下载零楔死、FST metadata 恒 0x540、ECM/SFE 全保留、Wi-Fi 吞吐不变
+（两镜像独立复现，§11.11）。因此**该规避默认已撤销，镜像恢复 ath12k
+fse=Y**。看门狗保留为兜底。判别实验（ARM B/C/D/F）、P1 arm、Wi-Fi 代价
+A/B 与源码根因调查报告见 `docs/WAN-TX-WEDGE-2026-11-25.md` §11。
 
 安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
 `/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读

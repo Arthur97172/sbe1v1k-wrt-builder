@@ -794,12 +794,13 @@ metadata bits11:8=0x5，正是 eth1 的 egress macid，**未出现 H1 预测的 
    → `ppe_drv_fse_feature_disable()` 关 `p->fse_enable`，ath12k 的 fse=Y
    回调保留）后 73 GB 零楔死，且 FST 从未编程。`sfe_fse_enable` 只影响
    SFE 前端（本配置 ecm_sfe=0），与本问题无关。
-2. **H1 削弱**：0xAA 位段污染在楔死态 FST 表中不可观测；但不完全排除
-   时序性污染（污染后可被下次 PPE 更新覆盖，而表内容稳态是干净的）。
+2. **H1 一度看似削弱，后被 §11.11 翻案**：当时只核对了 metadata 高位
+   （0xAA = SFE tag 图案），未解码低 8 位；楔死态 0x542 的低字节其实是
+   vp_num=66（6G VAP），而该流对应的正确 VP 是 64（2.4G VAP）——正是
+   `|=` 把复用槽位上一条规则的 VP 位并了进来，见 §11.11。
    **H2（reo_indication 与 radio 解耦，core_mask=0x7 轮转）/ H3（delete 侧
-   ab 标志不对称、recovery 窗口跳删）/ H5（大自旋锁内同步 HTT 编程）相对
-   上升**——它们都作用于「PPE 快速路径上的 Wi-Fi 流元数据/时序」，与本臂
-   实验的因果域一致。
+   ab 标志不对称、recovery 窗口跳删）/ H5（大自旋锁内同步 HTT 编程）** 仍在
+   嫌疑列表，但 P1 单行补丁已使楔死不再出现（§11.11）。
 3. **冷启动放大 ~6 倍**（8.6 GB/1.7 min vs 46 GB/9.7 min）：冷启动 boot log
    里 FSE 回调在 35.1 s 先 unregister、37.5 s 由
    `qca_wifi_nss_plugins_ppe_fse_cb_register` 重新注册——启动期的注册时序
@@ -812,9 +813,62 @@ metadata bits11:8=0x5，正是 eth1 的 egress macid，**未出现 H1 预测的 
 （三臂的 `.log/.rounds/.fst/.boxlog`，含 1 Hz 设备状态日志与 FST 快照；
 `watchdog-evidence-final.log` 为设备侧看门狗全量取证日志）。
 
-**对产品的影响**：v132 已烘焙的 `fse=0` 仍是已发布的修复（Wi-Fi 吞吐代价
-≈0，见 §11.8）；`ppe_fse_enable=0` 是第二候选——保留 ath12k fse=Y 注册的
-挂载形态下也能消除楔死，但它是 ecm 模块的 sysctl，需要固件侧固化
-（ecm 包的 defaults/启动脚本）才可产品化，且其 Wi-Fi 侧 FSE 是否带来任何
+**对产品的影响**：v132 已烘焙的 `fse=0` 曾是已发布的修复（Wi-Fi 吞吐代价
+≈0，见 §11.8）；2026-11-26 晚 P1 补丁真机确认后该规避默认已撤销（§11.11
+末段），镜像恢复 ath12k fse=Y。`ppe_fse_enable=0` 是第二候选——保留 ath12k
+fse=Y 注册的挂载形态下也能消除楔死，但它是 ecm 模块的 sysctl，需要固件侧
+固化（ecm 包的 defaults/启动脚本）才可产品化，且其 Wi-Fi 侧 FSE 是否带来任何
 吞吐收益尚未测量。代码级根治（H2/H3/H5 单变量补丁）需要改源码、重编镜像、
 再刷机验证，每轮约半天，均未开始，需单独批准。
+
+### 11.11 P1 单行补丁 arm：metadata 赋值（2026-11-26，第三台，本地台架）
+
+**假设**（H1 的可执行版本）：`ath12k_wifi7_hal_rx_flow_setup_fse()` 里
+`hal_fse->metadata |= flow->fse_metadata;` 的 OR 会把复用槽位上一条规则的
+残余 VP/macid 位并入新规则。`fse_metadata` 本身每次 add 都在零初始化结构上
+重建（全部调用点 `= {0}`，ppe.c 再用 `u32_replace_bits` 写 vp_num/macid），
+所以改为赋值语义上是完备的。
+
+**补丁**：一行改动（`|=` → `=` 加注释），`build/build-fixes/0033` 与
+`SERIES` 已入库；镜像 ath12k.ko sha256 `79911f2a…`，sysupgrade sha256
+`7d445c62…`（该镜像构建于树补丁漂移修复前，缺少 0026/0027/0028 等用户态
+补丁，数据面代码与 v132 仅差 P1 一行）。
+
+**臂 P1 结果（冷启动 fse=Y + 补丁，enables 1/1）**：
+
+| 项 | 数值 |
+|---|---|
+| 载荷 | **72 GiB / 15 min**（72 轮 1 GiB，slowest round 12.1 s ≈ 88.6 MB/s） |
+| 楔死 | **0 次**（对照臂 2：8.6 GB / 1.7 min） |
+| FST 快照 | 105 次，全部 **1 条目**，`use_ppe=1 service_code=0xc` |
+| **metadata** | **105 次全部 0x540**（vp_num=64=2.4G VAP，macid=5=eth1） |
+| reo_indication | 1/2/3 随流变化（正常） |
+| 设备侧 | q208=0x0、COMP5=0x18、cc=2 恒定、ECM 加速 2 条 |
+| Wi-Fi | keepalive 全程并发；收尾吞吐 23.9 MB/s ≈ 基线 24.0 |
+
+**判读**：
+
+1. **H1 坐实（换了一个可观测域）**：metadata 布局 vp_num=bits7:0、
+   macid=bits11:8（fse.h）。楔死态 0x542 → vp=66（6G VAP）；正确值 0x540
+   → vp=64（2.4G VAP，主机 wlp 当时关联 2.4G）。差恰好是 OR 并入的上一任
+   槽主的 VP 位。§11.10 §2 当时只看 bits15:8（0xAA/SFE tag），低字节未解码。
+2. **单行赋值消除楔死**：同一台架、同一冷启动 fse=Y 形态，对照臂 1.7 min
+   楔死，本臂 72 GiB 零楔死且 FST 稳态 metadata 恒定无污染。
+3. **ECM/SFE 功能保留**：FST 持续编程（1 条活跃流），ECM 加速计数正常，
+   Wi-Fi 吞吐不变——不是靠关功能实现的规避。
+4. 待办：用 0033 的干净重建镜像（含全部 build-fixes）复跑同臂确认；确认后
+   再评估是否撤掉 v132 烘焙的 `fse=0` 默认。
+
+**干净镜像复跑确认（2026-11-26 晚，同一台架）**：全量重编镜像（含全部
+build-fixes + 0033，ath12k.ko `79911f2a…`，sysupgrade sha256 `1509a8a2…`）
+`sysupgrade -n` 刷入，映像内 `/etc/modules.conf` 为 fse=0 默认；改为 fse=Y
+冷启动后同臂复跑：**72 GiB / 15 min，0 次楔死**，105 次 FST 快照 metadata
+`0x540` ×103（2 次快照恰逢流间隙为 0 条目），ECM ppe=1、SFE 前端在位，
+Wi-Fi keepalive 全程并发。与未含用户态补丁的 P1 镜像结果一致 → 结论可复现，
+且干净镜像的首启三频 AP 正常（0022 烘焙生效）。**用户批准后已撤掉
+`files/etc/modules.conf` 的 `fse=0` 默认，镜像恢复 ath12k fse=Y。**
+
+**证据**：`downloads/wedge-evidence-2026-11-26-fseprobe/p1-metadata-assign/`
+（`fseprobe-135326.log/.rounds/.fst/.boxlog` + 补丁本体）与
+`downloads/wedge-evidence-2026-11-26-fseprobe/p1-clean-image/`
+（`fseprobe-142340.log/.rounds/.fst/.boxlog`）。

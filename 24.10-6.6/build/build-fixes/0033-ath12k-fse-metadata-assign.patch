@@ -1,0 +1,40 @@
+Subject: [PATCH] ath12k: assign FSE metadata instead of OR-ing into reused slots
+
+ath12k_wifi7_hal_rx_flow_setup_fse() fills the HAL FSE slot for a flow and
+writes its metadata with
+
+    hal_fse->metadata |= flow->fse_metadata;
+
+flow->fse_metadata is rebuilt from zero on every add: all callers declare
+'struct rx_flow_info flow_info = {0}' and the PPE path then sets vp_num and
+egress macid through u32_replace_bits().  The slot, however, is not
+guaranteed to be zero when it is handed to us.  Slots freed through
+ath12k_wifi7_hal_rx_flow_delete_entry() are cleared, but a hash probe that
+reuses an invalid entry can still encounter metadata left behind by a
+previous owner of the slot, and the OR then merges those stale VP/macid
+bits into the new rule.
+
+With FSE enabled (fse=Y) and active Wi-Fi datapath this produces FSE
+entries whose metadata does not describe the flow being installed; the
+eth1 (SSDK port5, 2.5G QCA8081) TX path wedges under sustained NAT
+download and only a reboot recovers.  Overwriting the field keeps the
+slot content equal to the flow description, which is also what the
+delete path already assumes (it zeroes metadata to keep a stale value
+from being used on FSE create).
+
+---
+--- a/qca/src/mac80211/wlan-open/backports-6.1-9a0dddfb3/drivers/net/wireless/ath/ath12k/wifi7/hal_rx.c	2026-11-26 13:56:37.677798957 +0000
++++ b/qca/src/mac80211/wlan-open/backports-6.1-9a0dddfb3/drivers/net/wireless/ath/ath12k/wifi7/hal_rx.c	2026-11-26 13:56:31.573052796 +0000
+@@ -1592,7 +1592,11 @@
+ 	hal_fse->dest_ip_95_64 = htonl(flow->tuple_info.dest_ip_95_64);
+ 	hal_fse->dest_ip_63_32 = htonl(flow->tuple_info.dest_ip_63_32);
+ 	hal_fse->dest_ip_31_0 = htonl(flow->tuple_info.dest_ip_31_0);
+-	hal_fse->metadata |= flow->fse_metadata;
++	/*
++	 * fse_metadata is rebuilt from zero on every add; OR-ing into a
++	 * reused slot can merge stale VP/macid bits into the new rule.
++	 */
++	hal_fse->metadata = flow->fse_metadata;
+ 	hal_fse->msdu_byte_count = 0;
+ 	hal_fse->timestamp = 0;
+ 	hal_fse->tcp_sequence_number = 0;
