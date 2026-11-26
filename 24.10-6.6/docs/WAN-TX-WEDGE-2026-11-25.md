@@ -280,8 +280,9 @@ sha256 `7718291f…5d52`，DTB 反编译确认 0x0d；`sysupgrade -n` 刷入后
    **PPE 端口 TX 取包侧**（PPE 停止从 q208 取包，mode-1 队列积压、COMP 停
    摆；mode-2 更靠上游）。6.18 同工况 A/B 已完成：同一压测形状下 6.18
    跑 25 min / ≈23 GB / 1100 万 WAN TX 包零楔死（24.10 为 1–3.5 min
-   必楔），见 `25.12-6.18/docs/WAN-TX-WEDGE-AB-2026-11-26.md`。下一步
-   转向 24.10 与 6.18 的 nss-dp/ECM 装载集成定向 diff，找可回移差异。
+   必楔），见 `25.12-6.18/docs/WAN-TX-WEDGE-AB-2026-11-26.md`。nss-dp/ECM
+   定向 diff 已完成（§8）：两层软件栈功能等价、无可回移补丁，差异域彻底
+   收敛到内核。
 3. 高负载下楔死数分钟内可复发：看门狗按次复位（`max_heals` 限流），
    单次中断 8–16 s；持续大流量场景下用户会感知周期性短暂断流，需在
    release notes 说明。
@@ -290,3 +291,74 @@ sha256 `7718291f…5d52`，DTB 反编译确认 0x0d；`sysupgrade -n` 刷入后
    而楔死历史上 66 s–16 min 均出现过），且 6.18 的内核、nss-dp、PHY 驱动
    均不同，不能单独归因于 mac mode。暂不移植看门狗到 25.12；一旦现场复现
    再移植（复位序列与看门狗 v2 可直接复用）。
+
+## 8. nss-dp/ECM 定向 diff（24.10-6.6 vs 25.12-6.18，2026-11-26）
+
+结论先行：**不存在可回移的修复**。两层软件栈（qca-nss-dp、qca-nss-ppe、
+qca-ssdk、qca-nss-ecm、qca-nss-sfe、qca-nss-drv）在 24.10 与 6.18 之间
+功能等价，全部源码差异都是内核 API 对齐或编译告警修正；装载方式、ECM
+引擎选择、EDMA ring 配置实测/逐字段一致。**差异域彻底收敛到内核**
+（6.6 厂商树 vs 6.18 mainline + 移植层），"新栈里有修复可以搬"的设想被否定。
+
+对照物：24.10 厂商源码经 feed 编译，源在装配树
+`/var/tmp/sbe-2410/sources/buildroot/qca/src/nss/`（24.10 仓库内无 `nss/`
+目录），包装与 init/config 在 `qca/feeds/nss/`；6.18 源在
+`sources/buildroot-25.12-6.18/qca/src/nss/`，包装在 `25.12-6.18/nss/packages/`。
+
+### 8.1 源码层差异
+
+| 组件 | 差异量 | 性质 |
+| --- | --- | --- |
+| qca-nss-drv | 0 行 | 逐字节相同 |
+| qca-nss-dp | 386 行 | 内核 API 兼容（register_sysctl_sz 哨兵、ctl_table const、timer_container_of、net_hotdata.rps_*、alloc_netdev_dummy、-Wmissing-prototypes）+ **删减** vendor 专属路径 |
+| qca-nss-ppe | 631 行 | 上述兼容项 + dsa_user_dev_check 改名 + DSA tag 映射（无 DSA 用不到）+ MAP-T 关闭（无 MAP-T 设备） |
+| qca-ssdk | 552 行 | 上述兼容项 + 我们自己的 6.18 补丁（USXGMII AN 恢复；SGMII 口用不到）+ sfp/mdio-i2c 编译桩 |
+| qca-nss-ecm | 363 行 | 文件集相同（6.18 多 2 个 compat 头）；全部是 priv_flags_ext/int_pri shim、unaligned.h、nf_udp_pernet 等适配 |
+| qca-nss-sfe | 575 行 | 同上是 `sfe_compat.h` 兼容层 |
+
+6.18 唯一的行为性差异是**删掉**了厂商内核的加速设施：`dev_fast_xmit()` /
+`dev_fast_xmit_qdisc()` 改走 `dev_queue_xmit()`、SKB recycler 完成路径改为
+`dev_kfree_skb()`、Rx 缓存失效总是执行、`skb->int_pri` 不传递（结构体无
+对应字段，恒 0）。这些是主线内核缺字段被迫的简化（源码注释里也写明
+"behaviour gap of the mainline port"），不是针对楔死的修复。
+
+### 8.2 装载与引擎注册
+
+- 24.10：kmodloader 按 `/etc/modules.d` 自动装载（`09-qca-nss-sfe`、
+  `31-qca-nss-dp/ppe`、`50-qca-nss-flowmgr`、`51/52-qca-nss-ppe-*`），rcS
+  依次起 `qca-ssdk` START=16、`qca-nss-dp` START=18、`qca-nss-ecm` START=26。
+- 6.18：tier=full 由 `/usr/sbin/nss-load` 串行装载
+  ssdk → ppe → dp → ppe-{ds,vp,rule,vlan,bridge-mgr,ath-clients} → ecm，
+  sfe 由 ecm init 按需装，不装 flowmgr。设备实测模块集合两边几乎相同
+  （仅差 flowmgr）。
+- 参数与配置：`/etc/config/ecm`（acceleration_engine auto）、
+  `/etc/config/qca_nss_dp`（enable_rps 1）、`qca-nss-ecm.sysctl`、
+  `qca-nss-ecm.defaults`、`qca-ssdk` 与 nss-dp 的编译开关（ipq95xx：
+  PPE+SFE 前端、NSS 前端关、ECM standard 版）两边逐字节/逐项相同。
+- 实测引擎选择：**两边都是 `selected_front_end=5`（ppe-sfe）**。24.10
+  证据日志 37.7 s / 64.9 s 两次初始化；6.18 设备 dmesg 52.2 s / 66.1 s。
+  此前测过的 engine=ppe(3) / engine=sfe(2) 都是人工覆盖，基线行为一致。
+
+### 8.3 EDMA ring 与端口 DTS
+
+24.10 `ipq9574-sbe1v1k.dts` 与 6.18 `ipq9570-sbe1v1k-nss.dts` 的 edma
+节点逐字段相同：28 个 TX/TXCMP ring（4 起）、4 rxfill/rxdesc（20 起）、
+ppeds 3 组（队列基 32/40/48 各 8）、txdesc-map、txdesc-fc-grp-map、
+rx-ring-queue-map、vp-id 8 全部一致；6.18 多 4 项 loopback ring
+（`dp-loopback=y`，24.10 同 Makefile 也会编译但 DTS 未给）。port5 两边都是
+`switch_mac_mode1=0x0f` + `phy-mode "sgmii"` + `port_mac_sel QGMAC_PORT`。
+6.18 的 PCS 节点与时钟补丁（6.18 补丁 0036/0040）是 6.18 内核自身需要，
+24.10 厂商内核不经该路径。
+
+### 8.4 判读与下一步
+
+1. nss-dp/ECM 层没有"6.18 已修"的补丁可搬回 24.10；楔死的区别只能来自
+   内核：24.10 是厂商 6.6（网络核心带 skb recycler、fast_xmit、QSDK 钩子），
+   6.18 是 mainline + 兼容移植。ECM 触发、PPE 卡点、GMAC TX 不空闲这些
+   现象在两栈里由同一份 ppe/ssdk/ecm 代码产生，差异只可能在内核这层。
+2. 候选内核侧实验（均需用户批准后另行立项，本轮不做）：
+   - 24.10 厂商内核上关闭/对照 SKB recycler、fast_xmit 等 vendor 设施
+     （内核配置级，不动 ECM 功能，符合"保留 ECM"约束）；
+   - 对照两内核在 nsscc/uniphy 时钟、DMA 描述符映射（dmac cache 操作）
+     上的最后差异，逐一排除。
+3. 产品侧选择仍是 25.12-6.18 生产 + 24.10 看门狗兜底（见 §7）。
