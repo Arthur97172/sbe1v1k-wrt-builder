@@ -1,10 +1,11 @@
 # WAN eth1 TX 冻结（wedge）取证与兜底方案 — 2026-11-25
 
-状态：**卡点定位到 GMAC TX FIFO 与 uniphy1 SGMII+ 速率适配之间的 TX 方向
-（2026-11-26 源码复核修正，§6.2）；in-band 复位有效（自协商
-2500→1000→2500 的端口时钟重设），看门狗 v2 已实现「先原地复位、失败才
-重启」并真机 PASS**。本文件记录 2026-11-25/26 真机取证（含 Stage 1 寄存器
-取证，§6.4），供后续追查与厂商上报使用。
+状态：**触发因素锁定 ECM/PPE flow offload；端口 MAC 模式/时钟已排除
+（2026-11-26 USXGMII 单变量实验 FAIL，§6.5），卡点收窄到 QM/PPE 端口 TX
+取包侧；in-band 复位有效（自协商 2500→1000→2500），看门狗 v2 已实现
+「先原地复位、失败才重启」并真机 PASS，USXGMII 下同样有效**。本文件记录
+2026-11-25/26 真机取证（含 Stage 1 寄存器取证，§6.4），供后续追查与厂商
+上报使用。
 
 ## 1. 现象
 
@@ -137,6 +138,12 @@ port5 RX/TX 时钟 clk_set_rate 125 MHz）+ `ssdk_uniphy1_clock_source_set`
 该分支对 2500 有完整时钟编程（`adpt_hppe_usxgmii_speed_clock_set`，含
 GMAC 4bit 宽度路径）。注意我们的 6.18 树沿用 0x0f、同样没做这个验证。
 
+> 后续修正：上述「卡点在 GMAC TX FIFO ↔ uniphy1 速率适配」的判读已被
+> 2026-11-26 USXGMII 实验推翻（§6.5）——改成 rdp475 的 0x0d 完整时钟
+> 编程后楔死原样复现。复位序列本身仍有效（见下），但生效机制应理解为
+> 速率变化导致端口 TX 通路整体重设，而非 SGMII 时钟表缺 2500。卡点现
+> 收窄为 QM/PPE 端口 TX 取包侧。
+
 真机结果（设备 3，v130-1，ECM engine=auto，看门狗停用）：
 
 | 轮次 | 楔死 | 收窄到 1G 后 | 恢复 2.5G 后 | 主机 NAT |
@@ -228,17 +235,54 @@ mode-2 经 AN 双翻转同样复活（§6.2 表只覆盖了 mode-1）。翻转�
 取证日志：本机 `/tmp/sbe-flash/evidence-stage1.log`，mode-2 扫描
 `/tmp/sbe-flash/macdbg-mode2-wedged.txt`。
 
+### 6.5 USXGMII 单变量实验（2026-11-26，FAIL）
+
+配置级预防实验（用户批准）：24.10 树上只改两行，把 port5 从
+SGMII_CHANNEL0 改成 QCA 参考板 rdp475 的 USXGMII 配法——
+
+- `switch_mac_mode1`：`0x0f` → `0x0d`；
+- port@4 `phy-mode`：`"sgmii"` → `"usxgmii"`。
+
+其余一切不变（QGMAC 选口、看门狗、ECM/PPE full 均不动）。镜像 78.8M，
+sha256 `7718291f…5d52`，DTB 反编译确认 0x0d；`sysupgrade -n` 刷入后
+`configured for phy/usxgmii`、2500 链路、DHCP 192.168.10.237、上游 ping
+通、tier=full 装载正常。
+
+结果：**第 1 轮压测约 3.5 分钟即楔死，mode-1 指纹与 SGMII 基线完全同构**：
+
+| 证据 | SGMII 基线 | USXGMII 实验 |
+| --- | --- | --- |
+| 楔死时间 | 1–3 min | ~3.5 min（03:45:14 UTC+8 计 280 s uptime） |
+| q208 AC | 0x44+ 积压 | 0x0 → 0x42 → 0x56 积压 |
+| PSCH COMP[5] | 0x18 → 0x0 | 0x18 → 0x0 |
+| MAC_CTRL2 | 0xc300008 → 0xc300000 | 0xc300008 → 0xc300000 |
+| AN 双翻转 | 复活 | 复活（SUSPECT 374 s → HEALED 399 s，19 s） |
+
+判定：**端口 MAC 工作模式 / 端口时钟编程不是根因**。USXGMII 分支在 SSDK
+里对 2500 有完整时钟编程，但仍以同样方式楔死，卡点收窄到
+**QM/PPE 端口 TX 取包侧**（PPE 停止从 q208 取包，队列积压、COMP 停摆），
+与 GMAC/uniphy 的速率适配无关。同时确认看门狗 AN 双翻转自愈在 USXGMII
+下同样有效，兜底方案不受 mac mode 影响。
+
+实验配置已回滚（DTS 回到 0x0f/"sgmii"，附注释记录结论）。设备当前仍跑
+实验镜像；两者功能等价（链路 2500、看门狗生效），下次正式构建自然恢复
+基线 DTS。
+
+日志：本机 `/tmp/sbe-flash/wedge7-034153.log`；设备
+`/etc/sbe-wan-tx-watchdog-evidence.log`（STALL-START 11:45:28 uptime=299）。
+
 ## 7. 未决与下一步
 
 1. 看门狗 v2（先原地复位、失败才重启）随下一版 24.10 发布；release notes
    写成"TX 冻结时原地端口复位自愈，复位失败才自动重启"。
-2. 根因仍未消除：触发因素已锁定 ECM/PPE flow offload（A/B/A），卡点修正
-   为 GMAC TX FIFO ↔ uniphy1 SGMII+ TX（§6.2）。当前优先级最高的预防实验
-   是单变量把 port5 从 SGMII_CHANNEL0(0x0f) 改为 USXGMII(0x0d)（QCA 参考
-   板 rdp475 配法；SGMII_CHANNEL0 在 SSDK 里映射为纯 SGMII，2500 时端口
-   时钟设置是空操作，而 USXGMII 分支对 2500 有完整时钟编程），在同一 24.10
-   树上跑同一 wedge-loop 压测 A/B 判定。我们的 6.18 树同样用 0x0f，其未复
-   现楔死不能作为 mac mode 已验证的证据。
+2. 根因仍未消除：触发因素已锁定 ECM/PPE flow offload（A/B/A）。USXGMII
+   单变量实验已 FAIL（§6.5），mac mode / 端口时钟被排除；卡点收窄为
+   **PPE 端口 TX 取包侧**（PPE 停止从 q208 取包，mode-1 队列积压、COMP 停
+   摆；mode-2 更靠上游）。下一步优先级最高的是同一 wedge-loop 工况下对
+   6.18 树做公平 A/B 压测——6.18 现有的 10 分钟 / 1.67 GB 无楔死样本太
+   短（历史楔死 66 s–16 min 都出现过），且 6.18 与 24.10 的差异在内核、
+   nss-dp、ecm 而非 mac mode，若 6.18 在同条件下确实不楔死，diff 就直接
+   指向用户态/内核/offload 驱动层。
 3. 高负载下楔死数分钟内可复发：看门狗按次复位（`max_heals` 限流），
    单次中断 8–16 s；持续大流量场景下用户会感知周期性短暂断流，需在
    release notes 说明。

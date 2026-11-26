@@ -213,7 +213,12 @@
 	/* S1/NET: port 5 is WAN; ports 3, 4 and 6 are LAN (0x58 = BIT(3)|BIT(4)|BIT(6)) */
 	switch_lan_bmp = <0x58>;
 	switch_wan_bmp = <0x20>;
-	/* S1: QSGMII / SGMII_CHANNEL0 / USXGMII */
+	/* S1: QSGMII / SGMII_CHANNEL0 / USXGMII.
+	 * A 2026-11-26 single-variable experiment ran port 5 as USXGMII (0x0d,
+	 * the rdp475 reference config): the link came up at 2500 and the TX
+	 * wedge reproduced within ~3.5 min with the same mode-1 fingerprint
+	 * as the SGMII config, so the port's MAC mode is not the root cause.
+	 * Kept at S1's SGMII_CHANNEL0. */
 	switch_mac_mode = <0x0b>;
 	switch_mac_mode1 = <0x0f>;
 	switch_mac_mode2 = <0x0d>;
