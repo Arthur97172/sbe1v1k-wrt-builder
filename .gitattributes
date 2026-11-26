@@ -1,0 +1,8 @@
+# 刷机工具：二进制与换行约定
+openwrt-flash/assets/initramfs.itb binary
+openwrt-flash/assets/rtq7300t_boot_auto_upgrade_fw.img binary
+openwrt-flash/bin/sbe-flash-tool_linux_amd64 binary
+openwrt-flash/bin/sbe-flash-tool_windows_amd64.exe binary
+
+*.sh text eol=lf
+openwrt-flash/flash-sbe1v1k.cmd text eol=crlf
