@@ -357,8 +357,18 @@ enable）拉起 `/usr/sbin/sbe-wan-tx-watchdog`。每 15 s 采样 `eth1` 的
   第二次复位后紧接 12 GB 持续下载 soak 零楔死。
 
 注意判定要求 RX 前进（有入向流量），WAN 完全静默时不触发，属预期设计；
-高负载下楔死数分钟内可复发，看门狗按次复位（计数上限见 `max_heals`），
-根因仍在 PPE 端口 TX 数据通路。
+高负载下楔死数分钟内可复发，看门狗按次复位（计数上限见 `max_heals`）。
+
+触发点规避（v132 起，2026-11-26 真机判别定案）：楔死的触发点是 ath12k
+经 `qca_nss_wifi_plugins` 向 PPE 注册 FSE/PPE 回调——Wi-Fi 数据面工作时
+编程 PPE 流表会污染有线 WAN 口（SSDK port5）的 TX 取包通路。镜像内
+`/etc/modules.conf` 现已带 `options ath12k fse=0`，关闭该注册
+（`ath12k fse=N`）：三频 Wi-Fi 与客户端关联完全正常，有线 ECM/PPE 加速
+不受影响，同形状 30 分钟压测零楔死；v132 真机已从镜像验证（fse=N 出厂
+生效，30 min/4 轮/port5 TX 93 万包零楔，ECM ppe=1 全程，见 §11.7）；
+代价是 Wi-Fi 客户端流量走普通转发
+路径（不进 PPE FSE 加速，吞吐影响未测）。看门狗保留为兜底。判别实验
+（ARM B/C/D/F）与证据见 `docs/WAN-TX-WEDGE-2026-11-25.md` §11。
 
 安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
 `/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读

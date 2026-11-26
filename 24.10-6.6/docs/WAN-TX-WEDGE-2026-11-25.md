@@ -273,6 +273,10 @@ sha256 `7718291f…5d52`，DTB 反编译确认 0x0d；`sysupgrade -n` 刷入后
 
 ## 7. 未决与下一步
 
+> 2026-11-26 更新：根因判别已完成（§11）——触发点是 ath12k 的 FSE/PPE
+> 回调注册（`fse=Y`），`options ath12k fse=0` 在 Wi-Fi 全功能 up 的
+> 同形状下 30 min 零楔且保留有线 ECM；产品化与根因修复路线见 §11.6。
+
 1. 看门狗 v2（先原地复位、失败才重启）随下一版 24.10 发布；release notes
    写成"TX 冻结时原地端口复位自愈，复位失败才自动重启"。
 2. 根因仍未消除：触发因素已锁定 ECM/PPE flow offload（A/B/A）。USXGMII
@@ -362,3 +366,313 @@ rx-ring-queue-map、vp-id 8 全部一致；6.18 多 4 项 loopback ring
    - 对照两内核在 nsscc/uniphy 时钟、DMA 描述符映射（dmac cache 操作）
      上的最后差异，逐一排除。
 3. 产品侧选择仍是 25.12-6.18 生产 + 24.10 看门狗兜底（见 §7）。
+
+## 9. 内核 vendor 设施对照实验：SKB recycler 与 fast_xmit（2026-11-26，第三台真机）
+
+状态：**两项机制均已排除**。Phase A（recycler）与 Phase B（fast_xmit）
+在 24.10-6.6 上都实测过，楔死照常复现；Phase B 还证明靶点不在热路径
+（补丁行为惰性）。实验内核已从构建树回滚（06:13，dev.c 与备份逐字节
+一致）；设备仍运行实验内核（与基线行为等价），下次刷机替换。
+
+### 9.1 Phase A：关闭 SKB recycler 不阻止楔死
+
+手法：运行时 `echo 0 > /proc/net/skb_recycler/skb_recycler_enable`，回读
+为 0、pool `total` 冻结在 35 后才开跑；control 轮用同镜像默认（开启）。
+
+| 轮次 | 楔死时刻 | 轮/时长/流量 | tx 冻结值 | 指纹 | 看门狗 |
+| --- | --- | --- | --- | --- | --- |
+| control | 05:13:18 | 第 4 轮 / ~11.5 min / ~12.7 GB | 4,247,288 | mode-2 | ~24 s HEALED |
+| recycler=0 | 05:34:41 | 第 4 轮 / ~17.9 min / ~14.6 GB | 11,509,940 | mode-1 | HEALED；后一次 false SUSPECT 由 PROBE-OK 清除 |
+
+结论：SKB recycler 排除。证据：`/tmp/sbe-flash/exp-rc-control-050145.log`
+（+.boxlog/.rounds）、`exp-rc-off-051646.log`（+.boxlog/.rounds）。
+
+### 9.2 Phase B：fast_xmit 旁路替换（6.18 兼容层等价物）——仍楔死且该路径从未执行
+
+补丁：厂商 `net/core/dev.c` 三个函数入口改为 6.18 `sfe_compat` 等价写法
+（`skb->dev = …; dev_queue_xmit(skb); return true;`），vendor 函数体留作死码，
+各带 `pr_info_once("SBE-EXP: …")`：`dev_fast_xmit`(~4721)、
+`dev_fast_xmit_qdisc`(~4799)、`dev_fast_xmit_vp`(~4875)。
+
+镜像与设备运行验证（两层）：
+- Image 05:53 构建（71,434,248 B，`strings` 三个标记），FIT/sysupgrade 重
+  打包，`sysupgrade -n` 刷入。bin sha256 `c8c5988b…`。
+- p25（0:HLOS FIT，14,336 扇区）前 5,889,932 B（FIT 总长）sha256
+  `e0f6c8d6…` 与本地 bin 的 FIT 区间一致；FIT `kernel-1` 载荷（gzip）解压
+  13,434,888 B、含全部 3 个标记 → **打补丁内核确实在运行**。
+- 注意：sysupgrade bin 里 FIT 内核是压缩的，直接对 bin `strings` 验证无效；
+  build_dir Image 与 FIT 载荷因打包 strip 哈希不同，属正常。
+
+soak（06:00:28 起）：06:05:14 楔死，第 1 轮、4.7 min、2.6 GB，tx 冻结
+1,481,621；q208 全程 0x0、COMP5 0x18（06:04:57 瞬时 0x30），mode-2。
+对照：6.18 栈在同形状下 25 min / 23 GB 零楔死（WAN-TX-WEDGE-AB-2026-11-26）。
+
+**SBE-EXP 标记零触发**：整轮 >148 万 WAN TX 包，`dmesg | grep SBE-EXP` = 0；
+另做 45 s 与 90 s 单流探针（后者结束时也楔死：tx 冻结 424,193，14:13:28
+看门狗 HEALED），全程 0。
+
+零触发的原因（源码 + 运行期实测）：
+- 三个函数的调用点只有 SFE 前端（`sfe_ipv4_tcp/udp/esp`、`sfe_ipv6_*` 的
+  `sfe_fast_xmit_check` 分支）、`ppe_vp_rx.c`（VP 交付 `dev_fast_xmit_vp`/
+  `dev_fast_xmit_qdisc`）和 nss-dp `edma_v2/edma_rx.c:965`（EDMA RX 快速转发）。
+- 下载流量的 ECM 运行期采样：`ecm_ppe_ipv4/accelerated_count=1`、
+  `tcp_accelerated_count=1`，`ecm_sfe_ipv4/accelerated_count=0`；ECM init
+  两次 `selected_front_end=5`。即流量由 **PPE 硬件前端**加速，数据面不经
+  Linux fast-xmit 路径——这些函数对该流量结构性不可达。
+
+结论：fast_xmit 旁路不是 6.18 与 24.10 差异的来源；Phase B 的设计无法表达
+该假设，「打补丁后仍楔死」只证明靶点不在热路径，不构成对任何机制的证伪。
+证据：`/tmp/sbe-flash/exp-rc-control-060028.log`（+.boxlog）、
+`/tmp/sbe-flash/accel-check.sh` 的四点采样（ppe_acc=1 / sfe_acc=0）。
+
+### 9.3 同批新增观察
+
+1. 开机即楔死：刷机后 ~40 s、仅 708 包（无 ECM 流量）TX 冻结（mode-2），
+   看门狗 127 s 自愈（设备时间 13:59:28）。此前楔死只在高负载出现；这是
+   新现象，且与补丁无关（标记为零）——说明触发阈值比历史记录低得多，
+   甚至不需要 ECM 大流量。
+2. 同一启动内第二次楔死（14:05:14，soak）：楔死期间 rx 仍以 ~7 包/s 缓慢
+   推进（boxlog 1902356→1902470），看门狗判据满足。设备在 ~14:06:40 失联、
+   ~14:07:33 重新开机——与「heal 失败 → reboot」路径吻合；重启抹掉了当时
+   日志，无法进一步归因。
+3. 下一启动（14:07:33）首次楔死（90 s 探针末尾）由看门狗原地复位成功
+   （14:13:28 HEALED，tx 424193→424205）。即手术刀式自愈仍有效，但同一
+   启动内反复楔死时可能走到 reboot 升级路径。
+
+### 9.4 下一步（均未执行，需用户批准）
+
+1. **25.12-6.12 同工况 soak**：同为我方树/非 QSDK。若仍楔死 → 差异收窄到
+   内核 6.6 vs 6.12（修复发生在 6.12→6.18 之间，可 bisect）；若干净 →
+   差异在 25.12 集成层（模块集合、装载顺序、tier 默认）。
+2. **模块装载集 A/B**：历史 24.10 镜像运行时载 11 个 qca_nss 模块（9 个
+   公共 + 插件对）；25.12/6.18 tier=full 11 个（9 个公共 + phy/debug）。
+   phy/debug/flowmgr 的 kmod 包在历史 24.10 镜像里的 modules.d 条目是
+   0 字节、**从不自载**（2026-11-26 复核更正；此前的「17 个」是把 lsmod
+   的 used-by 列一并计数、又混入 nat46/ppp_generic 等非 NSS 行的误计）。
+   标准构建（v132 起）条目非空：phy/debug 上载、flowmgr 仍不上载，
+   运行时 13 个（见 §11.1 补记）；判别期 B–F 各臂仍在旧 11 个状态。
+   运行时差异只有插件对，见 §11。
+3. 内核侧 dmac cache/DMA API、nsscc/uniphy 时钟的最后差异（§8.4.2 第二项）。
+4. 产品兜底维持看门狗 v2；补记其升级行为：原地复位失败会 reboot（真机
+   已观察到一次，配合 §9.3.2 的失联窗口判读）。
+
+## 10. 25.12-6.12 同工况 soak（2026-11-26，第三台，v105-1-fe0a8896）——不复现楔死
+
+### 10.1 条件
+
+- 镜像：CI release `25.12-6.12 v105-1-fe0a8896`（OpenWrt SNAPSHOT，内核
+  6.12.112），`sysupgrade -n` 刷入；发行资产 sha256
+  `4f94ced1…2427`，上传后设备端 md5 `e1fe83a00834a9d826d8c1114842dbca`
+  与本地一致。刷机后 ~90 s 回网，eth1 2500 Mbps、DHCP 192.168.10.237、
+  默认路由通网关。
+- ECM 条件对等（本节判读的前提）：`/etc/nss.conf` 默认 `tier=full`，
+  启动装载 qca-ssdk/dp/ppe 全家 + ecm + sfe；dmesg
+  `ECM init: selected_front_end=5`（与 24.10 相同）；soak 期间机上采样
+  `ecm_ppe_ipv4/accelerated_count=1`、`ecm_sfe_ipv4=0`——流量确实由 PPE
+  硬件前端加速，与 24.10 楔死时的加速路径完全同构。
+- 形状相同：单流 TUNA `ubuntu-24.04.5-live-server-amd64.iso`，绑 USB 网卡，
+  每轮 420 s 到点续拉。判据（主机侧）：下载冻结 + 连续 3 次 ~2 s 100%
+  丢包。机上 1 Hz 记录 tx/rx/错误计数、q208/COMP5、port5 与 q0208 计数、
+  ECM 加速计数。本镜像没有 sbe-wan-tx-watchdog，楔死只能手工 AN 双翻转，
+  脚本内置该自愈路径（本轮未触发）。
+
+### 10.2 结果
+
+- 运行窗口 06:24:13–06:53:53（≈29.5 min；用户判定 ping 全通后再追加 10
+  分钟后收尾）。
+- 4 轮满 420 s 完成 + 第 5 轮进行中：完成下载合计 5.77 GB，进行中 ≈0.1 GB；
+  port5 TX **3,543,618 包**。
+- 丢包：624 次采样，623 次 0%，1 次 50%（单次瞬态，不构成楔死判据）。
+- 全程 `carrier_changes=2` 恒定（无翻链）；q208=0x0 全程无积压；COMP5
+  96.7% 采到 0x18、3.3% 采到 0x30 瞬态（散点、非连续，**从未到 0x0**，
+  不是 mode-1 指纹）。
+- `WEDGE` 事件 0 次；ECM ppe=1 覆盖整个下载期（首、尾 ppe=0 分别出现在
+  下载启动前与停拉之后）。
+- 口径备注：offload 流量下 eth1 netdev TX 计数恒 0（与 6.18 相同），
+  25.12 两栈共有的特征；压测/看门狗须用 port5 计数
+  （`/sys/ssdk/packet_counter`）。
+
+### 10.3 判读
+
+25.12-6.12 在同形状、ECM 可比条件下 29.5 min / 354 万包零楔死；24.10 基线
+同形状 1–3.5 min 必楔（7/7，0.88–2.5M 包）。两者 qca-ssdk/qca-nss-ppe
+源码逐字节相同，NSS 模块为同一源码对不同内核的编译产物。因此 §9.4.1 的两
+个分支里，落点是「干净 → 差异在 25.12 集成层」，可进一步收窄为：
+
+1. **装载集成**（当前最高优先级）：历史 24.10 镜像由 kmodloader 自载
+   11 个 qca_nss 模块（9 个公共 + 插件对
+   qca_nss_wifi_plugins/qca_wifi_nss_plugins）；
+   25.12-6.12 与 6.18 由 nss-load tier=full 装载 11 个（9 个公共 +
+   phy/debug）。运行时差异只有插件对（旧「17/14 个」计数已按
+   `/proc/modules` 复核更正，见 §9.4.2 与 §11.1）。模块装载集 A/B 的
+   判别器由 §11 的 ARM C 完成：去掉插件对后同工况零楔。
+2. **内核 6.6 vendor vs 6.12**（次优先级）：模块源码相同但编译目标内核不同；
+   若模块集对齐后 24.10 仍楔死，则差异只剩内核侧（dmac cache/DMA API、
+   nsscc/uniphy 时钟，§8.4.2 第二项），bisect 轴从 6.12→6.18 改为 6.6→6.12。
+
+与 6.18 的对照（25 min/23 GB 零楔）合并后，三个栈的结论矩阵：
+
+| 栈 | 内核 | 模块装载 | 同工况结果 |
+|---|---|---|---|
+| 24.10-6.6 | 6.6 vendor | kmodloader 11（9+插件对） | 1–3.5 min 必楔（7/7） |
+| 25.12-6.12 | 6.12 | nss-load 11 | 29.5 min / 3.5M 包零楔 |
+| 25.12-6.18 | 6.18 | nss-load 11 | 25 min / 23 GB 零楔 |
+
+### 10.4 证据
+
+- `/tmp/sbe-flash/soak-2512-062413.log`（+`.boxlog` 1718 行、`.rounds`），
+  脚本 `/tmp/sbe-flash/soak-2512.sh`、`box-mon-2512.sh`；副本已存
+  `downloads/wedge-evidence-2026-11-26-2512/`。
+- 收尾插曲：pkill 模式串与自己命令行子串匹配，收尾脚本自杀一次（退出码
+  144）；数据未受影响，清理与统计改为手工执行后补记。
+
+## 11. 模块装载集运行时判别：ARM B/C/D（2026-11-26，第三台）
+
+§10.3 把「24.10 装载集成」列为最高优先判别器。为免重编整树再逐项 bisect，
+改用两步：先出一版剔模块镜像（ARM B），再在本镜像上**纯运行时**增删模块
+复刻 25.12 的装载集（ARM C/D）——全程只在 ARM B 刷机一次（刷机已单独获批）。
+
+### 11.1 ARM B：标准 24.10 镜像——37 s 楔死；「三模块裁剪」实为空操作
+
+- 计划是剔 flowmgr/phy/debug 三模块再 soak。事后复核（2026-11-26 09:5x）
+  发现该裁剪对运行时是**空操作**：B 臂镜像（及此前刷过的各 24.10 镜像）
+  里三者的装载条目 `/etc/modules.d/{08-qca-nss-phy,30-qca-nss-debug,
+  50-qca-nss-flowmgr}` 是 0 字节文件，`/lib/modules` 里的 `.ko` 都在但
+  `kmodloader` 不加载。即判别期 24.10 运行时模块集一直是「9 个公共 NSS
+  模块 + 插件对」= 11 个，与 25.12 的 11 个（9 个公共 + phy/debug）只差
+  **插件对**；flowmgr 只存在于 24.10 的镜像文件层面。
+- **补记（v132 标准构建）**：同一条目在标准构建里非空
+  （`08-qca-nss-phy`=`qca-nss-phy\nsfp`、`30-qca-nss-debug`、
+  `50-qca-nss-flowmgr` 均 14–16 B）。v132 真机上 phy/debug 实载、
+  flowmgr 仍不上载（无 dmesg 报错），运行时因而是 13 个：与 25.12 的
+  11 个相比多**插件对**、无 flowmgr（phy/debug 两边都有）。B–F 各臂的
+  判读不受影响——phy/debug 同在 25.12 装载集里，且 §11.2/§11.3 已证明
+  模块存在本身不触发楔死；旧镜像为何是 0 字节条目未追（对运行时等价）。
+- 镜像：`/tmp/sbe-flash/24.10-armb-sysupgrade.bin`（82,576,182 B，
+  sha256 `a9ebca49…`），`sysupgrade -n` 07:14 刷入。
+- 结果：同形状压测 07:18:28 起，**37 s**／164 MB 后楔死，mode-2 指纹
+  （q208=0x0、COMP5=0x18 健康、netdev TX 冻在 94,520、100% 丢包）；
+  当时三频 AP 已起且有一个客户端关联（dmesg STA 04:cf:… 插入）。
+  日志 `exp-rc-control-071828.log`（复用 §9 的对照脚本，故沿用文件名）。
+- 判读：本臂实质=基线复现（与 7/7 必楔一致）；flowmgr/phy/debug 在
+  24.10 上从未参与，不是触发因素。运行时差异彻底收敛为**插件对**
+  （`qca_nss_wifi_plugins` + `qca_wifi_nss_plugins`）及其依赖的 ath12k。
+
+### 11.2 ARM C：复刻 25.12 集合（无插件对、Wi-Fi 全停）——50 min 零楔
+
+- 操作（纯运行时）：停 hostapd/`wpad` 后按依赖逆序
+  `rmmod qca_wifi_nss_plugins → ath12k_wifi7 → ath12k →
+  qca_nss_wifi_plugins`，得到与 25.12 等价的「无插件对」状态；
+  phy/debug 在 B 镜像里本就缺席（尝试补载找不到 .ko，但其缺席已被
+  11.1 证明无害）。
+- 结果：07:26:32–08:16 共 50 min，7 整轮完成 + 第 8 轮进行中；完成下载
+  **10.14 GB**，port5 TX **约 419 万包**（收尾采样 4,193,494）；1068 次
+  丢包采样仅 4 次 50% 瞬态；`carrier_changes` 恒 6；q208 全程 0x0；
+  COMP5 机上采样主体 0x18（189/214），偶见 0x48/0x30 瞬态与 1 次单点
+  0x0（均不连续，非 mode-1 指纹）；ECM `ecm_ppe=1` 覆盖下载期
+  （2877/2890 采样）；WEDGE 0 次。
+- 收尾插曲：收官脚本 pkill 模式自匹配自杀（rc=144），第 8 轮 curl
+  存活又跑满 420 s（+1.05 GB）后自然结束；主窗口数据不受影响。
+- 证据：`soak-2512-072632.log`（+`.boxlog` 330.9K、`.rounds`），副本存
+  `downloads/wedge-evidence-2026-11-26-25set/`。
+- 判读：内核 6.6、同源 NSS 模块、ECM 同构，仅去掉插件对（Wi-Fi 不起），
+  楔死**完全消失** → 触发条件驻留在插件对/ath12k 这条链上，不是「装载
+  集成」泛泛的模块数量差异。
+
+### 11.3 ARM D：插件对 + ath12k 载入、Wi-Fi 数据面空闲——40 min 零楔
+
+- 操作（纯运行时）：`modprobe ath12k` + `modprobe qca_wifi_nss_plugins`
+  恢复插件对（依赖链自动带起 `qca_nss_wifi_plugins`）；**不启 hostapd**、
+  不建 AP 接口 → Wi-Fi 数据面不工作。
+- 结果：08:17–08:57 共 40 min，5 整轮完成；完成下载 2.84 GB；856 次
+  丢包采样**全部 0%**；cc=6 恒定；WEDGE 0 次。口径备注：前 ~5.5 min 与
+  C 臂第 8 轮残留 curl 重叠（双流），其后 34.5 min 为单流，不影响判读。
+- 证据：`soak-2512-081724.log`（+`.boxlog` 267.2K、`.rounds`），副本存
+  `downloads/wedge-evidence-2026-11-26-25set/`。
+- 判读：插件对模块**存在**不触发楔死——需要 Wi-Fi 数据面真实工作
+  （AP up + 客户端关联/流量）才触发（对照 11.1：AP+客户端齐备时 37 s
+  即楔）。剩余差异收敛到「插件对 + 活跃 Wi-Fi 数据面」的交互点，最大
+  嫌疑是 ath12k 以 `fse=Y` 向插件注册 FSE/PPE 回调，Wi-Fi 流量经此编程
+  PPE 流表时污染有线端口 TX 通路——由 ARM F 单变量验证（§11.4）。
+
+### 11.4 ARM F：ath12k `fse=0` + Wi-Fi 正常 up（相对 ARM B 单变量）——30 min 零楔
+
+- 操作：不改镜像、不刷机。发现两个工具性障碍并绕开：`/sbin/modprobe` 是
+  kmodloader 的符号链接、**静默忽略命令行模块参数**；`/etc/modules.d/ath12k`
+  被 QSDK 厂商启动脚本（START 01/02/04/05）**每次开机重写**。持久注入点改用
+  kmodloader 支持的 `/etc/modules.conf`（`options ath12k fse=0`，源码依据
+  ubox `load_options()`），重启后回读 `fse=N` 生效。前置条件与 ARM B 对齐：
+  ath12k/ath12k_wifi7/插件对全部加载、三频 AP 起来、phy00.0-0 有一个客户端
+  关联（FSE 流表具备编程条件）、eth1 2500/DHCP 正常、无二次看门狗重启。
+- 源码语义：`ath12k_fse_init()` 在 `ath12k_fse_enable` 为假时直接返回，
+  不调用 `ath_fse_ops_callback_register()`——ath12k 与插件之间的 FSE/PPE
+  回调注册及后续按流钩子整体关闭；其余 Wi-Fi 数据面路径不变。
+- 结果（用户按 0% 丢包口径定 30 min）：09:10:22–09:40:22，**WEDGE 0 次**；
+  4 整轮完成 3.05 GB，port5 TX 1,792,057 包；`carrier_changes` 恒 2
+  （全程无翻链、无自愈动作）；622 次丢包采样仅 5 次单点 50% 瞬态、
+  无任何 100% 段；机上 1 Hz 日志 q208 分布（0x0 1711/1733，余为≤0x6
+  的单点瞬时占用）与 c5 分布（0x18/0x30/0x48/0x60 轮转 + 33 次 0x0
+  瞬点）与 C/D 两个干净臂同构；ECM `ecm_ppe=1` 覆盖所有下载期
+  （1721/1733）。
+- 证据：`soak-2512-091022.log`（+`.boxlog`、`.rounds`、`fse0-setup.txt`），
+  副本存 `downloads/wedge-evidence-2026-11-26-fse0/`。
+
+### 11.5 判读（ARM B/C/D/F 合并）
+
+| 臂 | 插件对 | Wi-Fi 数据面 | ath12k fse | 结果 |
+|---|---|---|---|---|
+| 基线 24.10 | 是 | AP up（有客户端） | Y | 1–3.5 min 必楔（7/7） |
+| B（标准 24.10 镜像） | 是 | AP up + 1 客户端 | Y | **37 s 楔**（mode-2） |
+| C | 否（rmmod） | down | — | 50 min / 10.14 GB 零楔 |
+| D | 是 | 模块在、无 AP/无流量 | Y | 40 min / 2.84 GB 零楔 |
+| F | 是 | AP up + 1 客户端 | **N** | **30 min / 3.05 GB 零楔** |
+
+链式判读：flowmgr 排除（B）→ 模块存在本身不楔（D）→ 需要「插件对 + 活跃
+Wi-Fi 数据面」（C/D vs B）→ 在后者全部就位的条件下，仅 `fse=0` 即消除
+楔死（F vs B，单变量）。**触发点收敛为 ath12k 经插件向 PPE 注册的
+FSE/PPE 回调：Wi-Fi 侧编程 PPE 流表时污染有线端口（port5）TX 取包通路。**
+这与 mode-2 指纹（PPE 端口吞包、q208 空、COMP5 健康）以及 ECM 为唯一
+触发器的既有结论自洽——有线路由流量本身只用 PPE 既有流表，只有 Wi-Fi
+侧的 FSE 编程会碰同一 PPE 的流表/TX 取包状态机。
+
+**修复候选**：`options ath12k fse=0`（`/etc/modules.conf`）——30 min 同
+形状零楔、有线 ECM 加速保持（ppe=1 全程）、Wi-Fi 三频/客户端关联全正常；
+代价是 Wi-Fi 客户端流量不走 PPE FSE 加速（回普通转发路径），吞吐影响
+未测。这是配置级规避，不是代码根因修复（PPE/EDMA 交互缺陷仍在 QCA 栈内）。
+
+### 11.6 下一步
+
+1. ~~**产品化 F 修复**~~（2026-11-26 已完成并真机验证，见 §11.7）：
+   `options ath12k fse=0` 已作为 `24.10-6.6/files/etc/modules.conf`
+   打进 v132 镜像；剩余验证项只有 **Wi-Fi 吞吐粗测**（确认回退到普通
+   转发后无明显退化，需可控的 Wi-Fi 客户端，待条件具备补测）。
+2. **根因修复路线**（保留 FSE 的前提下）：沿 FSE 流表编程路径找 QCA 缺陷
+   （插件 `ppe_fse_cb_register` → PPE FSE ops → 端口 TX 队列交互），
+   对照 25.12/6.18 干净栈中同一路径的行为差异。
+3. 看门狗 v2 保留为兜底（与 fse=0 不冲突，双保险）。
+
+### 11.7 v132 真机验证：fse=0 从镜像生效——30 min 同形状零楔（2026-11-26）
+
+- 镜像：v132 标准构建，82,576,182 B，sha256 `31b8863c…a52341b`。
+  `options ath12k fse=0` 烘焙在 `files/etc/modules.conf`（构建 overlay
+  注入，见 ubox `load_options()` 语义，§11.4）；`scp -O` 上传哈希一致，
+  `sysupgrade -n` 刷入（用户批准），重启后回读 `fse=N`——**来自镜像
+  而非手改**，即出厂状态即生效。
+- 首启核对：三频 AP + 1 客户端关联（phy00.0-0）、eth1 2500/DHCP `.237`、
+  网关 ping 通、sbe-wan-tx-watchdog 运行中；模块集 13 个 qca_nss
+  模块（9 公共 + phy + debug + 插件对；flowmgr 有条目不上载，见 §11.1
+  补记），与 §11.4 F 臂的条件对齐。
+- 结果（09:59:14–10:29:16，30 min）：**WEDGE 0 次、HEAL 0 次**；4 轮满
+  420 s + 第 5 轮进行中；完成下载 1.80 GB（694+804+262+41 MB），port5
+  TX 累计 929,720 包；634 次丢包采样 11 次单点非零、**无任何 100% 段**；
+  `carrier_changes` 恒 2（1737/1738 采样）；q208=0x0 1736/1738（2 次
+  单点 0x1）；COMP5 0x18 1687 / 0x30 51，与 C/D/F 干净臂同构；
+  ECM `ecm_ppe=1` 覆盖下载全程（1721/1738，余为起拉前/停拉后）。
+- 口径备注：第 3/4 轮速率骤降（623 / 97 KB/s），同窗口完成量累计
+  ~1.5 GB——与本机上游 443 代理限额（~1.7 GB）的既有现象吻合；TX 计数
+  持续增长、ping 0%、q208 空，**不是楔死**（未单独归因，不影响判读）。
+- 证据：`soak-2512-095914.log`（+`.boxlog` 1738 行、`.rounds`），副本存
+  `downloads/wedge-evidence-2026-11-26-v132/`。
+- 判读：修复候选完成**端到端产品化验证**——镜像级 `fse=0` 与手改配置
+  行为等价，30 min 同形状零楔，有线 ECM 加速保持。Wi-Fi 客户端流量
+  不走 PPE FSE 的吞吐代价仍是唯一未测项（§11.6.1）。
