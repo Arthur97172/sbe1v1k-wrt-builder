@@ -70,7 +70,8 @@ jobs:
             TAG="${{ inputs.tag }}"
             [ -n "$TAG" ] || TAG="flash-kit-dryrun-${GITHUB_RUN_ID}"
           fi
-          NAME="sbe1v1k-flash-kit-${TAG}"
+          # tag 形如 flash-kit-v1.0.0，包名只要版本段：sbe1v1k-flash-kit-v1.0.0.zip
+          NAME="sbe1v1k-flash-kit-${TAG#flash-kit-}"
           # 只打包运行所需的内容：脚本、辅助工具、恢复素材、firmware/ 空目录。
           # src/ 与 recovery-src/ 源码体积很小，一起带上便于审计与复现。
           ( cd openwrt-flash && zip -r -9 "../${NAME}.zip" . -x 'firmware/*.bin' )
@@ -149,12 +150,21 @@ jobs:
           set -euo pipefail
           NAME="${{ steps.pack.outputs.name }}"
           TAG="${{ steps.pack.outputs.tag }}"
-          gh release create "$TAG" \
-            "${NAME}.zip" "${NAME}.zip.sha256" \
-            --title "SBE1V1K 刷机工具 ${TAG}" \
-            --notes-file release-notes.md || {
-              # tag 已存在（重新发布同一版本）时改为更新资产
-              gh release upload "$TAG" "${NAME}.zip" "${NAME}.zip.sha256" --clobber
-              gh release edit "$TAG" --notes-file release-notes.md
-            }
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # 重复发布同一版本：只保留本次两个资产，删掉历史命名的遗留文件
+            gh release view "$TAG" --json assets -q '.assets[].name' | while IFS= read -r a; do
+              [ -n "$a" ] || continue
+              if [ "$a" != "${NAME}.zip" ] && [ "$a" != "${NAME}.zip.sha256" ]; then
+                echo "删除遗留资产：$a"
+                gh release delete-asset "$TAG" "$a" --yes
+              fi
+            done
+            gh release upload "$TAG" "${NAME}.zip" "${NAME}.zip.sha256" --clobber
+            gh release edit "$TAG" --title "SBE1V1K 刷机工具 ${TAG}" --notes-file release-notes.md
+          else
+            gh release create "$TAG" \
+              "${NAME}.zip" "${NAME}.zip.sha256" \
+              --title "SBE1V1K 刷机工具 ${TAG}" \
+              --notes-file release-notes.md
+          fi
           echo "Release: $(gh release view "$TAG" --json url -q .url)"
