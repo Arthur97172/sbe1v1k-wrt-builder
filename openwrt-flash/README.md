@@ -20,20 +20,42 @@
 路由器上的 **2.5G 口（通常标 LAN1）** 用网线直连电脑的有线网卡。
 刷写开始前不要插别的线到这台路由器。
 
-### 2. 放固件
+### 2. 准备本目录（推荐：从 GitHub Releases 下载 zip）
 
-把 sysupgrade 固件（`*.bin`）放进下列**任意一个**文件夹，文件夹要和本脚本
-放在同一目录（或在它的上一级）：
+本工具整个打成一个 zip 放在 GitHub Releases 里。下载解压后的目录结构：
 
 ```
-openwrt-flash/
-  24.10-6.6/        ← 24.10-6.6 的 sysupgrade 固件放这里
-  25.12-6.12/       ← 25.12-6.12 的
-  25.12-6.18/       ← 25.12-6.18 的
+sbe1v1k-flash-kit/
+  flash-sbe1v1k.cmd / .ps1    Windows 入口
+  flash-sbe1v1k.sh            Linux 入口
+  bin/                        DHCP/TFTP/SSH 辅助工具
+  assets/                     恢复系统 initramfs 与第一跳启动器
+  firmware/                   ← 固件放这里（zip 里预置了这个空文件夹）
 ```
 
-脚本会扫描三个文件夹里所有 `.bin`，让你选一个。也可以直接把文件放进
-`openwrt-flash/` 下的这三个目录之一——名字不要求特定格式。
+也可以用 git clone 整个仓库的 `openwrt-flash/` 目录，效果一样。
+
+### 3. 放固件
+
+把 **sysupgrade 固件（`*.bin`）** 放进 `firmware/` 文件夹：
+
+```
+sbe1v1k-flash-kit/
+  firmware/
+    openwrt-ipq95xx-...-squashfs-sysupgrade.bin
+```
+
+- 自己编译的（24.10-6.6 / 25.12-6.12 / 25.12-6.18）和别人编译的固件都可以，
+  只要是本机的 sysupgrade `*.bin`，**文件名不限**；
+- 运行时先检查这个文件夹：没有任何 `.bin` 会直接提示你去放；
+- 放了多个 `.bin` 时，脚本会列出来让你选一个。
+
+刷写固定用 `sysupgrade -F -n`：`-F` 放行板名差异（`askey` 与 `spectrum`
+两种板名都接受），`-n` **不保留旧配置**——Wi-Fi、密码、插件设置全部丢失，
+需要保留配置请先手工备份。
+
+> 固件就位前不确认版本差异也没关系：脚本会先读设备当前固件版本，刷完再读一次，
+> 两次相同会告警「可能没有真正写入新固件」（对应历史上的静默失败案例）。
 
 > 刷写会使用 `sysupgrade -F -n`：**不保留旧配置**，Wi-Fi、密码、插件设置全部丢失。
 > 需要保留配置请手工备份。
@@ -137,6 +159,7 @@ sudo ./flash-sbe1v1k.sh --firmware /path/x.bin    # 直接指定固件
 ```
 flash-sbe1v1k.cmd / .ps1   Windows 入口（双击 .cmd）
 flash-sbe1v1k.sh           Linux 入口
+firmware/                  sysupgrade 固件放这里（*.bin，可多个）
 bin/
   sbe-flash-tool_windows_amd64.exe   自包含辅助工具（DHCP/TFTP/SSH，静态编译）
   sbe-flash-tool_linux_amd64         同上，Linux 版
@@ -167,4 +190,5 @@ cd assets && sha256sum -c SHA256SUMS
 
 - 只支持 Spectrum SBE1V1K（ipq9574）。脚本会核对设备型号，不匹配直接停止。
 - 需要原厂 APPSBL 的恢复流程（Reset 12 秒进入），第三方 bootloader 不适用。
-- 刷写的固件必须是本项目的 sysupgrade 镜像（`-F` 用于放行板名差异）。
+- 刷写的固件必须是本机可用的 sysupgrade `*.bin`（自己编译或别人编译的都可以）；
+  `-F` 用于放行板名差异，`-n` 不保留配置。

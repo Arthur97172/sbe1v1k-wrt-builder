@@ -1,0 +1,160 @@
+name: 🧰 Release Flash Kit
+
+# 把 openwrt-flash/（离线恢复模式刷机工具）整体打成一个 zip，发布到 GitHub
+# Releases。用户下载 zip 解压后，把 sysupgrade 固件（*.bin）放进 firmware/
+# 文件夹，直接运行脚本即可——不需要 git、不需要联网下载任何东西。
+#
+# 触发方式：
+#   - push tag：flash-kit-v*（例如 flash-kit-v1.0.0）
+#   - 手动 workflow_dispatch（tag 留空则用 flash-kit-dryrun-<run_id> 的
+#     预发布，方便先检查 zip 内容再正式打 tag）
+#
+# 本工作流不编译固件、不接触设备，也不触发任何 build-* 工作流
+# （后者只监听 main 分支上的各自目录）。
+
+on:
+  push:
+    tags:
+      - 'flash-kit-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布 tag（留空 = 只构建 zip 作为工作流产物，不建 Release）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flash-kit-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TZ: UTC
+  LC_ALL: C
+
+jobs:
+  release:
+    name: Build zip & create Release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 校验随仓库保存的素材与二进制
+        run: |
+          set -euo pipefail
+          test -x openwrt-flash/flash-sbe1v1k.sh
+          echo "== assets =="
+          ( cd openwrt-flash/assets && sha256sum -c SHA256SUMS )
+          echo "== bin =="
+          ( cd openwrt-flash/bin && sha256sum -c SHA256SUMS )
+          # 记录随包发布的关键素材指纹，写进 Release notes
+          {
+            echo "### 随包素材"
+            echo '```'
+            ( cd openwrt-flash/assets && sha256sum initramfs.itb rtq7300t_boot_auto_upgrade_fw.img )
+            ( cd openwrt-flash/bin && sha256sum sbe-flash-tool_linux_amd64 sbe-flash-tool_windows_amd64.exe )
+            echo '```'
+          } > kit-checksums.md
+
+      - name: 打包 zip
+        id: pack
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-manual}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+            [ -n "$TAG" ] || TAG="flash-kit-dryrun-${GITHUB_RUN_ID}"
+          fi
+          NAME="sbe1v1k-flash-kit-${TAG}"
+          # 只打包运行所需的内容：脚本、辅助工具、恢复素材、firmware/ 空目录。
+          # src/ 与 recovery-src/ 源码体积很小，一起带上便于审计与复现。
+          ( cd openwrt-flash && zip -r -9 "../${NAME}.zip" . -x 'firmware/*.bin' )
+          sha256sum "${NAME}.zip" > "${NAME}.zip.sha256"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "== zip 内容 =="
+          unzip -l "${NAME}.zip" | sed -n '1,60p'
+          # zip 里必须有 firmware/ 目录占位，用户解压后直接把固件丢进去
+          unzip -l "${NAME}.zip" | grep -q 'firmware/README.txt' \
+            || { echo "zip 缺少 firmware/README.txt" >&2; exit 1; }
+          for f in flash-sbe1v1k.sh flash-sbe1v1k.ps1 flash-sbe1v1k.cmd \
+                   bin/sbe-flash-tool_linux_amd64 bin/sbe-flash-tool_windows_amd64.exe \
+                   assets/initramfs.itb assets/rtq7300t_boot_auto_upgrade_fw.img; do
+            unzip -l "${NAME}.zip" | grep -q " $f\$" \
+              || { echo "zip 缺少 $f" >&2; exit 1; }
+          done
+          echo "zip 结构与校验 PASS"
+
+      - name: 生成 Release notes
+        run: |
+          set -euo pipefail
+          NAME="${{ steps.pack.outputs.name }}"
+          TAG="${{ steps.pack.outputs.tag }}"
+          {
+            echo "## SBE1V1K 离线恢复模式刷机工具（${TAG}）"
+            echo
+            echo "Spectrum SBE1V1K（ipq9574 / Askey）的傻瓜式刷机包：断电、按住 Reset 上电、"
+            echo "保持约 12 秒进入原厂恢复模式，其余步骤（本机地址、DHCP、TFTP、上传、"
+            echo "sha256 校验、\`sysupgrade -F -n\`）全部由脚本完成。**全程离线**。"
+            echo
+            echo "### 使用方法"
+            echo
+            echo "1. 下载 \`${NAME}.zip\` 并解压；"
+            echo "2. 把自己的 **sysupgrade 固件（\`*.bin\`）** 放进 \`firmware/\` 文件夹"
+            echo "   （自己编译的、别人编译的都可以，文件名不限，可放多个）；"
+            echo "3. 网线插路由器 **2.5G LAN1 口**，另一头接电脑有线网卡；"
+            echo "4. Windows 双击 \`flash-sbe1v1k.cmd\`；Linux 运行"
+            echo "   \`chmod +x flash-sbe1v1k.sh bin/sbe-flash-tool_linux_amd64 && sudo ./flash-sbe1v1k.sh\`；"
+            echo "5. 按提示选网卡（多网卡时）、选固件、按提示复位上电；"
+            echo "6. 刷完把网线换到 **10G 口或 1G LAN 口**（新固件的 2.5G 口是 WAN），"
+            echo "   或用第二网卡模式免换线（见包内 README）。"
+            echo
+            echo "> 刷写固定使用 \`sysupgrade -F -n\`：**不保留旧配置**。"
+            echo
+            echo "### 校验"
+            echo
+            echo '```'
+            echo "sha256sum -c ${NAME}.zip.sha256"
+            echo '```'
+            echo
+            cat kit-checksums.md
+            echo
+            echo "素材说明：\`assets/initramfs.itb\` 为 OpenWrt 官方 SNAPSHOT"
+            echo "r38189-706052b20f（内核 6.18.60，GPL-2.0），官方 snapshots 不保留旧构建，"
+            echo "故随包保存；详见包内 \`assets/README.md\`。"
+            echo
+            echo "**状态**：Go 辅助工具、DHCP/TFTP 服务、Linux 脚本流程已本机自测 PASS；"
+            echo "**Windows 脚本与真机全链路尚未做设备验收（NOT TESTED）**。"
+          } > release-notes.md
+
+      - name: 上传构建产物（手动触发时始终执行）
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.name }}
+          path: |
+            ${{ steps.pack.outputs.name }}.zip
+            ${{ steps.pack.outputs.name }}.zip.sha256
+          if-no-files-found: error
+
+      - name: 创建 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/flash-kit-v') || github.event.inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NAME="${{ steps.pack.outputs.name }}"
+          TAG="${{ steps.pack.outputs.tag }}"
+          gh release create "$TAG" \
+            "${NAME}.zip" "${NAME}.zip.sha256" \
+            --title "SBE1V1K 刷机工具 ${TAG}" \
+            --notes-file release-notes.md || {
+              # tag 已存在（重新发布同一版本）时改为更新资产
+              gh release upload "$TAG" "${NAME}.zip" "${NAME}.zip.sha256" --clobber
+              gh release edit "$TAG" --notes-file release-notes.md
+            }
+          echo "Release: $(gh release view "$TAG" --json url -q .url)"

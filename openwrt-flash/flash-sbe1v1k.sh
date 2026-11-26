@@ -20,7 +20,7 @@ DEVICE_IP="192.168.1.1"
 LAN_HOST_IP="192.168.1.2"
 LAN_PREFIX=24
 
-FIRMWARE_DIRS="24.10-6.6 25.12-6.12 25.12-6.18"
+FIRMWARE_DIR_NAME="firmware"
 
 DRY_RUN=0
 OPT_IFACE=""
@@ -85,7 +85,7 @@ SBE1V1K 恢复模式刷机脚本（Linux）
 流程:
   1. 核对 assets / bin 的 sha256
   2. 选择有线网卡
-  3. 选择固件（放在 24.10-6.6 / 25.12-6.12 / 25.12-6.18 文件夹里）
+  3. 选择固件（放在 firmware 文件夹里，任意 sysupgrade *.bin 都支持）
   4. 本机临时配置 $RECOVERY_HOST_IP/$RECOVERY_PREFIX，提供 DHCP+TFTP
      路由器：断电 → 按住 Reset → 上电 → 约 12 秒后松手
   5. 等待恢复系统上线，上传固件并做双端 sha256 校验
@@ -266,15 +266,14 @@ pick_iface() {
 # ---------------------------------------------------------------- 固件选择
 
 find_firmwares() {
+    # 统一从 firmware/ 文件夹取：自己编译的和别人编译的 sysupgrade 固件都放这里
     local base dir f
     for base in "$SCRIPT_DIR" "$SCRIPT_DIR/.." "$PWD"; do
-        [ -d "$base" ] || continue
-        for dir in $FIRMWARE_DIRS; do
-            [ -d "$base/$dir" ] || continue
-            for f in "$base/$dir"/*.bin; do
-                [ -f "$f" ] || continue
-                printf '%s\n' "$f"
-            done
+        dir="$base/$FIRMWARE_DIR_NAME"
+        [ -d "$dir" ] || continue
+        for f in "$dir"/*.bin; do
+            [ -f "$f" ] || continue
+            printf '%s\n' "$f"
         done
     done | awk '!seen[$0]++'
 }
@@ -298,11 +297,11 @@ pick_firmware() {
         cat >&2 <<EOF
 ${C_RED}没有找到固件。${C_RST}
 
-请把 sysupgrade 固件（.bin）放进下列任一文件夹（与脚本同目录或上一级）：
-  $(echo $FIRMWARE_DIRS | sed "s/ /  /g")
+firmware 文件夹里没有任何 .bin 文件：
+  $(printf '%s' "$SCRIPT_DIR/firmware")
 
-例如：
-  openwrt-flash/24.10-6.6/openwrt-...-sysupgrade.bin
+请把 sysupgrade 固件（.bin）放进这个 firmware 文件夹再运行。
+自己编译的、别人编译的固件都可以，文件名不限。
 EOF
         exit 2
     fi

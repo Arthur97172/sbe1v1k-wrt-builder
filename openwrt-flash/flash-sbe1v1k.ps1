@@ -29,7 +29,7 @@ $RecoveryPrefix = 16
 $DeviceIp       = '192.168.1.1'
 $LanHostIp      = '192.168.1.2'
 $LanMask        = '255.255.255.0'
-$FirmwareDirs   = @('24.10-6.6', '25.12-6.12', '25.12-6.18')
+$FirmwareDir    = 'firmware'
 
 # ---------------------------------------------------------------- 输出与交互
 
@@ -181,19 +181,18 @@ function Select-Adapter($purpose, $preset) {
 # ---------------------------------------------------------------- 固件选择
 
 function Find-Firmwares {
+    # 统一从 firmware\ 文件夹取：自己编译的和别人编译的 sysupgrade 固件都放这里
     $bases = @($ScriptDir, (Split-Path -Parent $ScriptDir), (Get-Location).Path)
     $seen = @{}
     $list = @()
     foreach ($b in $bases) {
-        foreach ($d in $FirmwareDirs) {
-            $dir = Join-Path $b $d
-            if (-not (Test-Path $dir)) { continue }
-            foreach ($f in Get-ChildItem -Path $dir -Filter '*.bin' -File -ErrorAction SilentlyContinue) {
-                $key = $f.FullName.ToLower()
-                if (-not $seen.ContainsKey($key)) {
-                    $seen[$key] = $true
-                    $list += $f
-                }
+        $dir = Join-Path $b $FirmwareDir
+        if (-not (Test-Path $dir)) { continue }
+        foreach ($f in Get-ChildItem -Path $dir -Filter '*.bin' -File -ErrorAction SilentlyContinue) {
+            $key = $f.FullName.ToLower()
+            if (-not $seen.ContainsKey($key)) {
+                $seen[$key] = $true
+                $list += $f
             }
         }
     }
@@ -211,10 +210,11 @@ function Select-FirmwareFile($preset) {
         Write-Host ""
         Err "没有找到固件。"
         Write-Host ""
-        Write-Host "请把 sysupgrade 固件（.bin）放进下列任一文件夹（与脚本同目录或上一级）："
-        foreach ($d in $FirmwareDirs) { Write-Host "  $d" }
+        Write-Host "firmware 文件夹里没有任何 .bin 文件："
+        Write-Host "  $(Join-Path $ScriptDir $FirmwareDir)"
         Write-Host ""
-        Write-Host "例如： openwrt-flash\24.10-6.6\openwrt-...-sysupgrade.bin"
+        Write-Host "请把 sysupgrade 固件（.bin）放进这个 firmware 文件夹再运行。"
+        Write-Host "自己编译的、别人编译的固件都可以，文件名不限。"
         exit 2
     }
 
