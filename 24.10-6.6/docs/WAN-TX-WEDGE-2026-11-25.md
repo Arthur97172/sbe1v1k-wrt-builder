@@ -132,9 +132,10 @@ port5 RX/TX 时钟 clk_set_rate 125 MHz）+ `ssdk_uniphy1_clock_source_set`
 卡点因此改为 **GMAC TX FIFO 与 uniphy1 SGMII+ 速率适配之间的 TX 方向**
 （时钟由 NSSCC port5 TX clock 提供），而不是 PPE port wrapper 内部。另一个
 关键事实：`adpt_hppe_sgmii_speed_clock_set` 没有 `FAL_SPEED_2500` 分支
-（走 default 空），2.5G SGMII+ 在 SSDK 时钟表里本就不完整；而 QCA 参考板
-（rdp453/475/459）与我们 6.18 上游 DTS 都把 2.5G QCA8081 口配成 USXGMII
-（`switch_mac_mode1=0x0d`）。
+（走 default 空），2.5G SGMII+ 在 SSDK 时钟表里本就不完整；QCA 参考板
+（rdp475 等）把 2.5G QCA8081 口配成 USXGMII（`switch_mac_mode1=0x0d`），
+该分支对 2500 有完整时钟编程（`adpt_hppe_usxgmii_speed_clock_set`，含
+GMAC 4bit 宽度路径）。注意我们的 6.18 树沿用 0x0f、同样没做这个验证。
 
 真机结果（设备 3，v130-1，ECM engine=auto，看门狗停用）：
 
@@ -234,8 +235,10 @@ mode-2 经 AN 双翻转同样复活（§6.2 表只覆盖了 mode-1）。翻转�
 2. 根因仍未消除：触发因素已锁定 ECM/PPE flow offload（A/B/A），卡点修正
    为 GMAC TX FIFO ↔ uniphy1 SGMII+ TX（§6.2）。当前优先级最高的预防实验
    是单变量把 port5 从 SGMII_CHANNEL0(0x0f) 改为 USXGMII(0x0d)（QCA 参考
-   板/6.18 配法，SSDK 的 SGMII+ 2500 时钟表本就不完整），在同一 24.10 树
-   上跑同一 wedge-loop 压测 A/B 判定。
+   板 rdp475 配法；SGMII_CHANNEL0 在 SSDK 里映射为纯 SGMII，2500 时端口
+   时钟设置是空操作，而 USXGMII 分支对 2500 有完整时钟编程），在同一 24.10
+   树上跑同一 wedge-loop 压测 A/B 判定。我们的 6.18 树同样用 0x0f，其未复
+   现楔死不能作为 mac mode 已验证的证据。
 3. 高负载下楔死数分钟内可复发：看门狗按次复位（`max_heals` 限流），
    单次中断 8–16 s；持续大流量场景下用户会感知周期性短暂断流，需在
    release notes 说明。
