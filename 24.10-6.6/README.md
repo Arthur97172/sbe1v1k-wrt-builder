@@ -366,9 +366,11 @@ enable）拉起 `/usr/sbin/sbe-wan-tx-watchdog`。每 15 s 采样 `eth1` 的
 （`ath12k fse=N`）：三频 Wi-Fi 与客户端关联完全正常，有线 ECM/PPE 加速
 不受影响，同形状 30 分钟压测零楔死；v132 真机已从镜像验证（fse=N 出厂
 生效，30 min/4 轮/port5 TX 93 万包零楔，ECM ppe=1 全程，见 §11.7）；
-代价是 Wi-Fi 客户端流量走普通转发
-路径（不进 PPE FSE 加速，吞吐影响未测）。看门狗保留为兜底。判别实验
-（ARM B/C/D/F）与证据见 `docs/WAN-TX-WEDGE-2026-11-25.md` §11。
+代价是 Wi-Fi 客户端流量不走 PPE FSE 加速——2026-11-26 本地路由台架
+A/B 实测该代价≈0（2.4G 286 Mbps 链路：fse=0 23.8 MB/s vs fse=1
+24.1 MB/s，§11.8）。看门狗保留为兜底。判别实验（ARM B/C/D/F）、
+Wi-Fi 代价 A/B 与源码根因调查报告见
+`docs/WAN-TX-WEDGE-2026-11-25.md` §11。
 
 安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
 `/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读

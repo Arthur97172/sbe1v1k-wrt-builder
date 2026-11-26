@@ -644,11 +644,12 @@ FSE/PPE 回调：Wi-Fi 侧编程 PPE 流表时污染有线端口（port5）TX �
 
 1. ~~**产品化 F 修复**~~（2026-11-26 已完成并真机验证，见 §11.7）：
    `options ath12k fse=0` 已作为 `24.10-6.6/files/etc/modules.conf`
-   打进 v132 镜像；剩余验证项只有 **Wi-Fi 吞吐粗测**（确认回退到普通
-   转发后无明显退化，需可控的 Wi-Fi 客户端，待条件具备补测）。
+   打进 v132 镜像；~~Wi-Fi 吞吐粗测~~已完成（见 §11.8，代价≈0）。
 2. **根因修复路线**（保留 FSE 的前提下）：沿 FSE 流表编程路径找 QCA 缺陷
    （插件 `ppe_fse_cb_register` → PPE FSE ops → 端口 TX 队列交互），
-   对照 25.12/6.18 干净栈中同一路径的行为差异。
+   对照 25.12/6.18 干净栈中同一路径的行为差异。源码级调查报告已完成
+   （2026-11-26，只读静态审计，见 §11.9）：5 个排序假设、file:line 锚点、
+   单变量验证方案；待批准的设备侧取证/开关实验列出在 §11.9 末。
 3. 看门狗 v2 保留为兜底（与 fse=0 不冲突，双保险）。
 
 ### 11.7 v132 真机验证：fse=0 从镜像生效——30 min 同形状零楔（2026-11-26）
@@ -675,4 +676,86 @@ FSE/PPE 回调：Wi-Fi 侧编程 PPE 流表时污染有线端口（port5）TX �
   `downloads/wedge-evidence-2026-11-26-v132/`。
 - 判读：修复候选完成**端到端产品化验证**——镜像级 `fse=0` 与手改配置
   行为等价，30 min 同形状零楔，有线 ECM 加速保持。Wi-Fi 客户端流量
-  不走 PPE FSE 的吞吐代价仍是唯一未测项（§11.6.1）。
+  不走 PPE FSE 的吞吐代价由 §11.8 补测，结论≈0。
+
+### 11.8 Wi-Fi 吞吐代价 A/B：fse=0 无可测代价（2026-11-26，第三台）
+
+背景：§11.7 之后唯一未测项——fse=0 让 Wi-Fi 客户端流量不走 PPE FSE，
+其吞吐代价未知。上游（443/80 代理限额）当日上午处于限速态，因此改用
+**本地路由台架**测量，不依赖上游。
+
+- 台架（全部主机侧，可复现）：主机 wlp0s20f3 关联路由器 WiFi_2.4G
+  （2462，HE-MCS11-NSS2 286.7 Mbps，-28 dBm）；虚拟地址
+  `192.168.10.88/32` 挂 lo + main 表 via 路由指向 wlp，客户端用
+  `curl --interface wlp0s20f3`（SO_BINDTODEVICE 使路由带设备约束，绕开
+  local 表短接）；路由器 `ip neigh … nud permanent` 静态 ARP 指向主机
+  eno0；主机 `accept_local=1`（否则 SYN-ACK 的 src 属本机地址被丢）。
+  服务器 `python3 -m http.server --bind 192.168.10.88`，载荷 100 MB
+  随机文件。流量形状：Wi-Fi 客户端 → 路由器 NAT → eth1(port5) → 主机
+  eno0，PPE 加速流（ecm_ppe=1）。
+- **A 臂 fse=0**（v132 热重载后状态）：3×30 s，18 次下载全通，均值
+  23.8 MB/s（187–194 Mbps），零停顿；ecm_ppe=1 占 79–93%；q208 恒
+  0x0；cc 恒 2。
+- **B 臂 fse=1**（rmmod 后 `insmod ath12k.ko` 默认 fse=Y + 插件，
+  `fse=Y` 回读）：先 3×30 s 18 次全通（均值 23.9 MB/s），再 5 min 加长
+  68 次（≈6.8 GB）全通，均值 24.1 MB/s、min 22.7 MB/s；**零楔死**、
+  q208 300/300 为 0x0、cc 恒 2、ecm_ppe=1 285/300；p5tx +216,504 包。
+- FSE 实证（关键取证口径）：`fst_dump_table`/`fst_dp_stats`
+  （`/sys/kernel/debug/ath12k/pci-0001:01:00.0/fst_config/`）**只在活动
+  流中非空**——流结束规则即删，空闲读必为 0 条目（曾据此误判"假臂"）。
+  B 臂活动流样例：`use_ppe=1 service_code=0xc reo_indication=1`，五元组
+  = Wi-Fi 客户端 :47302 → .88:8098；fse=0 活动流：inserted=0、
+  addition failure=0（不尝试编程）。
+- 判读：在该 2.4G 286 Mbps 链路上，FSE 收益不可测（瓶颈在 PHY），
+  **fse=0 的 Wi-Fi 吞吐代价≈0**；且楔死在 Wi-Fi 流量类别下 5 min
+  6.8 GB 也未复现——楔死仍只见于有线 soak 形状，触发需要有线类流。
+- 口径与遗留：
+  - B 臂为**热重载态**（出现 `failed to destroy soc agent`、QRTR -95、
+    `HTC WMI MAC1 connect failed` 告警；PPEDS 仍 attach、行为可比但非
+    冷启动等价位）。真 fse=Y 冷启动臂未能做：改 modules.conf 后重启的
+    操作被权限拦下，未获用户批准。
+  - 热重载后 hostapd AP 实例不自动重建：`ubus call network.wireless
+    up`/`wifi reload` 均空操作，必须 `wifi down; sleep 4; wifi up`。
+  - 测后已恢复：`rmmod` 三模块 → `modprobe ath12k`（modules.conf 的
+    `fse=0` 生效）→ `fse=N`；三频 AP 重建、主机重连、100 MB 下载
+    sanity 通过（18.3 MB/s）。设备处热重载态，建议冷重启归位。
+  - 台架已清理（主机服务器/虚拟地址/路由/accept_local、设备静态
+    ARP/big.bin/socat）。证据：`downloads/wifi-ab-2026-11-26/`。
+
+### 11.9 根因代码调查报告（2026-11-26，只读静态审计，未动设备）
+
+对 24.10 源码树（qca-wifi/ath12k backports、qca-nss-ppe、qca-nss-ecm、
+插件、qca-nss-dp、qca-ssdk）做整链审计，结论：
+
+- **否定证据**：EDMA ppeds ops 只写 DS ring prod/cons idx、SERVICE_STOP
+  位，不碰 port5 QM/PSCH/GMAC/TX ring——"FSE 直接改 port5 寄存器"不成立。
+  FSE 影响 port5 的唯一通道是「决定哪些报文以什么元数据进入 PPE 快速
+  路径，然后被 PPE 送往 port5 出口」。fse=0 与 fse=1 的差异即 FST 条目
+  存在性。
+- 命中路径：FST 命中且 use_ppe=1 → REO2PPE → PPE → SPF_BYPASS(12) →
+  port5 q208；DS 分支只装一个方向（下载场景=客户端→WAN 上行元组），
+  metadata 携带 egress macid=5 + Wi-Fi DS VP。
+- 排序假设（均改变进入 port5 的报文元数据，与两型指纹机制自洽）：
+  1. **H1（最可疑）metadata 位段冲突 + `|=` 累加**：PPE 路径
+     `metadata=VP|macid<<8`（ppe.c:1140-1145），SFE 路径魔数 0xAA00
+     的 bits11:8=0xA 正落在 EGRESS_MACID；HAL 写表用
+     `metadata |= flow->fse_metadata`（wifi7/hal_rx.c:1595），info2 却
+     整体赋值——同元组被两路径先后编程时 macid 被污染成 0xA；重复
+     检测把 SERVICE_CODE 读进 use_ppe 变量比较（wifi7/dp_rx.c:2593-
+     2610），PPE 条目永远判"需更新"。触发时机=PPE↔SFE 回退/重试、
+     删除被 CRASH_FLUSH/RECOVERY 跳过（ppe.c:1316-1319）。
+  2. **H2 reo_indication 与 radio 解耦**：`fst_core_mask=0x7` 硬编码
+     （dp_rx.c:1832），core_map 轮转 1/2/3 与本流 radio/DS 节点无关。
+  3. **H3 全组共享 FST + delete 侧 ab/标志不对称**：delete 用
+     `radio[0].ab`、`is_ds=false`；recovery 窗口 invalidate 被跳过，
+     可留脏条目。
+  4. **H4 双编码+字节序异构**：SFE 不做 ntohl、PPE 做 ntohl，同元组
+     可能两 hash 槽/双条目。
+  5. H5（低）FSE 编程在 ppe_drv 大自旋锁内完成并同步发 HTT。
+- 待批准的单变量验证（设备侧，均未执行）：楔死态抓 `fst_dump_table`
+  查 metadata 高字节 0xAA 图案；`/proc/sys/net/ecm/sfe_fse_enable=0`
+  与 `ppe_fse_enable=0` 分别压测；local 补丁 metadata 改 `=` 做 A/B；
+  H2 用 `fst_core_mask` 单行补丁。
+- 不确定性：reo_indication 的硬件语义无文档；EGRESS_MACID=0xA 时 PPE
+  的具体行为无法静态判定（H1 链最后一环空白）；SPF_BYPASS 回 CPU 的
+  时序无寄存器手册核对。
