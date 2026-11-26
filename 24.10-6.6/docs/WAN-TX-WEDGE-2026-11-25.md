@@ -759,3 +759,62 @@ FSE/PPE 回调：Wi-Fi 侧编程 PPE 流表时污染有线端口（port5）TX �
 - 不确定性：reo_indication 的硬件语义无文档；EGRESS_MACID=0xA 时 PPE
   的具体行为无法静态判定（H1 链最后一环空白）；SPF_BYPASS 回 CPU 的
   时序无寄存器手册核对。
+
+### 11.10 FSE 判别三臂实验：楔死态取证（2026-11-26，第三台，本地台架）
+
+**台架（不依赖上游）**：主机在 lo 上持 `192.168.10.88/32`（WAN 同 L2 段），
+主表路由 `192.168.10.88/32 via 192.168.1.1 dev wlp0s20f3` + `curl --interface`
+（SO_BINDTODEVICE）+ `accept_local=1`，路由器 eth1 上静态 ARP；有线客户端
+（USB 网卡 192.168.1.2 → eth0 → NAT → eth1）持续下载 1 GiB 文件（RX 形状与
+真实下载相同，实测 ~90–115 MB/s），Wi-Fi 客户端（主机 wlp）并发并发下载保持
+FST 活动条目。楔死判定=累计字节冻结 + `.88` ping 100% 丢失连续 3 次（2 s
+间隔），命中当下 1 s 内抓 `fst_dump_table`/`fst_dp_stats` 与设备寄存器快照，
+随后继续压测观察看门狗自愈。脚本：`/tmp/sbe-flash/fse-probe-soak.sh`。
+
+| 臂 | 状态 | 载荷 | 楔死 | FST 快速取证 | 看门狗 | 后续 |
+|---|---|---|---|---|---|---|
+| 1 | 热重载 fse=Y（enables 1/1） | 64.5 GB / ~15 min | **1 次** @46 GB / 9.7 min | 1 条目，metadata=0x542 | STALL-START → CONFIRMED 20:04:28 → HEALED 20:04:47（AN 双翻，cc 2→4，未重启），停网 ~109 s | 其后 18.5 GB 无复发 |
+| 2 | **冷启动** fse=Y（enables 1/1） | 64.9 GB / ~15 min | **1 次** @8.6 GB / **1.7 min** | 同臂 1（逐字段一致） | CONFIRMED 20:14:02 → HEALED 20:14:21，停网 ~110 s | 其后 ~54 GB 无复发 |
+| 3 | 冷启动 fse=Y + **`ppe_fse_enable=0`** | **73 GB / 15 min** | **0 次** | 106 次快照全部 **0 条目**（fst_dp_stats inserted=0/failure=0） | 未触发 | 全程 ~90.7 MB/s，slow round=0 |
+
+**楔死态指纹（臂 1/2 完全一致）**：q208=0x0（TX 队列空）、COMP5
+(0x476050)=0x18（健康）、carrier_changes=2（无物理链路事件）、eth1 TX 冻结
+（臂 1 停在 tx=8,253,033）、RX 仍有 ~6 pps 涓流。即 **mode-2「PPE 吞包」**。
+
+**FST 快取证结果**：两臂楔死瞬间均为 1 条目，
+`src=0xc0a801e6:0xec7a → dst=0xc0a80a58:0x1fa3 proto=6，use_ppe=0x1
+service_code=0xc reo_indication=0x3 metadata=0x542`，插删失败计数 0。
+metadata bits11:8=0x5，正是 eth1 的 egress macid，**未出现 H1 预测的 0xAA
+污染图案**；条目在流存活期间本就存在（正常行为），表中亦无重影/脏条目。
+
+**判读**：
+
+1. **PPE 侧 FSE 流表编程是楔死的因果必要条件**：同一 fse=Y 冷启动状态，
+   仅把 `ppe_fse_enable` 置 0（sysctl → `ecm_front_end_ppe_fse_enable_handler`
+   → `ppe_drv_fse_feature_disable()` 关 `p->fse_enable`，ath12k 的 fse=Y
+   回调保留）后 73 GB 零楔死，且 FST 从未编程。`sfe_fse_enable` 只影响
+   SFE 前端（本配置 ecm_sfe=0），与本问题无关。
+2. **H1 削弱**：0xAA 位段污染在楔死态 FST 表中不可观测；但不完全排除
+   时序性污染（污染后可被下次 PPE 更新覆盖，而表内容稳态是干净的）。
+   **H2（reo_indication 与 radio 解耦，core_mask=0x7 轮转）/ H3（delete 侧
+   ab 标志不对称、recovery 窗口跳删）/ H5（大自旋锁内同步 HTT 编程）相对
+   上升**——它们都作用于「PPE 快速路径上的 Wi-Fi 流元数据/时序」，与本臂
+   实验的因果域一致。
+3. **冷启动放大 ~6 倍**（8.6 GB/1.7 min vs 46 GB/9.7 min）：冷启动 boot log
+   里 FSE 回调在 35.1 s 先 unregister、37.5 s 由
+   `qca_wifi_nss_plugins_ppe_fse_cb_register` 重新注册——启动期的注册时序
+   与首批 Wi-Fi 流相交，属启动/首流瞬态竞态。
+4. **每 boot 恰好一次、自愈后不复现**：臂 1/2 各在启动后首波负载内楔死一次，
+   AN 双翻自愈后在追加 18.5 GB / 54 GB 载荷下再未复发。触发窗口=启动后首个
+   编程/删除交叠期，不是负载累积效应。
+
+**证据**：`downloads/wedge-evidence-2026-11-26-fseprobe/`
+（三臂的 `.log/.rounds/.fst/.boxlog`，含 1 Hz 设备状态日志与 FST 快照；
+`watchdog-evidence-final.log` 为设备侧看门狗全量取证日志）。
+
+**对产品的影响**：v132 已烘焙的 `fse=0` 仍是已发布的修复（Wi-Fi 吞吐代价
+≈0，见 §11.8）；`ppe_fse_enable=0` 是第二候选——保留 ath12k fse=Y 注册的
+挂载形态下也能消除楔死，但它是 ecm 模块的 sysctl，需要固件侧固化
+（ecm 包的 defaults/启动脚本）才可产品化，且其 Wi-Fi 侧 FSE 是否带来任何
+吞吐收益尚未测量。代码级根治（H2/H3/H5 单变量补丁）需要改源码、重编镜像、
+再刷机验证，每轮约半天，均未开始，需单独批准。
