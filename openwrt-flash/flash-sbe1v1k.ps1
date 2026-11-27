@@ -568,13 +568,16 @@ function Main {
         Step "等待新固件启动"
         if (-not $adapter2) {
             Write-Host ""
-            Write-Host "════════════ 现在请换线 ════════════" -ForegroundColor White
-            Write-Host "  路由器 2.5G 口刷机后变成 WAN 口，不再有 $DeviceIp。"
-            Write-Host "  请把网线从 2.5G LAN1 移到路由器上的 10G 口或 1G LAN 口，"
-            Write-Host "  保持插在本机网卡 $($adapter.Name) 上。"
-            Write-Host "════════════════════════════════════" -ForegroundColor White
+            Write-Host "════════════ 等待新系统上线 ════════════" -ForegroundColor White
+            Write-Host "  新固件的端口角色取决于固件本身，不一定是 2.5G=WAN："
+            Write-Host "  - 本项目编译的固件：2.5G 口变成 WAN 口，$DeviceIp 不再出现在这个口上；"
+            Write-Host "    请把网线从 2.5G LAN1 移到路由器上的 10G 口或 1G LAN 口，"
+            Write-Host "    保持插在本机网卡 $($adapter.Name) 上。"
+            Write-Host "  - 其它固件：2.5G 口可能是 WAN 也可能是 LAN。可以先保持原线不动；"
+            Write-Host "    如果等不到 $DeviceIp，再把网线换到 10G 口或 1G LAN 口重试。"
+            Write-Host "════════════════════════════════════════" -ForegroundColor White
             Write-Host ""
-            $null = Confirm-Action "已经换好线了吗？（确认后继续等待）"
+            $null = Confirm-Action "按回车开始等待新系统（需要换线的话，换好后按；等待中也可以随时换线）"
         } else {
             Info "等待 10G/LAN 口（$($adapter2.Name)）上的新系统…"
         }

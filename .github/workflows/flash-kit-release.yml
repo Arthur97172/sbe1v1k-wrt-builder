@@ -112,8 +112,9 @@ jobs:
             echo "4. Windows 双击 \`flash-sbe1v1k.cmd\`；Linux 运行"
             echo "   \`chmod +x flash-sbe1v1k.sh bin/sbe-flash-tool_linux_amd64 && sudo ./flash-sbe1v1k.sh\`；"
             echo "5. 按提示选网卡（多网卡时）、选固件、按提示复位上电；"
-            echo "6. 刷完把网线换到 **10G 口或 1G LAN 口**（新固件的 2.5G 口是 WAN），"
-            echo "   或用第二网卡模式免换线（见包内 README）。"
+            echo "6. 刷完后确认端口角色：本项目固件的 2.5G 口是 WAN，需把网线换到"
+            echo "   **10G 口或 1G LAN 口**；其它固件的 2.5G 口可能是 WAN 也可能是 LAN"
+            echo "   （等不到 192.168.1.1 再换线重试），或用第二网卡模式免换线（见包内 README）。"
             echo
             echo "> 刷写固定使用 \`sysupgrade -F -n\`：**不保留旧配置**。"
             echo
@@ -140,7 +141,8 @@ jobs:
             echo "v1.0.4 修复 Windows 阶段 B 两处 check 调用漏传 --local（工具报"
             echo "「必须提供 --local」后中止）；工具版本同步为 1.0.4。"
             echo
-            echo "v1.0.5 阶段 A 提示改为「请在15秒内执行下面的操作」；工具版本同步为 1.0.5。"
+            echo "v1.0.5 阶段 A 提示改为「请在15秒内执行下面的操作」；刷写后的换线提示"
+            echo "改为按固件区分（不再假设 2.5G 一定变 WAN）；工具版本同步为 1.0.5。"
             echo
             echo "已知行为：24.10 系 overlay 位于 p27 尾部 ext4 段，恢复系统的 \`-n\`"
             echo "清不到它——刷完内核与根文件系统是新的，旧 overlay 配置仍可能生效；"
