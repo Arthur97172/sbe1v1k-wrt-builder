@@ -468,8 +468,13 @@ check_firmware_file() {
         warn "固件只有 $((size / 1024 / 1024)) MiB，偏小，请确认选对了文件"
     fi
     magic=$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' \n')
-    if [ "$magic" != "d00dfeed" ]; then
-        warn "固件头部不是 FIT 格式（实际：${magic:-读取失败}），可能不是 SBE1V1K 的 sysupgrade 镜像"
+    arch=$(dd if="$f" bs=1 skip=2048 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    if [ "$magic" = "d00dfeed" ]; then
+        : # 裸 FIT（25.12-6.18 系构建常见）
+    elif [ "$arch" = "d00dfeed" ] && [ "$(dd if="$f" bs=1 count=11 2>/dev/null)" = "sysupgrade-" ]; then
+        : # 24.10 式 tar 包：sysupgrade-<板名>/ 头 + 2048 偏移处的 FIT
+    else
+        warn "固件既不是 FIT 也不是 24.10 式 sysupgrade tar 包（头部：${magic:-读取失败}），可能不是 SBE1V1K 的 sysupgrade 镜像"
         ask_yes "仍要继续？" || exit 0
     fi
     if [ -f "$f.sha256" ]; then
@@ -572,7 +577,7 @@ main() {
         info "[演练] $TOOL wait --local $local_ip --timeout 300s"
     else
         "$TOOL" wait --local "$local_ip" --timeout 300s || die "恢复系统没有在预期时间内上线"
-        check_out=$("$TOOL" check --expect ram) || {
+        check_out=$("$TOOL" check --local "$local_ip" --expect ram) || {
             rc=$?
             printf '%s\n' "$check_out"
             [ "$rc" -eq 3 ] && die "设备指纹不符，为安全起见停止。请确认刷的是 SBE1V1K"
@@ -621,7 +626,7 @@ main() {
             [ "$ans" = "q" ] && die "已放弃等待（固件可能已经刷写成功，可手动访问 $DEVICE_IP 检查）"
         done
 
-        check_out=$("$TOOL" check --expect firmware) || {
+        check_out=$("$TOOL" check --local "$local_ip" --expect firmware) || {
             rc=$?
             printf '%s\n' "$check_out"
             if [ "$rc" -eq 3 ]; then

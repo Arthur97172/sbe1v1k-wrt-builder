@@ -40,3 +40,7 @@ key-build.*
 *.ucert
 *.bak
 *.log
+
+# 刷机工具：用户自己放进来的固件不提交（zip 打包时会带上）
+openwrt-flash/firmware/*.bin
+openwrt-flash/firmware/*.bin.sha256

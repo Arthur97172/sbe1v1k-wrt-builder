@@ -129,8 +129,14 @@ jobs:
             echo "r38189-706052b20f（内核 6.18.60，GPL-2.0），官方 snapshots 不保留旧构建，"
             echo "故随包保存；详见包内 \`assets/README.md\`。"
             echo
-            echo "**状态**：Go 辅助工具、DHCP/TFTP 服务、Linux 脚本流程已本机自测 PASS；"
-            echo "**Windows 脚本与真机全链路尚未做设备验收（NOT TESTED）**。"
+            echo "**状态**：Linux 全链路（送入恢复系统 → 上传校验 → \`sysupgrade -F -n\`"
+            echo "→ 新固件从 eMMC 启动）已于 2026-11-27 在 SBE1V1K 真机验收 PASS；"
+            echo "**Windows 脚本尚未做设备验收（NOT TESTED）**。"
+            echo
+            echo "已知行为：24.10 系 overlay 位于 p27 尾部 ext4 段，恢复系统的 \`-n\`"
+            echo "清不到它——刷完内核与根文件系统是新的，旧 overlay 配置仍可能生效；"
+            echo "需要完全干净的状态请刷完后在设备上执行 \`firstboot -y && reboot\`"
+            echo "（该布局上尚未做设备验证，详见包内 README）。"
           } > release-notes.md
 
       - name: 上传构建产物（手动触发时始终执行）

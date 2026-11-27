@@ -7,8 +7,10 @@
 **全程离线**：只需要电脑、一根网线、一套本目录。运行时不下载任何东西，
 只和直连的路由器交换 DHCP / TFTP / SSH 流量。
 
-> 已知状态：Go 辅助工具、DHCP/TFTP 服务、Linux 脚本流程已本机自测通过；
-> **Windows 脚本与真机全链路尚未做设备验收（NOT TESTED）**。
+> 已知状态：Linux 全链路（DHCP/TFTP 送入恢复系统 → 上传校验 → `sysupgrade -F -n`
+> → 新固件从 eMMC 启动）已于 2026-11-27 在 SBE1V1K 真机验收 PASS
+> （固件：24.10-6.6 v142-2，CI 构建）。
+> **Windows 脚本尚未做设备验收（NOT TESTED）**。
 > 首次使用请预留时间，并阅读本文末尾的「失败排查」。
 
 ---
@@ -59,6 +61,13 @@ sbe1v1k-flash-kit/
 
 > 刷写会使用 `sysupgrade -F -n`：**不保留旧配置**，Wi-Fi、密码、插件设置全部丢失。
 > 需要保留配置请手工备份。
+>
+> 已知行为（2026-11-27 真机实测）：24.10 系的 overlay 位于 p27 分区尾部
+> （squashfs 之后的 ext4 段），恢复系统的 `-n` 清不到它——刷完新内核与根文件系统
+> 是新的，但旧 overlay 里的 `/etc/config`、`/etc/modules.conf` 等仍会继续生效。
+> 要得到完全干净的状态，刷完后在设备上执行一次 `firstboot -y && reboot`
+> （该布局上 firstboot 的行为尚未做设备验证，见「失败排查」）。
+> 官方 SNAPSHOT 恢复系统对这类尾部 overlay 不感知，这是路径本身的限制，不是脚本错误。
 
 ---
 
@@ -146,6 +155,7 @@ sudo ./flash-sbe1v1k.sh --firmware /path/x.bin    # 直接指定固件
 | `sha256 不一致` | 传输被干扰或磁盘读写出错，脚本会拒绝刷写；重跑即可 |
 | `sysupgrade 以非零状态退出` | 固件不适合本机（板名/格式不对）；换正确的 sysupgrade 固件 |
 | 刷完等不到新系统 | 还没换线（见第五节）；或固件起不来——**重新进入恢复模式重刷** |
+| 刷完发现旧配置/旧文件还在 | `-n` 清不到 24.10 的尾部 overlay（见第一节末尾说明）；SSH 上去 `firstboot -y && reboot` |
 | 恢复模式进不去 | 断电，按住 Reset 再上电，保持 12 秒以上再松手 |
 | Windows 提示端口被占用 | 关掉本机 DHCP 服务、VMware/VirtualBox 的桥接 DHCP 等 |
 
