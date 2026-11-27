@@ -137,6 +137,9 @@ jobs:
             echo "固件不再误报「不是 FIT 格式」；netsh 设置地址后等待其真正出现在网卡上；"
             echo "TFTP 绑定地址失败（地址尚未生效）时自动重试最多 30 秒。"
             echo
+            echo "v1.0.4 修复 Windows 阶段 B 两处 check 调用漏传 --local（工具报"
+            echo "「必须提供 --local」后中止）；工具版本同步为 1.0.4。"
+            echo
             echo "已知行为：24.10 系 overlay 位于 p27 尾部 ext4 段，恢复系统的 \`-n\`"
             echo "清不到它——刷完内核与根文件系统是新的，旧 overlay 配置仍可能生效；"
             echo "需要完全干净的状态请刷完后在设备上执行 \`firstboot -y && reboot\`"

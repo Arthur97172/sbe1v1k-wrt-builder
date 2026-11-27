@@ -538,7 +538,7 @@ function Main {
     } else {
         $rc = Run-Tool @('wait', '--local', $LanHostIp, '--timeout', '300s')
         if ($rc -ne 0) { Die "恢复系统没有在预期时间内上线" }
-        $r = Run-ToolCapture @('check', '--expect', 'ram')
+        $r = Run-ToolCapture @('check', '--local', $LanHostIp, '--expect', 'ram')
         if ($r.Code -eq 3) { Die "设备指纹不符，为安全起见停止。请确认刷的是 SBE1V1K" }
         if ($r.Code -ne 0) { Die "读取设备信息失败" }
         $preRev = Get-RevFromText $r.Text
@@ -588,7 +588,7 @@ function Main {
             if ($ans -eq 'q') { Die "已放弃等待（固件可能已经刷写成功，可手动访问 $DeviceIp 检查）" }
         }
 
-        $r = Run-ToolCapture @('check', '--expect', 'firmware')
+        $r = Run-ToolCapture @('check', '--local', $LanHostIp, '--expect', 'firmware')
         if ($r.Code -eq 3) {
             Err "设备能登录，但指纹显示不是从 eMMC 启动的新固件"
             Info "可能进入了原厂系统。请记录以上信息并回报"

@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const toolVersion = "1.0.3"
+const toolVersion = "1.0.4"
 
 func logf(format string, a ...any) {
 	fmt.Printf("[%s] ", time.Now().Format("15:04:05"))
