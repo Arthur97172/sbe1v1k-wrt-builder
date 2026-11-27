@@ -377,8 +377,12 @@ PASS——2.4G/5G/6G 三 SSID 在载（6G 为 ch37 / 320 MHz / MLO）、dmesg
 噪声 0、WAN TX 看门狗 v2 启动正常、角色 eth1=WAN（2.5G）。注意：恢复
 系统的 `-n` 清不到 24.10 的 p27 尾部 overlay，本次运行时
 `/etc/modules.conf` 仍是旧 overlay 内容（ath12k fse=N）；镜像自带的
-fse=Y 默认需在 `firstboot -y` 后才是运行态，该复验待批准后补（同时
-验证 firstboot 对尾部 overlay 的处理）。
+fse=Y 默认需在 `firstboot -y` 后才是运行态。同晚经用户批准执行
+`firstboot -y` + 重启复验 PASS：尾部 overlay 被正常清空、重启后
+`/etc/modules.conf` 与 `/rom` 一致、ath12k 运行态 fse=Y、三频 Wi-Fi 与
+eth1=WAN 角色正常、dmesg 噪声 0。注意 firstboot 会连 dropbear 主机密钥
+一起清掉，执行后新 SSH 连接握手即被重置（设备本身正常），当时改由
+LuCI ubus 触发重启。
 
 安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
 `/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读

@@ -136,7 +136,8 @@ jobs:
             echo "已知行为：24.10 系 overlay 位于 p27 尾部 ext4 段，恢复系统的 \`-n\`"
             echo "清不到它——刷完内核与根文件系统是新的，旧 overlay 配置仍可能生效；"
             echo "需要完全干净的状态请刷完后在设备上执行 \`firstboot -y && reboot\`"
-            echo "（该布局上尚未做设备验证，详见包内 README）。"
+            echo "（2026-11-27 真机验证可用；注意该命令会连 SSH 主机密钥一起清掉，"
+            echo "执行后新的 SSH 握手会被重置，重启后恢复，详见包内 README）。"
           } > release-notes.md
 
       - name: 上传构建产物（手动触发时始终执行）

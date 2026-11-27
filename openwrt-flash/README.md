@@ -66,7 +66,11 @@ sbe1v1k-flash-kit/
 > （squashfs 之后的 ext4 段），恢复系统的 `-n` 清不到它——刷完新内核与根文件系统
 > 是新的，但旧 overlay 里的 `/etc/config`、`/etc/modules.conf` 等仍会继续生效。
 > 要得到完全干净的状态，刷完后在设备上执行一次 `firstboot -y && reboot`
-> （该布局上 firstboot 的行为尚未做设备验证，见「失败排查」）。
+> ——2026-11-27 已在真机验证：尾部 overlay 会被正常清空，重启后内核、根文件系统
+> 与配置全部来自镜像，ath12k 以镜像默认 `fse=Y` 运行。
+> **注意**：`firstboot -y` 会连 dropbear 主机密钥一起清掉，执行后新的 SSH 连接
+> 会在握手阶段被重置（看起来像设备失联）；此时设备本身是好的，重启一次即可，
+> 若 SSH 已断可改用 LuCI/ubus 触发重启。
 > 官方 SNAPSHOT 恢复系统对这类尾部 overlay 不感知，这是路径本身的限制，不是脚本错误。
 
 ---
@@ -156,6 +160,7 @@ sudo ./flash-sbe1v1k.sh --firmware /path/x.bin    # 直接指定固件
 | `sysupgrade 以非零状态退出` | 固件不适合本机（板名/格式不对）；换正确的 sysupgrade 固件 |
 | 刷完等不到新系统 | 还没换线（见第五节）；或固件起不来——**重新进入恢复模式重刷** |
 | 刷完发现旧配置/旧文件还在 | `-n` 清不到 24.10 的尾部 overlay（见第一节末尾说明）；SSH 上去 `firstboot -y && reboot` |
+| 执行 `firstboot -y` 后 SSH 握手被重置 | 正常现象：dropbear 主机密钥被清，重启后自动重新生成 |
 | 恢复模式进不去 | 断电，按住 Reset 再上电，保持 12 秒以上再松手 |
 | Windows 提示端口被占用 | 关掉本机 DHCP 服务、VMware/VirtualBox 的桥接 DHCP 等 |
 
