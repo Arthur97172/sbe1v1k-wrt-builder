@@ -371,6 +371,15 @@ NAT 下载零楔死、FST metadata 恒 0x540、ECM/SFE 全保留、Wi-Fi 吞吐�
 fse=Y**。看门狗保留为兜底。判别实验（ARM B/C/D/F）、P1 arm、Wi-Fi 代价
 A/B 与源码根因调查报告见 `docs/WAN-TX-WEDGE-2026-11-25.md` §11。
 
+v142-2（CI 构建 49e2ae32）真机验收（2026-11-27）：经 `openwrt-flash/`
+刷机工具 v1.0.1 以 `sysupgrade -F -n` 刷入测试机，新固件从 eMMC 启动
+PASS——2.4G/5G/6G 三 SSID 在载（6G 为 ch37 / 320 MHz / MLO）、dmesg
+噪声 0、WAN TX 看门狗 v2 启动正常、角色 eth1=WAN（2.5G）。注意：恢复
+系统的 `-n` 清不到 24.10 的 p27 尾部 overlay，本次运行时
+`/etc/modules.conf` 仍是旧 overlay 内容（ath12k fse=N）；镜像自带的
+fse=Y 默认需在 `firstboot -y` 后才是运行态，该复验待批准后补（同时
+验证 firstboot 对尾部 overlay 的处理）。
+
 安全边界（楔死态实测，务必遵守）：楔死时只可读 sysfs 计数器、
 `/sys/ssdk/packet_counter` 和 `ssdk_sh debug reg`；读
 `/sys/kernel/debug/qca-nss-ppe/*`、`qca-nss-netfn/flowmgr/stats`、
