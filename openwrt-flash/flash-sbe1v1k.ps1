@@ -502,7 +502,7 @@ function Main {
         Info "[演练] & `"$Tool`" serve --iface `"$($adapter.Name)`" --ip $RecoveryHostIp --root `"$Assets`" --timeout 900s"
     } else {
         Write-Host ""
-        Write-Host "─────────── 请在15秒内执行下面的操作 ───────────" -ForegroundColor White
+        Write-Host "─────────── 请在15秒内执行并完成下面的操作 ───────────" -ForegroundColor White
         Write-Host "  1. 把路由器断电（拔电源）"
         Write-Host "  2. 按住 Reset 键不放"
         Write-Host "  3. 插上电源，继续保持按住"
@@ -569,12 +569,8 @@ function Main {
         if (-not $adapter2) {
             Write-Host ""
             Write-Host "════════════ 等待新系统上线 ════════════" -ForegroundColor White
-            Write-Host "  新固件的端口角色取决于固件本身，不一定是 2.5G=WAN："
-            Write-Host "  - 本项目编译的固件：2.5G 口变成 WAN 口，$DeviceIp 不再出现在这个口上；"
-            Write-Host "    请把网线从 2.5G LAN1 移到路由器上的 10G 口或 1G LAN 口，"
-            Write-Host "    保持插在本机网卡 $($adapter.Name) 上。"
-            Write-Host "  - 其它固件：2.5G 口可能是 WAN 也可能是 LAN。可以先保持原线不动；"
-            Write-Host "    如果等不到 $DeviceIp，再把网线换到 10G 口或 1G LAN 口重试。"
+            Write-Host "  2.5G 口可能是 WAN 也可能是 LAN。取决于固件本身，可以先保持原线不动；"
+            Write-Host "  如果等不到 $DeviceIp，再把网线换到 10G 口或 1G LAN 口重试。"
             Write-Host "════════════════════════════════════════" -ForegroundColor White
             Write-Host ""
             $null = Confirm-Action "按回车开始等待新系统（需要换线的话，换好后按；等待中也可以随时换线）"

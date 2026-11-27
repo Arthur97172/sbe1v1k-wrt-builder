@@ -535,7 +535,7 @@ main() {
     if [ "$DRY_RUN" -eq 1 ]; then
         info "[演练] $TOOL serve --iface $IFACE --ip $RECOVERY_HOST_IP --root $ASSETS --expect initramfs.itb --timeout 900s"
     else
-        printf '\n%s─────────── 请在15秒内执行下面的操作 ───────────%s\n' "$C_BLD" "$C_RST"
+        printf '\n%s─────────── 请在15秒内执行并完成下面的操作 ───────────%s\n' "$C_BLD" "$C_RST"
         printf '  1. 把路由器%s断电%s（拔电源）\n' "$C_YEL" "$C_RST"
         printf '  2. %s按住 Reset 键不放%s\n' "$C_BLD" "$C_RST"
         printf '  3. 插上电源，继续保持按住\n'
@@ -613,12 +613,8 @@ main() {
             info "等待 10G/LAN 口（$IFACE2）上的新系统…"
         else
             printf '\n%s════════════ 等待新系统上线 ════════════%s\n' "$C_BLD" "$C_RST"
-            printf '  新固件的端口角色取决于固件本身，不一定是 2.5G=WAN：\n'
-            printf '  - 本项目编译的固件：2.5G 口变成 WAN 口，%s 不再出现在这个口上；\n' "$DEVICE_IP"
-            printf '    请把网线从 %s2.5G LAN1%s 移到路由器上的 %s10G 口或 1G LAN 口%s，\n' "$C_YEL" "$C_RST" "$C_BLD" "$C_RST"
-            printf '    保持插在本机网卡 %s 上。\n' "$IFACE"
-            printf '  - 其它固件：2.5G 口可能是 WAN 也可能是 LAN。可以先保持原线不动；\n'
-            printf '    如果等不到 %s，再把网线换到 10G 口或 1G LAN 口重试。\n' "$DEVICE_IP"
+            printf '  2.5G 口可能是 WAN 也可能是 LAN。取决于固件本身，可以先保持原线不动；\n'
+            printf '  如果等不到 %s，再把网线换到 10G 口或 1G LAN 口重试。\n' "$DEVICE_IP"
             printf '%s════════════════════════════════════════%s\n\n' "$C_BLD" "$C_RST"
             tty_read _ignored "按回车开始等待新系统（需要换线的话，换好后按；等待中也可以随时换线）: " || true
         fi

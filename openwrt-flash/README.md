@@ -21,6 +21,9 @@
 > --local”），工具版本同步为 1.0.4。
 > v1.0.5 把阶段 A 的提示改为「请在15秒内执行下面的操作」（两个平台一致）；
 > 刷写后的换线提示改为按固件区分（不再假设 2.5G 一定变 WAN）；工具版本同步为 1.0.5。
+> v1.0.6 阶段 A 提示改为「请在15秒内执行并完成下面的操作」；刷写后的换线提示
+> 简化为统一文案（先保持原线，等不到 `192.168.1.1` 再换线）；Linux 用法补充
+> 执行位丢失（`Permission denied`）的排查命令；工具版本同步为 1.0.6。
 
 ---
 
@@ -122,6 +125,17 @@ sudo ./flash-sbe1v1k.sh --firmware /path/x.bin    # 直接指定固件
 ./flash-sbe1v1k.sh --dry-run                      # 只演练，不改配置
 ```
 
+如果运行时报 `Permission denied`：文件在复制途中丢了执行位（zip 里记录的是
+755，但经过 Windows 资源管理器、SMB 共享、FAT U 盘等环节复制时不会保留）。
+补上执行位再运行：
+
+```sh
+chmod +x flash-sbe1v1k.sh bin/sbe-flash-tool_linux_amd64
+sudo ./flash-sbe1v1k.sh
+```
+
+直接在 Linux 上解压 zip（`unzip`）不会丢权限，只有二次复制才需要这一步。
+
 脚本会自动：
 
 - 校验 `assets/` 与 `bin/` 的 sha256；
@@ -163,8 +177,9 @@ sudo ./flash-sbe1v1k.sh --firmware /path/x.bin    # 直接指定固件
 - **其它固件**：2.5G 口可能是 WAN 也可能是 LAN。可以先保持原线不动；如果等不到
   `192.168.1.1`，再把网线换到 10G 口或 1G LAN 口重试。
 
-脚本会在 sysupgrade 之后说明这两种情况并开始等待；等待中随时可以换线，超时后
-按回车重试即可（固件其实已经刷好了）。
+脚本会在 sysupgrade 之后提示：先保持原线等待，等不到 `192.168.1.1` 再把网线换到
+10G 口或 1G LAN 口重试；等待中随时可以换线，超时后按回车重试即可（固件其实
+已经刷好了）。
 
 ---
 
@@ -172,6 +187,7 @@ sudo ./flash-sbe1v1k.sh --firmware /path/x.bin    # 直接指定固件
 
 | 现象 | 大概率原因 / 处理 |
 |---|---|
+| Linux 运行脚本报 `Permission denied` | 文件经 Windows/SMB/U 盘复制丢了执行位；`chmod +x flash-sbe1v1k.sh bin/sbe-flash-tool_linux_amd64` 后重跑（见第三节） |
 | 一直停在「等待设备请求」 | 网线不在 2.5G LAN1 口；Reset 没按够 12 秒；其他网卡抢了广播（Windows）；重新跑一次，先断电再按步骤来 |
 | 恢复系统起来后 SSH 连不上 | 电脑上 192.168.1.2 被别的网卡用了；关掉其他网卡的 192.168.1.x 配置 |
 | `sha256 不一致` | 传输被干扰或磁盘读写出错，脚本会拒绝刷写；重跑即可 |
