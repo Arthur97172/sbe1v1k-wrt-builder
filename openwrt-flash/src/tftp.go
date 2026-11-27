@@ -27,7 +27,7 @@ func (s *tftpServer) listen() (*net.UDPConn, error) {
 	// 地址配置完成到 socket 层可用之间可能有延迟（Windows 经 DHCP Client
 	// 服务异步应用地址），此时 bind 具体地址会返回 EADDRNOTAVAIL。重试一段
 	// 时间等地址生效；其他错误（端口占用、权限）立即返回。
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: s.serverIP, Port: 69})
 		if err == nil {

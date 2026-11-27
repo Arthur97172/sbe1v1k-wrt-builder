@@ -325,13 +325,13 @@ function Set-AdapterStatic($adapter, $ip, $mask) {
     # Windows 的地址变更经 DHCP Client 服务异步生效：netsh 返回后立刻 bind
     # 这个地址会得到 "The requested address is not valid in its context"。
     # 等地址真正出现在网卡上再继续。
-    for ($i = 0; $i -lt 50; $i++) {
+    for ($i = 0; $i -lt 150; $i++) {
         $found = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $ip `
             -AddressFamily IPv4 -ErrorAction SilentlyContinue
         if ($found) { return }
         Start-Sleep -Milliseconds 200
     }
-    Die "地址 $ip 在 $($adapter.Name) 上 10 秒内未生效"
+    Die "地址 $ip 在 $($adapter.Name) 上 30 秒内未生效"
 }
 
 function Remove-StaticAddress($adapter, $ip) {
