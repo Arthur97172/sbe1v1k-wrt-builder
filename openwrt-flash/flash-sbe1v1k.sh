@@ -535,7 +535,7 @@ main() {
     if [ "$DRY_RUN" -eq 1 ]; then
         info "[演练] $TOOL serve --iface $IFACE --ip $RECOVERY_HOST_IP --root $ASSETS --expect initramfs.itb --timeout 900s"
     else
-        printf '\n%s──────────────── 请按下面操作 ────────────────%s\n' "$C_BLD" "$C_RST"
+        printf '\n%s─────────── 请在15秒内执行下面的操作 ───────────%s\n' "$C_BLD" "$C_RST"
         printf '  1. 把路由器%s断电%s（拔电源）\n' "$C_YEL" "$C_RST"
         printf '  2. %s按住 Reset 键不放%s\n' "$C_BLD" "$C_RST"
         printf '  3. 插上电源，继续保持按住\n'

@@ -502,7 +502,7 @@ function Main {
         Info "[演练] & `"$Tool`" serve --iface `"$($adapter.Name)`" --ip $RecoveryHostIp --root `"$Assets`" --timeout 900s"
     } else {
         Write-Host ""
-        Write-Host "──────────────── 请按下面操作 ────────────────" -ForegroundColor White
+        Write-Host "─────────── 请在15秒内执行下面的操作 ───────────" -ForegroundColor White
         Write-Host "  1. 把路由器断电（拔电源）"
         Write-Host "  2. 按住 Reset 键不放"
         Write-Host "  3. 插上电源，继续保持按住"
