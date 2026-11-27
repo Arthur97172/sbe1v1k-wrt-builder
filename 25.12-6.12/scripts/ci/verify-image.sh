@@ -428,9 +428,10 @@ else
 	bad "/etc/board.d/02_network 没有角色分支（首启/重建 board.json 会写死 eth1）"
 fi
 
-# LAN 侧 MAC 固定（S19）：GMAC3/GMAC4 没有 bootloader 注入的 MAC，nss-dp 退化为
-# eth_hw_addr_random()，br-lan 继承端口里最小的随机 MAC，每次重启都变。S19 在
-# netifd(S20) 建桥之前把 eth2/eth3 派生为 eth0 基址 +2/+3，桥 MAC 才恒定。
+# 板级 MAC 固定（S19 + 0045）：只有 ethernet0 别名，GMAC2..4（eth1..eth3）没有
+# bootloader 注入的 MAC，nss-dp 退化为 eth_hw_addr_random()；S19 在 netifd(S20)
+# 建桥之前把它们派生为 eth0 基址 +1/+2/+3（WAN 的 eth1 也在内），WAN MAC 与
+# br-lan MAC 才跨重启恒定。
 check_overlay etc/init.d/sbe-lan-mac
 [ -x "$ROOTFS/etc/init.d/sbe-lan-mac" ] && ok "可执行 /etc/init.d/sbe-lan-mac" \
 	|| bad "缺少或不可执行 /etc/init.d/sbe-lan-mac（br-lan MAC 会每次重启都变）"

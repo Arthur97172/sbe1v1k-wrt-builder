@@ -1,0 +1,44 @@
+From: SBE1V1K build <noreply@example.invalid>
+Subject: [PATCH] qualcommbe: sbe1v1k: drop the dp2..dp4 Ethernet aliases
+
+The vendor APPSBL (U-Boot fdt_fixup_ethernet()) walks /aliases and, for
+every "ethernet<N>" entry, injects env eth<N>addr into the referenced node
+as local-mac-address.  The aliases in this board file therefore do not just
+document probe order: they hand the bootloader control of the port MACs,
+and the provisioning on some units sets eth1addr == eth2addr == eth3addr.
+On such a unit eth1..eth3 come up with one identical global MAC and
+addr_assign_type=0, which also silently disables sbe-lan-mac -- it only
+rewrites kernel-random (locally administered) addresses.
+
+Keep only the ethernet0 alias so eth0 still receives the per-unit base MAC
+(env ethaddr).  dp2..dp4 then carry no MAC in the DT, nss-dp falls back to
+eth_hw_addr_random() (addr_assign_type=1) and sbe-lan-mac pins
+eth1..eth3 = eth0+1/+2/+3 before netifd builds br-lan.  Same layout and
+same premise as the 24.10 overlay (ethernet-macs).
+
+diff --git a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+--- a/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
++++ b/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts
+@@ -39,12 +39,17 @@
+ 
+ 	aliases {
+ 		serial0 = &blsp1_uart2;
+-		/* S2 probe order: port 6 (RTL8261N 10G) first, then the
+-		 * QCA8081 and two qca8075 ports.  eth0 = 10G LAN, eth1 = WAN. */
++		/* Only dp1.  The APPSBL (vendor U-Boot fdt_fixup_ethernet())
++		 * injects env eth<N>addr as local-mac-address into every node
++		 * aliased as ethernet<N>; units whose env carries identical
++		 * eth1addr..eth3addr then come up with eth1..eth3 sharing one
++		 * global MAC and addr_assign_type=0, which also defeats
++		 * sbe-lan-mac (it only rewrites kernel-random addresses).
++		 * Without the aliases dp2..dp4 get no MAC, nss-dp falls back
++		 * to eth_hw_addr_random() (addr_assign_type=1) and
++		 * sbe-lan-mac pins eth1..eth3 = eth0+1/+2/+3.  eth0 keeps the
++		 * bootloader-injected base MAC.  Do not re-add ethernet1..3. */
+ 		ethernet0 = "/soc@0/dp1";
+-		ethernet1 = "/soc@0/dp2";
+-		ethernet2 = "/soc@0/dp3";
+-		ethernet3 = "/soc@0/dp4";
+ 	};
+ 
+ 	/*

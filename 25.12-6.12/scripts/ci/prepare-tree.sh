@@ -183,6 +183,16 @@ grep -q '^CONFIG_QCA808X_PHY=y$' \
 ls "$BR"/target/linux/qualcommbe/patches-6.12/0801-*.patch >/dev/null 2>&1 \
 	|| { echo "补丁应用不完整：缺少内核补丁 0801（保留 QCA8081、去掉 QCA8084 注册，0030）" >&2; exit 1; }
 
+# 0045：板级 DTS 的 /aliases 只能有 ethernet0。APPSBL 的 fdt_fixup_ethernet()
+# 会把 env eth<N>addr 写进每个 ethernetN 别名指向的节点；eth1addr..eth3addr
+# 相同的机器上 dp2–dp4 会带着同一个全局 MAC、addr_assign_type=0 起来（2026-11-27
+# 实机取证），sbe-lan-mac 按“只改随机地址”的规则一次都不会执行。
+if grep -qE '^[[:space:]]*ethernet[1-9][[:space:]]*=' \
+	"$BR/target/linux/qualcommbe/files/arch/arm64/boot/dts/qcom/ipq9574-sbe1v1k.dts"; then
+	echo "补丁应用异常：板级 DTS 又出现 ethernet1+ 别名（0045 被回退/丢弃）" >&2
+	exit 1
+fi
+
 # 写入目标同样要在编译前断言。25.12 的 sysupgrade 镜像必须改成 tar 容器
 # （emmc_upgrade_tar 只认它），升级脚本必须按当前槽位写 eMMC，设备树必须把
 # fstools_ignore_partname=1 传给内核。缺任何一条，镜像要么什么都刷不进去

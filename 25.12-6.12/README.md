@@ -47,7 +47,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── etc/uci-defaults/99-spectrum-eth0-unmanaged-lan  把 eth0 从 netifd 的 br-lan 端口表摘出（与 24.10 同）
 │   ├── etc/init.d/wireless-defaults            每次开机执行（START=95）
 │   ├── etc/init.d/eth0-lan-attach              procd 常驻 netlink 监听（START=23），兜底补挂 eth0
-│   ├── etc/init.d/sbe-lan-mac                  S19：eth2/eth3 的 MAC 由 eth0 派生，br-lan MAC 跨重启恒定
+│   ├── etc/init.d/sbe-lan-mac                  S19：eth1–eth3 的 MAC 由 eth0 派生，br-lan MAC 跨重启恒定
 │   ├── etc/init.d/sbe-port-roles               S19：按 sbe_ports.main.wan_port 收敛端口角色（SSDK 成员表 / UCI / board.json）
 │   ├── etc/init.d/sbe-boot-trace               S01 起后台采样启动现场（v35 起）
 │   ├── etc/rc.d/S01sbe-boot-trace              → ../init.d/sbe-boot-trace（符号链接，随 overlay 进镜像）
@@ -94,6 +94,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── 0042-version-number-snapshot.patch                   VERSION_NUMBER 兜底值改 SNAPSHOT（概览版本串）
 │   ├── 0043-luci-version-drop-detached-head.patch           LuCI 版本串去掉 detached HEAD 伪分支
 │   ├── 0044-rtl8261n-reinit-on-resume.patch                 RTL8261N 假环回：suspend 恢复后重跑 config_init（24.10 0032 移植）
+│   ├── 0045-qualcommbe-sbe1v1k-drop-dp2-4-ethernet-aliases.patch  只留 ethernet0 别名：APPSBL 不再把同一 env MAC 注入 dp2–dp4（见「板级 MAC 固定」）
 │   ├── disabled/                                            停用的补丁（不进构建，见其中的 README；当前为空）
 ├── nss/                      QSDK 14.x NSS 接入件（Stage 2.1–2.2，本地实验）
 │   ├── install.sh            把 packages/、源码和 patches/ 装配进构建树
@@ -704,8 +705,9 @@ S2 里的 `port_ledinfo`、`port_mac_sel` 没有抄：本树 qca-ssdk 的
 qca-ssdk 在 HPPE（ipq9574）上也不调用 `ssdk_led_init()`。24.10 抄了 S1 的同一
 节点、行为同样是"什么都没发生"（2026-11-18 审计，24.10 那边已删除）。GMAC3/4
 （eth2/eth3）在 DTS 里没有 MAC，nss-dp 对它们调用 `eth_hw_addr_random()` 生成
-随机本地管理 MAC；LAN 侧由 overlay 的 `sbe-lan-mac`（S19）在 netifd 建桥前
-改写，见下节「LAN 侧 MAC 固定」。
+随机本地管理 MAC；eth1–eth3 由 overlay 的 `sbe-lan-mac`（S19）在 netifd 建桥
+前按 eth0+1/+2/+3 固定，见下节「板级 MAC 固定」（`0045` 起 `ethernet1`–
+`ethernet3` 别名已删除，否则 APPSBL 会把 env MAC 注入 dp2–dp4）。
 
 **端口表进 board.json（`0023`）。** `target/linux/qualcommbe/ipq95xx/base-files/
 etc/board.d/02_network` 原来没有 `spectrum,sbe1v1k` 分支，设备会落到 "Unsupported
@@ -803,20 +805,33 @@ nss-dp 0009（摘桥时置 STP FORWARDING）修复，v88-1 真机复查 PASS；e
 「运行期脉冲 GPIO 41 硬复位 PHY」的可选探针（未启动，含触发条件与风险边界）
 登记在 `../24.10-6.6/docs/RTL8261N_GPIO41_PROBE_PLAN-2026-11-24.md`。
 
-**LAN 侧 MAC 固定（S19，`files/` overlay）。** eth0/eth1 的 MAC 由 bootloader
-通过 DT `local-mac-address` 注入（`f4:52:46:9d:db:20/21`），稳定；eth2/eth3
-没有注入，nss-dp 退化为 `eth_hw_addr_random()`（dmesg: `GMAC3/GMAC4 Invalid
-MAC@ - using …`），每次启动都是新的本地管理 MAC。br-lan 默认继承端口里数值
-最小的 MAC，随机值多数时候小于 eth0 的 `f4:…`，于是 br-lan 的 MAC 和它的
-`fe80::` 链路地址每次重启都跟着变（B 机实测 `b6:08:…`、`a2:36:…`、`c6:4b:…`）。
+**板级 MAC 固定（S19 + `0045`，`files/` overlay）。** 设计前提：保留
+`ethernet0` 别名，bootloader 只把板级 base MAC 注入 eth0（DT
+`local-mac-address`，`addr_assign_type=0`）；eth1–eth3 没有 MAC，nss-dp 退化为
+`eth_hw_addr_random()`（dmesg: `GMAC2..4 Invalid MAC@ - using …`），每次启动
+都是新的本地管理 MAC。br-lan 默认继承端口里数值最小的 MAC，于是 br-lan 的
+MAC 和它的 `fe80::` 链路地址每次重启都跟着变（B 机实测 `b6:08:…`、`a2:36:…`、
+`c6:4b:…`）。
 
-`etc/init.d/sbe-lan-mac`（START=19，晚于 nss(S15) 的 dp 装载、早于 network(S20)
-建桥）读 eth0 的稳定 MAC，派生 eth2 = 基址+2、eth3 = 基址+3（延续厂商序列
-`…:22/…:23`）并写回；eth0 随后被 `eth0-lan-attach` 挂进 br-lan，桥 MAC 收敛到
-数值最小的 `f4:52:46:9d:db:20`，跨重启恒定。脚本只改写带本地管理位的随机
-MAC——将来 bootloader/DT 开始给 GMAC3/4 注入全局 MAC 时自动让位。NSS 档位为
-`off` 时 eth0 不存在，脚本安静跳过。`verify-image.sh` 断言脚本与 S19 链接在
-镜像里。状态：本机构建/静态检查按实际结果记，真机 `NOT TESTED`。
+`etc/init.d/sbe-lan-mac`（START=19，晚于 nss(S15) 的 dp 装载、早于
+network(S20) 建桥）读 eth0 的稳定 MAC，派生 **eth1 = 基址+1、eth2 = 基址+2、
+eth3 = 基址+3** 并写回（+1 与厂商序列里 WAN 的 `…:21` 一致，上游 DHCP 租约
+不受影响）；eth0 随后被 `eth0-lan-attach` 挂进 br-lan，桥 MAC 收敛到数值最小
+的 eth0，跨重启恒定。脚本只改写带本地管理位的随机 MAC——bootloader/DT 若又
+给它注入全局 MAC 则自动让位；eth0 自身是随机地址（env `ethaddr` 缺失）时整
+脚本跳过。NSS 档位为 `off` 时 eth0 不存在，脚本安静跳过。
+`verify-image.sh` 断言脚本与 S19 链接在镜像里。
+
+**别名是注入开关（`0045`，2026-11-27）。** 原先 `/aliases` 有
+`ethernet0`–`ethernet3` 四条。APPSBL 的 `fdt_fixup_ethernet()` 会把
+**每个** `ethernetN` 别名当成注入点，把 env `eth<N>addr` 写进对应节点
+（`local-mac-address` 无条件创建）。因此在 env 里 `eth1addr..eth3addr`
+相同（24.10 测试机即 `90:d3:cf:4b:eb:82`）的机器上，eth1–eth3 会带着同一个
+全局 MAC、`addr_assign_type=0` 起来，S19 的随机地址判断一次都不触发。`0045`
+删掉 dp2–dp4 的别名后，dp2–dp4 回到无 MAC → 随机 → S19 固定，与 24.10 的
+`ethernet-macs` 完全同一套前提。**不要再加回 ethernet1–3 别名。** 状态：
+补丁 dry-run/装配验证 PASS，真机 `NOT TESTED`（待刷机确认 eth0–eth3 =
+基址+0..+3、br-lan 收敛到 eth0 base、跨重启不变）。
 
 **启动取证（v35 起，`files/` overlay）。** v34 在 S10boot 之后卡死时设备无串口、
 日志也不落盘，离线只剩 overlay 的磁盘痕迹，到不了 rcS 之后。为此：
@@ -1008,8 +1023,8 @@ dry-run 与 `verify-image.sh` 的断言覆盖。
   `docs/NSS_WIFI_OFFLOAD_QSDK_TRACKING.md`）。
 - 板级细节：LAN/WAN 端口映射（Stage 2.4）、PWM 风扇与 RGB 引脚复用
   （`patches/0025`/`0026`）、启动阻塞（CPU OPP / sleep_clk / NSS 保留区，
-  `patches/0027`）均已在真机验证；LAN 侧 MAC 由 S19 固定（eth2/eth3 从
-  eth0 派生），LED/按键仍沿用 RDP433 默认值，未做板级定制。
+  `patches/0027`）均已在真机验证；LAN 侧 MAC 由 S19 固定（eth1–eth3 从
+  eth0 派生，`patches/0045` 保证此时刻由随机 MAC 起步），LED/按键仍沿用 RDP433 默认值，未做板级定制。
 
 原文的「Stage 1 产物只用于确认镜像能编译、**在 Stage 2/3 完成前不要刷入
 设备**」仅适用于立项时；当前生产镜像正是本树的产物，已不再适用。

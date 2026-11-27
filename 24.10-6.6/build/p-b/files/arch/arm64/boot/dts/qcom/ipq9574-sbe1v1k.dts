@@ -46,14 +46,23 @@
 		serial0 = &blsp1_uart2;
 
 		/*
-		 * Documentation only: nss_dp_main.c never calls of_alias_get_id(),
-		 * so ethN are assigned by DT probe order (see the dp nodes below).
-		 * RD's "/soc/dpN" strings no longer resolve (the node is soc@0).
+		 * Only dp1 is aliased (10G, RTL8261N).  nss_dp_main.c never
+		 * calls of_alias_get_id(); ethN naming comes from DT probe
+		 * order.  The aliases exist solely for the APPSBL: the vendor
+		 * U-Boot fdt_fixup_ethernet() walks /aliases and, for every
+		 * "ethernetN" entry, injects env eth<N>addr into that node as
+		 * local-mac-address.  Aliasing dp2..dp4 therefore OVERWRITES
+		 * the all-zero property below with the bootloader env, and on
+		 * units whose env carries identical eth1addr..eth3addr the
+		 * three ports come up with one global MAC and
+		 * addr_assign_type=0 -- which also silently defeats
+		 * /etc/init.d/ethernet-macs (it only rewrites kernel-random
+		 * addresses).  Without those aliases dp2..dp4 keep the zero
+		 * address, nss-dp falls back to eth_hw_addr_random()
+		 * (addr_assign_type=1) and ethernet-macs derives
+		 * eth1..eth3 = eth0+1/+2/+3.  Do not re-add ethernet1..3.
 		 */
 		ethernet0 = &dp1;	/* 10G   RTL8261N  */
-		ethernet1 = &dp2;	/* 2.5G  QCA8081   */
-		ethernet2 = &dp3;	/* 1G    qca8075   */
-		ethernet3 = &dp4;	/* 1G    qca8075   */
 	};
 
 	chosen {

@@ -7,6 +7,12 @@
 # eth2/eth3 组成 br-lan：随机地址让 WAN 的 IP、DHCP 租约和桥 MAC 每次重启
 # 都变。
 #
+# 前提由板级 DTS 保证：/aliases 里只有 ethernet0。APPSBL 的
+# fdt_fixup_ethernet() 会对任何 ethernetN 别名注入 env eth<N>addr；旧版 DTS
+# 别名了 dp2–dp4，env 里 eth1addr..eth3addr 相同，三个口于是带着同一个全局
+# MAC 和 addr_assign_type=0 起来，本脚本按随机地址判断，一个都不改。不要再
+# 给 dp2–dp4 加别名。
+#
 # 在 netifd 拉起接口之前（/etc/init.d/ethernet-macs，START=15 < network 的
 # 20）从 eth0 读 base MAC，按 +1/+2/+3 派生 eth1–eth3。偏移全部低于
 # wireless-defaults 的 +16/+17/+18 且高于 eth0，所以那个脚本“最低以太网

@@ -87,6 +87,10 @@
   常亮、NSS dp1–dp4 挂 ART `ethaddr` 0–3 使 MAC 跨启动固定（上游看到的
   WAN MAC 不再漂移）。热重启 3 轮 + 断电冷启动均 PASS，详见
   `docs/WIRED-DATAPATH-DEVICE-TEST-2026-11-23.md` §8。
+  6.18 的板级 DTB 没有任何 `ethernetN` 别名，APPSBL 的
+  `fdt_fixup_ethernet()` 因此不会注入 env MAC（24.10 / 25.12-6.12 曾因
+  `ethernet1..3` 别名把同一个 env MAC 写进 dp2–dp4，见各自的 MAC 小节）；
+  这里的 MAC 来源只有 nvmem `&ethaddr` 0–3，互不相同。
 - CI（S5，2026-11-24 起含内核检测）：`.github/workflows/build-25.12-6.18.yml`
   与 `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、
   `check-kernel.sh` 内核漂移报告（只报告，不改 pin）、configure 三道包反查、

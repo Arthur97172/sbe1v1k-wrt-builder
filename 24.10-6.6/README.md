@@ -266,21 +266,54 @@ GPIO 40 原本就由 `pwm_pins/mux_5` 配成上拉 GPIO，缺的只是把风扇�
 
 ### 以太网端口 MAC 固定化
 
-引导器（APPSBL）只把板级 base MAC 写进 `dp1` 的 DT `local-mac-address`
-（= `eth0`，`addr_assign_type=0`）；`dp2`–`dp4`（`eth1`–`eth3`）的该属性全零，
-`nss-dp` 因此**每次开机**给它们分配随机 MAC（`addr_assign_type=1`）。`eth1` 是
-WAN、`eth2`/`eth3` 组 `br-lan`，随机地址会让 WAN 的 IP、DHCP 租约和桥 MAC 每次
-重启都变（2026-11-14 的 #70 镜像真机现象）。
+*设计前提*：引导器（APPSBL）只把板级 base MAC 写进 `dp1` 的 DT
+`local-mac-address`（= `eth0`，`addr_assign_type=0`）；`dp2`–`dp4`
+（`eth1`–`eth3`）的该属性全零，`nss-dp` 因此**每次开机**给它们分配随机 MAC
+（`addr_assign_type=1`），再由 overlay 脚本固定。`eth1` 是 WAN、`eth2`/`eth3`
+组 `br-lan`，随机地址会让 WAN 的 IP、DHCP 租约和桥 MAC 每次重启都变
+（2026-11-14 的 #70 镜像真机现象）。
 
-修复在 overlay：`/etc/init.d/ethernet-macs`（`START=15`，早于 `network` 的 20，
-由 `include/rootfs.mk` 自动 enable）调用 `/usr/lib/sbe1v1k/ethernet-macs`，从
-`eth0` 读 base MAC（全零/组播/本地管理的地址视为不可用），按 **+1/+2/+3** 逐口
-`ip link set address` 固定 `eth1`–`eth3`。偏移低于 `wireless-defaults` 的
-+16/+17/+18（Wi-Fi MAC 派生）且高于 `eth0`，不影响“最低以太网 MAC 作 Wi-Fi
-base”的规则。只处理 `addr_assign_type=1` 的端口，引导器已给定的地址不动；
-base 不可用时只记日志、不改任何端口。`verify-image.sh` 断言两个文件进镜像、
-`S15ethernet-macs` 软链存在且脚本按 `addr_assign_type` 判断。真机行为
-`NOT TESTED`（需重启验证 MAC 与 IP 是否稳定）。
+修复分两层：
+
+1. **overlay**：`/etc/init.d/ethernet-macs`（`START=15`，早于 `network` 的
+   20，由 `include/rootfs.mk` 自动 enable）调用 `/usr/lib/sbe1v1k/ethernet-macs`，
+   从 `eth0` 读 base MAC（全零/组播/本地管理的地址视为不可用），按
+   **+1/+2/+3** 逐口 `ip link set address` 固定 `eth1`–`eth3`。偏移低于
+   `wireless-defaults` 的 +16/+17/+18（Wi-Fi MAC 派生）且高于 `eth0`，不影响
+   “最低以太网 MAC 作 Wi-Fi base”的规则。只处理 `addr_assign_type=1` 的端口，
+   引导器已给定的地址不动；base 不可用时只记日志、不改任何端口。
+2. **板级 DTS（2026-11-27 补）**：`/aliases` 只保留 `ethernet0 = &dp1`。
+   原先的 `ethernet1`–`ethernet3` 别名会被 APPSBL 的
+   `fdt_fixup_ethernet()` 当成注入点——它把 env `eth<N>addr` 写进每个
+   `ethernetN` 指向的节点（`local-mac-address` 无条件创建）。2026-11-27
+   实机取证：该机 APPSBL env 为 `ethaddr=90:d3:cf:4b:eb:81`、
+   `eth1addr..eth4addr=90:d3:cf:4b:eb:82`，于是 `eth1`–`eth3` 全部以同一个
+   全局 MAC、`addr_assign_type=0` 起来，overlay 脚本按“只改随机地址”的规则
+   **一次都没执行**（`ip link` 三个口都是 `:82`，`br-lan` 也是 `:82`）。
+   删掉三个别名后 dp2–dp4 回到全零地址 → 随机 MAC → 脚本按
+   `eth0+1/+2/+3` 固定（本机即 `:82/:83/:84`，`eth1` 的 WAN MAC 与修复前
+   相同，上游 DHCP 租约不受影响）。**不要再给 dp2–dp4 加 `ethernetN`
+   别名**，DTS 注释里写明了原因。
+
+`verify-image.sh` 断言两个文件进镜像、`S15ethernet-macs` 软链存在且脚本按
+`addr_assign_type` 判断。
+
+**真机 PASS（2026-11-27，本机构建镜像 `bac0430…`，`sysupgrade -n` 后经
+4 次重启取证）**：
+
+- `eth0`–`eth3` 恒为 `:81/:82/:83/:84`（`eth0` `addr_assign_type=0`，由
+  DTS 给定；`eth1`–`eth3` 为 `3`，由 `ethernet-macs` `ip link set` 写入），
+  每次启动 `logread` 都有 `ethernet-macs: eth1/2/3 -> …` 三行。
+- `br-lan` 恒为 `:83`（= `eth2`，不是 `eth0` 的 base）：桥在 `eth2`/`eth3`
+  入桥之后创建，`eth0` 由 `S23eth0-lan-attach` 后挂，桥地址不随成员变化重算。
+  它稳定且不再与 WAN（`eth1`=`:82`）相同，满足固定化目标。
+- WAN MAC 仍为 `:82`（与修复前相同），上游 DHCP 租约保持
+  `192.168.10.230`，不受本次修复影响。
+- dmesg 里 `GMAC3/4/5 Invalid MAC@ - using …` 三行属预期噪声（dp2–dp4 随机
+  分配路径的标志，随后即被 `ethernet-macs` 覆盖）。
+- 注意：`ethernet-macs` 在启动中段（约第 15 秒）打点，若 `logread` 的
+  128 KiB 缓冲已被后续启动日志轮转，会看不到这三行——属正常，以
+  `/sys/class/net/eth*/address` 与 `addr_assign_type=3` 为准。
 
 版本（取自镜像内 `/usr/lib/opkg/status`，随 feeds 更新会变化）：
 
