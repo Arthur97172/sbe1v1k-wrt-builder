@@ -130,9 +130,9 @@ jobs:
             echo "r38189-706052b20f（内核 6.18.60，GPL-2.0），官方 snapshots 不保留旧构建，"
             echo "故随包保存；详见包内 \`assets/README.md\`。"
             echo
-            echo "**状态**：Linux 全链路（送入恢复系统 → 上传校验 → \`sysupgrade -F -n\`"
-            echo "→ 新固件从 eMMC 启动）已于 2026-11-27 在 SBE1V1K 真机验收 PASS；"
-            echo "**Windows 脚本尚未做设备验收（NOT TESTED）**。"
+            echo "**状态**：Linux 与 Windows 两个平台均已于 2026-11-27 在 SBE1V1K"
+            echo "真机验收 PASS（Linux 全链路：送入恢复系统 → 上传校验 →"
+            echo "\`sysupgrade -F -n\` → 新固件从 eMMC 启动）。"
             echo
             echo "v1.0.3 起工具版本号与套件版本对齐。Windows 侧修复三处：24.10 式 tar"
             echo "固件不再误报「不是 FIT 格式」；netsh 设置地址后等待其真正出现在网卡上；"
