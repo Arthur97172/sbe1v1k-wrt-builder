@@ -12,6 +12,11 @@
 > （固件：24.10-6.6 v142-2，CI 构建）。
 > **Windows 脚本尚未做设备验收（NOT TESTED）**。
 > 首次使用请预留时间，并阅读本文末尾的「失败排查」。
+>
+> v1.0.3 起辅助工具版本号与套件版本对齐（此前停在 1.0.1）。同时修复 Windows
+> 侧三处问题：24.10 式 tar 固件的头部检查误报、netsh 设置地址后未等其在网卡上
+> 生效就绑定（"The requested address is not valid in its context"）、TFTP 绑定
+> 失败不再立即放弃而是等待地址生效（最多 15 秒）。
 
 ---
 
@@ -49,6 +54,8 @@ sbe1v1k-flash-kit/
 
 - 自己编译的（24.10-6.6 / 25.12-6.12 / 25.12-6.18）和别人编译的固件都可以，
   只要是本机的 sysupgrade `*.bin`，**文件名不限**；
+- 两种镜像格式都支持，脚本自动识别：裸 FIT（文件头 `d00dfeed`，25.12-6.18 系
+  常见）与 24.10 式 tar 包（以 `sysupgrade-` 开头的目录结构，FIT 在 2048 偏移处）；
 - 运行时先检查这个文件夹：没有任何 `.bin` 会直接提示你去放；
 - 放了多个 `.bin` 时，脚本会列出来让你选一个。
 
@@ -161,6 +168,7 @@ sudo ./flash-sbe1v1k.sh --firmware /path/x.bin    # 直接指定固件
 | 刷完等不到新系统 | 还没换线（见第五节）；或固件起不来——**重新进入恢复模式重刷** |
 | 刷完发现旧配置/旧文件还在 | `-n` 清不到 24.10 的尾部 overlay（见第一节末尾说明）；SSH 上去 `firstboot -y && reboot` |
 | 执行 `firstboot -y` 后 SSH 握手被重置 | 正常现象：dropbear 主机密钥被清，重启后自动重新生成 |
+| Windows 启动 TFTP 报 "The requested address is not valid in its context" | 旧版（≤1.0.2）在地址尚未于网卡生效时就绑定；v1.0.3 起会自动等待并重试，请使用最新 zip |
 | 恢复模式进不去 | 断电，按住 Reset 再上电，保持 12 秒以上再松手 |
 | Windows 提示端口被占用 | 关掉本机 DHCP 服务、VMware/VirtualBox 的桥接 DHCP 等 |
 

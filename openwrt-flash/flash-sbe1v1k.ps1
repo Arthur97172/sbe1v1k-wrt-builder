@@ -322,6 +322,16 @@ function Set-AdapterStatic($adapter, $ip, $mask) {
     }
     netsh interface ipv4 set address name="$($adapter.Name)" static $ip $mask | Out-Null
     if ($LASTEXITCODE -ne 0) { Die "给 $($adapter.Name) 配置 $ip 失败" }
+    # Windows 的地址变更经 DHCP Client 服务异步生效：netsh 返回后立刻 bind
+    # 这个地址会得到 "The requested address is not valid in its context"。
+    # 等地址真正出现在网卡上再继续。
+    for ($i = 0; $i -lt 50; $i++) {
+        $found = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $ip `
+            -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if ($found) { return }
+        Start-Sleep -Milliseconds 200
+    }
+    Die "地址 $ip 在 $($adapter.Name) 上 10 秒内未生效"
 }
 
 function Remove-StaticAddress($adapter, $ip) {
@@ -423,18 +433,35 @@ function Show-Banner {
     }
 }
 
+function Get-HexAt($fs, $offset, $count) {
+    $null = $fs.Seek($offset, [System.IO.SeekOrigin]::Begin)
+    $buf = New-Object byte[] $count
+    if ($fs.Read($buf, 0, $count) -lt $count) { return '' }
+    return (($buf | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
 function Check-FirmwareFile($file) {
     if ($file.Length -lt 8MB) {
         Warn ("固件只有 {0:N0} MiB，偏小，请确认选对了文件" -f ($file.Length / 1MB))
     }
     $fs = [System.IO.File]::OpenRead($file.FullName)
     try {
-        $buf = New-Object byte[] 4
-        $null = $fs.Read($buf, 0, 4)
+        $magic = Get-HexAt $fs 0 4
+        $arch = Get-HexAt $fs 2048 4
+        $null = $fs.Seek(0, [System.IO.SeekOrigin]::Begin)
+        $head = New-Object byte[] 11
+        $headStr = ''
+        if ($fs.Read($head, 0, 11) -eq 11) {
+            $headStr = [System.Text.Encoding]::ASCII.GetString($head)
+        }
     } finally { $fs.Close() }
-    $magic = ($buf | ForEach-Object { $_.ToString('x2') }) -join ''
-    if ($magic -ne 'd00dfeed') {
-        Warn "固件头部不是 FIT 格式（实际：$magic），可能不是 SBE1V1K 的 sysupgrade 镜像"
+    if ($magic -eq 'd00dfeed') {
+        # 裸 FIT（25.12-6.18 系构建常见）
+    } elseif ($arch -eq 'd00dfeed' -and $headStr -eq 'sysupgrade-') {
+        # 24.10 式 tar 包：sysupgrade-<板名>/ 头 + 2048 偏移处的 FIT
+    } else {
+        $shown = if ($magic) { $magic } else { '读取失败' }
+        Warn "固件既不是 FIT 也不是 24.10 式 sysupgrade tar 包（头部：$shown），可能不是 SBE1V1K 的 sysupgrade 镜像"
         if (-not (Confirm-Action "仍要继续？")) { exit 0 }
     }
 }

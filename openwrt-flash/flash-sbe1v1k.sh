@@ -351,6 +351,8 @@ net_setup_addr() {
     ip -4 addr show dev "$ifc" | grep -q "inet $addr/$prefix " && ip addr del "$addr/$prefix" dev "$ifc"
     ip link set "$ifc" up || die "启用网卡 $ifc 失败"
     ip addr add "$addr/$prefix" dev "$ifc" || die "给 $ifc 配置 $addr/$prefix 失败"
+    ip -4 addr show dev "$ifc" | grep -q "inet $addr/$prefix " \
+        || die "地址 $addr/$prefix 在 $ifc 上未生效"
     ADDED_ADDRS+=("$addr/$prefix|$ifc")
 }
 

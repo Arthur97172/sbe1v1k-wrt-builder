@@ -37,13 +37,15 @@ func runServe(args []string) {
 	dhcp := newDHCPServer(*iface, serverIP)
 	dhcpConn, err := dhcp.listen()
 	if err != nil {
-		logf("启动 DHCP 服务失败（UDP 67 需要管理员权限）：%v", err)
+		logf("启动 DHCP 服务失败：%v\n常见原因：需要管理员权限，或 UDP 67 被其他 DHCP 服务占用", err)
 		os.Exit(2)
 	}
 	tftp := &tftpServer{root: *root, serverIP: serverIP, expected: *expect}
 	tftpConn, err := tftp.listen()
 	if err != nil {
-		logf("启动 TFTP 服务失败（UDP 69 需要管理员权限）：%v", err)
+		logf("启动 TFTP 服务失败：%v\n"+
+			"常见原因：本机地址 %s 还未出现在所选网卡上（刚配置完地址可能需要几秒），"+
+			"或 UDP 69 被占用、缺少管理员权限", err, serverIP)
 		os.Exit(2)
 	}
 

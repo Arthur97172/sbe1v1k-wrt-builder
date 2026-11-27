@@ -24,7 +24,20 @@ type tftpServer struct {
 }
 
 func (s *tftpServer) listen() (*net.UDPConn, error) {
-	return net.ListenUDP("udp4", &net.UDPAddr{IP: s.serverIP, Port: 69})
+	// 地址配置完成到 socket 层可用之间可能有延迟（Windows 经 DHCP Client
+	// 服务异步应用地址），此时 bind 具体地址会返回 EADDRNOTAVAIL。重试一段
+	// 时间等地址生效；其他错误（端口占用、权限）立即返回。
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: s.serverIP, Port: 69})
+		if err == nil {
+			return conn, nil
+		}
+		if !isAddrNotAvailable(err) || time.Now().After(deadline) {
+			return nil, err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func (s *tftpServer) serve(conn *net.UDPConn) {

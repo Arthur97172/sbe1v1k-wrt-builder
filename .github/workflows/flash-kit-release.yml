@@ -133,6 +133,10 @@ jobs:
             echo "→ 新固件从 eMMC 启动）已于 2026-11-27 在 SBE1V1K 真机验收 PASS；"
             echo "**Windows 脚本尚未做设备验收（NOT TESTED）**。"
             echo
+            echo "v1.0.3 起工具版本号与套件版本对齐。Windows 侧修复三处：24.10 式 tar"
+            echo "固件不再误报「不是 FIT 格式」；netsh 设置地址后等待其真正出现在网卡上；"
+            echo "TFTP 绑定地址失败（地址尚未生效）时自动重试最多 15 秒。"
+            echo
             echo "已知行为：24.10 系 overlay 位于 p27 尾部 ext4 段，恢复系统的 \`-n\`"
             echo "清不到它——刷完内核与根文件系统是新的，旧 overlay 配置仍可能生效；"
             echo "需要完全干净的状态请刷完后在设备上执行 \`firstboot -y && reboot\`"
