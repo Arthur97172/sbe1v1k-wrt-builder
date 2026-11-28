@@ -23,15 +23,16 @@
 |---|---|---|---|
 | 🧱 Assemble | `.github/workflows/sources-24.10-6.6.yml` | 从 42 个固定提交装配源码树、比对指纹、打包 | Release `sources-vN`：**恰好 3 个**资产 |
 | 📦 Build | `.github/workflows/build-24.10-6.6.yml` | 下载源码包、七道门禁、编译、发布固件 | Release `24.10-6.6-v<run>-<attempt>-<sha8>`：**恰好 3 个**镜像 |
-| 🔄 Refresh pins | `.github/workflows/refresh-pins-24.10-6.6.yml` | 每周把插件 pin 解析到最新、只读检测内核，开/更新 PR | 分支 `auto/pin-refresh` + 一个 PR（**不自动合并**） |
+| 🔄 Refresh pins | `.github/workflows/refresh-pins.yml` | 每周把**三条线**的插件 pin 解析到最新（24.10 改写 pin 文件 + 只读检测内核；25.12 两条线刷新复现基线），开/更新 PR | 分支 `auto/pin-refresh` + 一个 PR（**不自动合并**） |
 
 改补丁/配置只需 push：装配 workflow 重新验证（可选发布新 `sources-vN`），构建 workflow 用
 `source_tag=auto` 自动取最新可用的源码包。**不再需要人工上传任何文件。**
 
 ### 1.1 插件“跟最新”的闭环
 
-`refresh-pins-24.10-6.6.yml`（每周一 04:23 UTC + 手动）跑 `scripts/ci/refresh-pins.sh`
-`--apply`：按用户 2026-11-07 选定的口径把 11 个自维护插件与 7 个第三方仓库解析到
+`refresh-pins.yml`（每周一 04:23 UTC + 手动；2026-11-28 起三条线共用）跑
+`scripts/ci/refresh-pins.sh --apply`：按用户 2026-11-07 选定的口径把 12 个自维护
+插件与 7 个第三方仓库解析到
 **最新 release tag**（无版本 tag 的退回默认分支头；最新 tag 相对当前 pin 是
 behind/diverged 时保持不动，**绝不回退**），只改写 commit 字段与 `PROVENANCE.md`
 的 pin 快照，然后 force-push 到固定分支 `auto/pin-refresh` 并创建一个 PR（已存在则
@@ -251,7 +252,7 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | 同批次的 `diagnose` 步骤（失败后 `-j1 V=s` 重跑） | NOT TESTED（本次运行还没有该步骤；已加入 workflow，下一次失败会把真实报错打到 `diagnose.log`） |
 | 镜像内的 `/etc/config/dawn`、socat、batman-adv 模块 | PASS（run `42449400629`，head `8faddba`）：修正断言后 `Verify image (static)` 2 秒通过，`batman-adv.ko`、`/usr/bin/socat`、`/lib/netifd/proto/batadv.sh` 均在镜像中 |
 | 新 pin 下的全量编译（含 `kmod-wireguard`、`luci-theme-argon`） | NOT TESTED |
-| `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push） |
+| `refresh-pins-24.10-6.6.yml` 在 Actions 上的首次运行 | NOT TESTED（workflow 尚未 push；该文件已于 2026-11-28 更名为 `refresh-pins.yml` 并扩展为三线，见文末状态表） |
 | 新 pin 下的全量编译（含 `kmod-batman-adv`） | PASS（`Build` 在 run `42441800640` 中 success；run `42449400629` 的静态校验确认 `batman-adv.ko` 已装进镜像） |
 | 端到端出固件（run `42449400629`，head `8faddba`） | PASS：全部 49 步 success——`Build` 86m57s、`Verify image (static)` 2s、`Collect release assets`、`Upload firmware artifact`、Release job 全过；发布 `v42-1-8faddba7`，**恰好 3 个固件资产**（fit-uImage 5,887,724 B / initramfs 96,576,444 B / sysupgrade 76,933,926 B）。这是本项目首次端到端产出可下载固件 |
 | 编译产物在真机启动/升级 | NOT TESTED |
@@ -263,6 +264,7 @@ gh workflow run build-24.10-6.6.yml -f source_tag=sources-v3
 | `known-delta` 补目录规则 + `set +e` 改 `\|\| rc=$?`（第二次修复） | 本机 PASS：整树重装配（43 pin 全取、warm cache）跑完 16 步，`exit 0`；`compare: deltas=942 explained=942 unexplained=0`、`FINGERPRINT_MATCH`；`entries=195332`、`aggregate=5057a73a…d200`、`recipe_sha256=5f54e9cd…3bfb`；`FEEDS_OK src-link=11 package-links=175`、`SRC_DEPS_OK selected=412`。CI 复验 NOT TESTED |
 | 2026-11-19 插件 pin 刷新（用户清单 17 项）：`ledfancontrol` `1.1.1-r2` → `1.1.3-r1`、`smartnetpilot` `1.1.8-r1` → `1.1.9-r1`、`turboacc` `1.3.0-r1` → `1.3.2-r1`、`passwall-packages` 分支头（`efc4093b` → `8147e8bf`，7 个入选包内容无差异）；其余 14 项已等于远端最新 tag。`scripts/ci/refresh-pins.sh --no-kernel --apply` | PASS（首扫 4 项可更新、`nikki` 因分支头已过 `v1.26.2` 保持不动；`--apply` 同步 `PROVENANCE.md` pin 块后手工补版本注记；三个新板上游仍带 `po/zh_Hans`、`luci-i18n-*-zh-cn` 均已在包清单中；内核 pin 未动） |
 | 同批次的 CI 装配（push 触发 `sources-24.10-6.6.yml`） | NOT TESTED（结果以 CI 为准；通过后需以 `publish=true` 重发 `sources-vN`，`build-24.10-6.6.yml` 的 `source_tag=auto` 才会用到新 pin） |
+| 2026-11-28：`refresh-pins-24.10-6.6.yml` 更名为 `refresh-pins.yml` 并扩为三线（24.10 跑 `refresh-pins.sh --apply`，两条 25.12 线跑 `fetch-plugins.sh --update-pins`），一个 `auto/pin-refresh` PR | 静态 PASS：`bash -n` 两份 `fetch-plugins.sh` 通过、YAML 可解析；`--update-pins` 与合并后 workflow 的 CI 运行 NOT TESTED（待手动 dispatch 一次 `refresh-pins.yml` 验证） |
 
 发布包由 runner 产出，`sbe1v1k-sources-24.10-6.6.tar.zst` 为 228,711,892 B；本地两次导出的
 是 228,502,877 B。两者**条目级指纹完全一致**（上面的 `entries`/`aggregate`/`recipe` 三项相同），

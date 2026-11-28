@@ -146,7 +146,8 @@
 `scripts/ci/fetch-plugins.sh`，按 `build/thirdparty-pins.conf` 解析各仓库
 最新版本 tag（无版本 tag 取默认分支头）；只有新提交是 pin 的后代才采用，
 分叉/回退/远端不可达保持 pin（不中断构建）。实际提交写进
-`<装配树>/.sbe-plugins.tsv`，本文件从不被构建改写。
+`<装配树>/.sbe-plugins.tsv`，构建过程只读本文件；每周的 `refresh-pins.yml`
+用 `fetch-plugins.sh --update-pins` 前移 pinned 列，经 PR 提交、不自动合并。
 
 - 复现旧镜像：`SBE_PLUGIN_MODE=pinned`（全部按清单 pin）。
 - 严格模式：`SBE_PLUGIN_STRICT=1` 时 stale/diverged/unknown 直接失败。

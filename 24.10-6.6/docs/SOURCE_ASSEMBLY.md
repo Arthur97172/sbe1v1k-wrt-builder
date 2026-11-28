@@ -72,7 +72,7 @@
 | `build/feeds.conf.in` | 11 条相对 `src-link` | 不含宿主路径 |
 | `build/feeds-links.conf` | 178 条 `package/feeds/<feed>/<名字>` 软链 | 记**解析后**的目标，不记链接文本 |
 | `build/passwall-selected.conf` | 从 passwall-packages 复制的 7 个包 | 纯拷贝，无 `.git` |
-| `scripts/ci/refresh-pins.sh` | 把插件 pin 解析到最新 tag/分支头并只读检测内核；**不改内核 pin** | 每周由 `refresh-pins-24.10-6.6.yml` 运行，只开 PR 不合并 |
+| `scripts/ci/refresh-pins.sh` | 把插件 pin 解析到最新 tag/分支头并只读检测内核；**不改内核 pin** | 每周由 `refresh-pins.yml`（三线共用）运行，只开 PR 不合并 |
 | `build/config-frozen/{.config,version,version.date}` | 冻结配置 | 4,904 行；`version.date=1792557977` |
 | `build/local-packages/` | `sbe1v1k-defaults`、`sbe-wifi-firmware`（仅文本） | 6 个 blob 不提交 |
 | `build/local-relayout/mosdns/` | 预编译静态二进制的包装包（源码构建受 Go 版本限制） | Makefile + LICENSE |

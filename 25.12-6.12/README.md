@@ -1136,7 +1136,9 @@ release notes 附插件提交表与内核检测结论。
 
 - `scripts/ci/fetch-plugins.sh` 在每次构建时对每个仓库 `git ls-remote`
   解析最新版本 tag（无版本 tag 取默认分支头），只有新提交是清单 pin 的
-  后代才采用；分叉/回退时保留 pin。**不改写任何 pin 文件**。
+  后代才采用；分叉/回退时保留 pin。构建过程**只读** pin 文件；复现基线由
+  每周的 `refresh-pins.yml` 用 `fetch-plugins.sh --update-pins` 前移（走 PR，
+  不自动合并）。
 - 实际使用的提交写入 `<装配树>/.sbe-plugins.tsv`，进入 release notes 与
   构建日志附件。复现旧镜像：
   `SBE_PLUGIN_MODE=pinned ./25.12-6.12/scripts/ci/fetch-plugins.sh`。

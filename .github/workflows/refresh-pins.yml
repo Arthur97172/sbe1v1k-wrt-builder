@@ -1,0 +1,174 @@
+name: 🔄 Refresh plugin pins (three lines)
+
+# 每周把三条固件线（24.10-6.6、25.12-6.12、25.12-6.18）的插件 pin 解析到
+# “最新版本”，有变化就提交到固定分支 auto/pin-refresh 并开/更新同一个 PR。
+#
+# 三条线对 pin 的定义不同：
+#   - 24.10-6.6：pin 是**构建输入**（sources-vN 里的 upstream-pins.conf 与
+#     thirdparty-feeds.conf 被装配流程直接使用），由 refresh-pins.sh --apply
+#     改写，同时同步 docs/package/PROVENANCE.md 的 pin 块；并只读检测
+#     CodeLinaro 6.6 内核是否有更高 SUBLEVEL（绝不改内核 pin）。
+#   - 25.12-6.12 / 25.12-6.18：pin 只是**离线/复现基线**——构建时默认按最新
+#     版本 tag 解析（SBE_PLUGIN_MODE=latest），pin 不参与正常构建。因此这里
+#     用 fetch-plugins.sh --update-pins 只把 build/thirdparty-pins.conf 的
+#     pinned 列前移到最新版本 tag，让回退/复现基线与文档保持新鲜。
+#
+# 三条硬约束（三条线一致，用户 2026-11-07 选定）：
+#   - **不自动合并**：pin 变了就可能带进新的构建依赖或坏版本，人看过再合；
+#   - **不改内核/feed/OPENWRT_SHA**：内核属于审计对象，脚本只报告；
+#   - **不回退**：最新 tag 相对当前 pin 是 behind/diverged 时保持不动。
+#
+# 合并本 PR 后：push 命中 24.10-6.6/build/** → sources-24.10-6.6.yml 自动装配
+# 验证（publish=false）；通过后仍需**手动** dispatch 并 publish=true 发
+# sources-vN，build-24.10-6.6.yml 的 source_tag=auto 才会用到新 pin。
+# 25.12 两条线的构建本来就会在构建时取最新 tag，合并不改变下一次镜像内容，
+# 只是让复现基线与 PLUGINS.md 的记录对上。
+#
+# 只需要仓库内置的 GITHUB_TOKEN（contents/pull-requests 写权限），不需要 PAT。
+
+on:
+  schedule:
+    # 每周一 04:23 UTC（错开正点，避开 Actions 高峰）
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-pins
+  cancel-in-progress: false
+
+env:
+  TZ: UTC
+  LC_ALL: C
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    # 25.12 两条线首次运行要冷取 19 个仓库的 blobless 缓存（6.18 复用 6.12
+    # 的缓存，只增量 fetch），比单线慢，留足余量。
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: true   # 需要 push auto/pin-refresh
+
+      - name: Refresh pins — 24.10-6.6
+        run: |
+          set -o pipefail
+          rc=0
+          ./24.10-6.6/scripts/ci/refresh-pins.sh --apply \
+            --report "$RUNNER_TEMP/report-24.10.md" 2>&1 | tee refresh-24.10.log || rc=$?
+          # 0 = 无变化或已应用；3 = 内核检测读不到远端（BLOCKED，不影响 pin 刷新）
+          if [ "$rc" != 0 ] && [ "$rc" != 3 ]; then
+            echo "refresh-pins.sh 失败，退出码 $rc" >&2
+            exit "$rc"
+          fi
+
+      - name: Refresh pins — 25.12-6.12
+        run: |
+          set -o pipefail
+          ./25.12-6.12/scripts/ci/fetch-plugins.sh --update-pins \
+            --report "$RUNNER_TEMP/report-6.12.md" 2>&1 | tee refresh-6.12.log
+
+      - name: Refresh pins — 25.12-6.18
+        run: |
+          set -o pipefail
+          ./25.12-6.18/scripts/ci/fetch-plugins.sh --update-pins \
+            --report "$RUNNER_TEMP/report-6.18.md" 2>&1 | tee refresh-6.18.log
+
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "no-changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no-changes=false" >> "$GITHUB_OUTPUT"
+            git diff --stat
+          fi
+
+      - name: Compose PR body
+        if: steps.changes.outputs.no-changes == 'false'
+        run: |
+          set -euo pipefail
+          body=$RUNNER_TEMP/pr-body.md
+          {
+            echo "三条固件线的插件 pin 自动刷新（$(date -u +%F)）。"
+            echo
+            echo "## 24.10-6.6（构建输入，合并后需手动发新 sources）"
+            echo
+            cat "$RUNNER_TEMP/report-24.10.md" 2>/dev/null || echo "（无报告）"
+            echo
+            echo "## 25.12-6.12（复现基线）"
+            echo
+            cat "$RUNNER_TEMP/report-6.12.md" 2>/dev/null || echo "（无报告）"
+            echo
+            echo "## 25.12-6.18（复现基线）"
+            echo
+            cat "$RUNNER_TEMP/report-6.18.md" 2>/dev/null || echo "（无报告）"
+            echo
+            echo "---"
+            echo
+            echo "- 只前移、不回退：behind/diverged/远端不可达的仓库保持原 pin 并在表中标注。"
+            echo "- 清单一行的注记列（版本号、许可证等）不会被自动改写，合并前请按表中"
+            echo "  「最新 tag」顺手更新注记里的版本号。"
+            echo "- 内核 pin、feed SHA、OPENWRT_SHA 均未改动。"
+            echo "- 24.10 合并后：等 push 触发的装配验证（publish=false）通过，再手动"
+            echo "  dispatch sources-24.10-6.6.yml 并 publish=true 发新 sources，"
+            echo "  build-24.10-6.6.yml 的 source_tag=auto 才会用到新 pin。"
+            echo "- 25.12 两条线：构建时本来解析最新 tag，合并只更新复现基线；"
+            echo "  用 SBE_PLUGIN_MODE=pinned 复现旧镜像时才会受本 PR 影响。"
+          } > "$body"
+
+      - name: Commit and push auto/pin-refresh
+        if: steps.changes.outputs.no-changes == 'false'
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B auto/pin-refresh
+          git add -A
+          git commit -m "插件：三线 pin 自动刷新（$(date -u +%F)）"
+          git push --force origin auto/pin-refresh
+
+      - name: Open or update pull request
+        if: steps.changes.outputs.no-changes == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head auto/pin-refresh --state open \
+                 --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" \
+              --title "插件 pin 自动刷新（三线，$(date -u +%F)）" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+            echo "已更新 PR #$pr"
+          else
+            gh pr create --base main --head auto/pin-refresh \
+              --title "插件 pin 自动刷新（三线，$(date -u +%F)）" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+          fi
+
+      - name: Nothing to do
+        if: steps.changes.outputs.no-changes == 'true'
+        run: echo "三条线的 pin 均无变化，内核检测结论见日志；未创建分支、未动 PR。"
+
+      - name: Upload log
+        if: always()
+        continue-on-error: true   # artifact 配额满不应把整轮判死
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-pins-log
+          path: |
+            refresh-24.10.log
+            refresh-6.12.log
+            refresh-6.18.log
+            ${{ runner.temp }}/report-24.10.md
+            ${{ runner.temp }}/report-6.12.md
+            ${{ runner.temp }}/report-6.18.md
+          if-no-files-found: ignore
+          retention-days: 3

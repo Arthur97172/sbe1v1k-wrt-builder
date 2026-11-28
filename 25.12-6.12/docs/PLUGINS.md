@@ -189,7 +189,13 @@ mesh 的 batman 组件等），便于反查。
 - **严格（`SBE_PLUGIN_STRICT=1`，CI 默认）**：只要有仓库解析结果不是
   `same`（即没跟上最新、分叉或未知），构建直接失败——避免「以为在跟新」。
 - 结果写入 `<装配树>/.sbe-plugins.tsv`（key、url、tag、commit、pin、动作），
-  进入 release notes 与构建日志附件。清单文件本身**不会**被改写。
+  进入 release notes 与构建日志附件。构建过程只读清单，不改写任何 pin 文件。
+- **复现基线刷新（`--update-pins`）**：每周的 `refresh-pins.yml`（三线共用）
+  用它把清单的 pinned 列前移到最新版本 tag——只前移、不回退，behind/diverged/
+  远端不可达保持原 pin 并在报告里标注；不安装、不碰装配树。结果经
+  `auto/pin-refresh` 分支走 PR，从不自动合并（注记列里的版本号不自动改写，
+  合并前按报告中的「最新 tag」人工更新）。命令：
+  `./25.12-6.12/scripts/ci/fetch-plugins.sh --update-pins [--report r.md]`。
 - 本机缓存在仓库根 `.sbe-cache/plugins/`（已 gitignore）：blobless 元数据
   克隆 + depth-1 打包树，CI 每次从零建。
 

@@ -5,6 +5,10 @@
 #   scripts/ci/fetch-plugins.sh                 [工作区根]   默认 latest
 #   SBE_PLUGIN_MODE=pinned scripts/ci/fetch-plugins.sh ...   按清单 pin 复现
 #   scripts/ci/fetch-plugins.sh --dry-run       [工作区根]   只解析并打印
+#   scripts/ci/fetch-plugins.sh --update-pins [--report FILE] [工作区根]
+#        只把清单 pinned 列刷新到最新版本 tag（每周 Refresh pins 工作流用）：
+#        仅当新提交是旧 pin 的后代时改写，回退/分叉/远端不可达保持不变；
+#        不安装、不碰装配树；--report 额外写一份 markdown 变更表（PR 正文用）。
 #
 # 模式（环境变量 SBE_PLUGIN_MODE）：
 #   latest   （默认）每次构建解析远端最新版本 tag（无版本 tag 取默认分支头），
@@ -16,7 +20,8 @@
 # 默认宽松：保留 pin 并在结果表里标注，构建继续。
 #
 # 结果写入 <装配树>/.sbe-plugins.tsv（key/url/tag/commit/pin/action），供
-# release notes 与日志引用；本脚本不改写 thirdparty-pins.conf。
+# release notes 与日志引用。正常安装/--dry-run 不改写 thirdparty-pins.conf；
+# 只有 --update-pins（每周 Refresh pins 工作流）会改写其中的 pinned 列。
 #
 # 远端口径与 24.10-6.10 的 scripts/ci/refresh-pins.sh 一致：
 #   - 版本 tag：形如 v?<数字>…，按版本序取最大；注解 tag 取 ^{} 指向的 commit；
@@ -35,15 +40,22 @@ SELF=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJ=$(CDPATH= cd -- "$SELF/../.." && pwd)          # <repo>/25.12-6.12
 
 DRY=0
+UPDATE=0
 ROOT=""
-for arg in "$@"; do
-	case "$arg" in
-	--dry-run) DRY=1 ;;
-	--help|-h) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-	-*) echo "未知参数: $arg" >&2; exit 2 ;;
-	*) [ -n "$ROOT" ] && { echo "只接受一个工作区根目录参数" >&2; exit 2; }; ROOT=$arg ;;
+REPORT=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--dry-run) DRY=1; shift ;;
+	--update-pins) UPDATE=1; shift ;;
+	--report) REPORT=${2:?--report 需要一个文件名}; shift 2 ;;
+	--help|-h) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-*) echo "未知参数: $1" >&2; exit 2 ;;
+	*) [ -n "$ROOT" ] && { echo "只接受一个工作区根目录参数" >&2; exit 2; }
+	   ROOT=$1; shift ;;
 	esac
 done
+[ "$DRY" = 1 ] && [ "$UPDATE" = 1 ] \
+	&& { echo "--dry-run 与 --update-pins 不能同时使用" >&2; exit 2; }
 [ -n "$ROOT" ] || ROOT=$(CDPATH= cd -- "$PROJ/.." && pwd)
 
 CONF=$PROJ/build/thirdparty-pins.conf
@@ -60,11 +72,13 @@ case "$MODE" in
 latest|pinned) ;;
 *) echo "SBE_PLUGIN_MODE 只能是 latest 或 pinned（当前：$MODE）" >&2; exit 2 ;;
 esac
+[ "$UPDATE" = 1 ] && [ "$MODE" = pinned ] \
+	&& { echo "--update-pins 与 SBE_PLUGIN_MODE=pinned 语义冲突" >&2; exit 2; }
 
 [ -f "$CONF" ] || { echo "缺少 $CONF" >&2; exit 2; }
 command -v git >/dev/null || { echo "缺少 git" >&2; exit 2; }
-if [ "$DRY" = 0 ] && [ ! -d "$BR/package" ]; then
-	echo "找不到装配树 $BR（先跑 prepare-tree.sh，或 --dry-run）" >&2
+if [ "$DRY" = 0 ] && [ "$UPDATE" = 0 ] && [ ! -d "$BR/package" ]; then
+	echo "找不到装配树 $BR（先跑 prepare-tree.sh，或 --dry-run / --update-pins）" >&2
 	exit 2
 fi
 
@@ -249,10 +263,12 @@ install_repo() { # <key> <url> <sha> <subdirs(csv)>
 }
 
 # ------------------------------------------------------------------ main
-if [ "$DRY" = 0 ]; then
+if [ "$DRY" = 0 ] && [ "$UPDATE" = 0 ]; then
 	mkdir -p "$CACHE"
 	printf 'key\turl\ttag\tcommit\tpin\taction\n' > "$OUT"
 fi
+UPD=""
+[ "$UPDATE" = 1 ] && UPD=$(mktemp "${TMPDIR:-/tmp}/sbe-pinupdate.XXXXXX")
 
 say "模式 $MODE，清单 $CONF"
 n=0
@@ -275,6 +291,27 @@ while IFS=$'\t' read -r kw key url branch pin subdirs notes; do
 				if [ "$sha" = "$pin" ]; then action=same
 				elif [ "$tag" = HEAD ]; then action=head
 				else action=tag
+				fi
+			elif [ "$UPDATE" = 1 ]; then
+				if [ "$sha" = "$pin" ]; then
+					action=same
+				elif ! ensure_cache "$key" "$url"; then
+					action=stale; sha=$pin
+					warn "$key：git fetch 失败（SOURCE_UNAVAILABLE），保持 pin ${pin:0:12}"
+				else
+					case "$(classify "$key" "$pin" "$sha")" in
+					same) action=same ;;
+					ahead) action=update ;;
+					behind)
+						action=behind; sha=$pin
+						warn "$key：远端 tag $tag 早于/落后于 pin（不回退），保持 pin ${pin:0:12}" ;;
+					diverged)
+						action=diverged; sha=$pin
+						warn "$key：远端 $tag 与 pin 分叉，需人工判断，保持 pin ${pin:0:12}" ;;
+					*)
+						action=unknown; sha=$pin
+						warn "$key：无法判定 pin 与 $tag 的祖先关系，保持 pin ${pin:0:12}" ;;
+					esac
 				fi
 			else
 				if ! ensure_cache "$key" "$url"; then
@@ -301,7 +338,10 @@ while IFS=$'\t' read -r kw key url branch pin subdirs notes; do
 
 	say "$(printf '%-24s %-16s %s %s' "$key" "$tag" "${sha:0:12}" "$action")"
 
-	if [ "$DRY" = 0 ]; then
+	if [ "$UPDATE" = 1 ]; then
+		printf '%s\t%s\t%s\t%s\t%s\n' \
+			"$key" "$pin" "$tag" "$sha" "$action" >> "$UPD"
+	elif [ "$DRY" = 0 ]; then
 		printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"$key" "$url" "$tag" "$sha" "$pin" "$action" >> "$OUT"
 		install_repo "$key" "$url" "$sha" "$subdirs"
@@ -310,6 +350,53 @@ while IFS=$'\t' read -r kw key url branch pin subdirs notes; do
 done < "$CONF"
 
 [ "$n" -gt 0 ] || { echo "清单里没有任何 repo 行" >&2; exit 2; }
+
+if [ "$UPDATE" = 1 ]; then
+	summary=$(python3 -I - "$CONF" "$UPD" "$REPORT" "$(basename "$PROJ")" <<'UPD_PY'
+import sys
+conf, upd, report, title = sys.argv[1:5]
+rows = []
+for line in open(upd, encoding='utf-8'):
+    k, pin, tag, sha, action = line.rstrip(chr(10)).split(chr(9))
+    rows.append((k, pin, tag, sha, action))
+updates = {k: sha for k, pin, tag, sha, action in rows if action == 'update'}
+text = open(conf, encoding='utf-8').read().split(chr(10))
+done = set()
+for i, line in enumerate(text):
+    if not line or line.startswith('#'):
+        continue
+    parts = line.split(chr(9))
+    if len(parts) >= 7 and parts[0] == 'repo' and parts[1] in updates:
+        parts[4] = updates[parts[1]]
+        text[i] = chr(9).join(parts)
+        done.add(parts[1])
+missing = set(updates) - done
+if missing:
+    sys.exit('内部错误：清单里找不到要改写的行：' + ','.join(sorted(missing)))
+if updates:
+    open(conf, 'w', encoding='utf-8').write(chr(10).join(text))
+counts = {}
+for _, _, _, _, a in rows:
+    counts[a] = counts.get(a, 0) + 1
+md = ['## %s build/thirdparty-pins.conf（%d 个仓库）' % (title, len(rows)), '',
+      '| 仓库 | 当前 pin | 最新 tag | 新提交 | 动作 |',
+      '| --- | --- | --- | --- | --- |']
+for k, pin, tag, sha, action in rows:
+    md.append('| `%s` | `%s` | %s | `%s` | %s |'
+              % (k, pin[:12], tag, (sha if action == 'update' else pin)[:12], action))
+summary = '改写 %d / %d 个 pin（%s）' % (
+    len(updates), len(rows),
+    '，'.join('%s %d' % (a, c) for a, c in sorted(counts.items())))
+md += ['', summary]
+if report:
+    open(report, 'w', encoding='utf-8').write(chr(10).join(md) + chr(10))
+print(summary)
+UPD_PY
+)
+	[ -n "$UPD" ] && rm -f "$UPD"
+	say "--update-pins：$summary"
+	exit 0
+fi
 
 if [ "$DRY" = 1 ]; then
 	say "--dry-run：解析 $n 个仓库，未安装、未写文件（祖先关系在构建时判定）"

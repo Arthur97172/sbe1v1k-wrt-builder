@@ -658,9 +658,10 @@ local <feed-name> <path>
 那是审计动作，需要单独批准。**插件树**（`apps/*`、`thirdparty/*` 等）自 2026-11-07
 起整树按 `any` 放宽，不参与这条逐文件基线。
 
-日常的“跟最新”不用手改：`refresh-pins-24.10-6.6.yml` 每周跑
-`scripts/ci/refresh-pins.sh --apply`，把最新 tag/分支头写进两个 pin 文件并开 PR；
-本地也可以先看一眼它会改成什么（只读、不改文件）：
+日常的“跟最新”不用手改：`refresh-pins.yml`（三线共用）每周跑
+`24.10-6.6/scripts/ci/refresh-pins.sh --apply`，把最新 tag/分支头写进两个 pin
+文件并开 PR；同一轮还会用 `--update-pins` 刷新两条 25.12 线的复现基线
+（见那两线的 README）。本地也可以先看一眼它会改成什么（只读、不改文件）：
 
 ```sh
 ./24.10-6.6/scripts/ci/refresh-pins.sh                  # old→new 表 + 内核结论
@@ -978,9 +979,9 @@ SBL 按 `0:BOOTCONFIG` / `0:BOOTCONFIG1` 选一组，U-Boot 再按选中的那�
 |---|---|---|
 | `sources-24.10-6.6.yml` 🧱 | `build/**`、`docs/**`、四个装配脚本变更 / 手动 | Release `sources-vN`：源码包 + `SHA256SUMS` + 指纹（恰好 3 个） |
 | `build-24.10-6.6.yml` 📦 | `24.10-6.6/**` 变更 / 手动（可指定 `source_tag`） | Release `24.10-6.6-v<run>-<attempt>-<sha8>`：三个固件（恰好 3 个） |
-| `refresh-pins-24.10-6.6.yml` 🔄 | 每周一 04:23 UTC / 手动 | 分支 `auto/pin-refresh` + 一个 PR：插件 pin 的 old→new 表与内核检测结论；**从不自动合并** |
+| `refresh-pins.yml` 🔄 | 每周一 04:23 UTC / 手动 | 三条线共用：24.10 的 pin 改写 + 内核结论，25.12 两条线的复现基线刷新；分支 `auto/pin-refresh` + 一个 PR；**从不自动合并** |
 
-插件怎么“跟最新”：`refresh-pins.sh` 把 11 个自维护插件与 7 个第三方仓库解析到
+插件怎么“跟最新”：`refresh-pins.sh` 把 12 个自维护插件与 7 个第三方仓库解析到
 最新 release tag（无版本 tag 的退回默认分支头，比当前 pin 旧/分叉则保持不动），
 改写 `upstream-pins.conf` / `thirdparty-feeds.conf` 的 commit 字段与
 `PROVENANCE.md` 的 pin 快照，再开 PR。合并后 push 自动触发装配验证；发
