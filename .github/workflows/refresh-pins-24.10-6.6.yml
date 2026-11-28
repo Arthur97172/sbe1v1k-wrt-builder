@@ -1,6 +1,6 @@
 name: 🔄 Refresh 24.10-6.6 plugin pins
 
-# 每周把 10 个自维护插件与 7 个第三方仓库的 pin 解析到“最新版本”，有变化就
+# 每周把 12 个自维护插件与 7 个第三方仓库的 pin 解析到“最新版本”，有变化就
 # 提交到固定分支 auto/pin-refresh 并开/更新同一个 PR。同时只读检测 CodeLinaro
 # 6.6 内核是否有高于当前 pin 的 SUBLEVEL。
 #
