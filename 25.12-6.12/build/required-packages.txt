@@ -58,6 +58,8 @@ lua
 libubus-lua
 liblucihttp-lua
 ucode-mod-lua
+ucode-mod-fs
+ucode-mod-math
 jsonfilter
 libacl
 

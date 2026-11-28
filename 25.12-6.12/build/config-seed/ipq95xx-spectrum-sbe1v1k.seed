@@ -188,9 +188,10 @@ CONFIG_PACKAGE_dnsmasq-full=y
 # CONFIG_PACKAGE_dnsmasq is not set
 CONFIG_PACKAGE_ip-full=y
 # CONFIG_PACKAGE_ip-tiny is not set
-# 13 个自维护应用里有 4 个是 Lua 应用（fcc/ledfancontrol/nssecm/substore），
-# 需要 Lua 运行时与 LuCI 兼容层；其余依赖由各自 Makefile 声明、defconfig
-# 自动带入，这里显式列出只为可审计。
+# 13 个自维护应用里有 3 个是 Lua 应用（fcc/ledfancontrol/nssecm），需要 Lua
+# 运行时与 LuCI 兼容层；substore 自 2.9.0（2.8.0 起）是 ucode 后端，只用
+# luci-base 自带的 ucode 解释器与 ucode-mod-fs/math，不再需要 Lua 栈。
+# 其余依赖由各自 Makefile 声明、defconfig 自动带入，这里显式列出只为可审计。
 CONFIG_PACKAGE_luci-compat=y
 CONFIG_PACKAGE_luci-lua-runtime=y
 CONFIG_PACKAGE_luci-lib-jsonc=y

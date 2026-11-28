@@ -359,10 +359,17 @@ release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户�
 分支头再次前进到 `1ad22706`（7 个入选包内容未变）。镜像未重编、未上机验证
 （`NOT TESTED`）；24.10 的 CI 源自从 `sources-v*` Release 导出，本文件改动
 须重新导出源码包后才会进入 CI 构建。
+同日第三轮（按用户要求）：`substore` 升到 `2.9.0-r1`。该跨度含 2.8.0 的
+**后端从 Lua 迁到 ucode**（`root/usr/share/substore/*.lua` 删除，
+改为 `root/usr/share/ucode/substore/*.uc`；模板 `.htm` → `.ut`；仓库不再带
+测试与设计文档，文件数 108 → 43），依赖由 Lua 栈改为
+`+luci-base +ucode-mod-fs +ucode-mod-math`（均已在镜像中，`luci-base`
+自带 ucode 解释器）；上游要求最低 OpenWrt 24.10，本线满足。其余 pin 不变；
+镜像未重编、未上机验证（`NOT TESTED`）。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
-| `luci-app-substore` | `luci-app-substore` | `9cbc9d1721f43c4d017b993e65caaea8240d082e` | 2026-11-28T08:29:09Z | `docs(ucode): 修正迁移评估的错误前提与 .ut 语法表（2.7.4-r1）` | GPL-3.0-or-later（`LICENSE`；Makefile 未设 `PKG_LICENSE`） | 1.9 MB |
+| `luci-app-substore` | `luci-app-substore` | `8ab8ba773ae28812a1c315a3d4d40ec10de1eb09` | 2026-11-28T14:02:10Z | `docs: 修正中文 README 的菜单路径为「服务 → 订阅管理」`（tag `2.9.0-r1`） | GPL-3.0-or-later（`LICENSE`；Makefile 未设 `PKG_LICENSE`） | 0.9 MB |
 | `luci-app-fcc` | `luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 2026-11-08T13:03:42Z | `Let Ctrl+V paste into the Web Console and its browser window`（tag `1.2.4-r1`） | GPL-3.0（`LICENSE`） | 2.6 MB |
 | `luci-app-online-upgrade` | `luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 2026-10-24T04:11:06Z | `docs: 调整构建章节位置并合并从源码编译说明` | GPL-2.0-only（`LICENSE`；上游原作为 gooyjq） | 3.1 MB |
 | `luci-app-ledfancontrol` | `luci-app-ledfancontrol` | `1f032f39bb41e81f53389eb493711eecd3429834` | 2026-11-18T23:05:05Z | `daemon: 自动档改由用户态曲线驱动，内核 cooling map 只作兜底`（tag `1.1.3-r1`） | GPL-3.0-only（`LICENSE`） | 230 KB |
@@ -583,7 +590,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
 | `apps/luci-app-oxidns` | `d98211bc4dbd6cacabda714461dc0dc96424db3e` | v1.5.8（tag；PKG_VERSION 1.5.8；内联提示框收在分区内；2026-11-28 刷新） |
 | `apps/luci-app-smartnetpilot` | `14b42cc05d81a72e15dba461880b0a851175a219` | 1.2.7-r1（tag；2026-11-22 刷新） |
-| `apps/luci-app-substore` | `9cbc9d1721f43c4d017b993e65caaea8240d082e` | 2.7.4-r1（tag；2026-11-28 刷新） |
+| `apps/luci-app-substore` | `8ab8ba773ae28812a1c315a3d4d40ec10de1eb09` | 2.9.0-r1（tag；2026-11-28 刷新） |
 | `apps/luci-app-tasks` | `4030f7c7cd282a7ae959f9e0c43e20347c5d2e2c` | 1.1.8-r1（tag；PKG_VERSION 1.1.8；表单校验失败时丢弃新增分段；2026-11-24 刷新） |
 | `apps/luci-app-turboacc` | `d10cc9337a2a04dcdadd42ceac04aa272c780454` | 1.3.2-r1（tag；PKG_VERSION 1.3.2；GPL-3.0-only；po/zh_Hans；2026-11-19 刷新） |
 | `repo argon` | `1917d2f0c02d084bf1311310d0fe55f1803ae121` | thirdparty/luci-theme-argon |

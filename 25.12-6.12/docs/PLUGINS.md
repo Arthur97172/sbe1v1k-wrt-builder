@@ -23,6 +23,12 @@
   2.7.3-r3 → 2.7.4-r1、`meshassistant` 2.9.0-r1 → 2.9.1-r1、
   `passwall-packages` 分支头前进到 1ad22706（6 个入选包内容未变），
   其余仓库已是最新。清单 pin 已同步；镜像未重编、未上机验证。
+- 2026-11-28 第三轮（用户要求）：`substore` 2.7.4-r1 → 2.9.0-r1。
+  该版本跨度包含 2.8.0 的**后端从 Lua 迁到 ucode**（控制器/模板/模块改为
+  `.uc`/`.ut`，Lua 实现删除），依赖由 `luci-lua-runtime`+`luci-compat`
+  改为 `+luci-base +ucode-mod-fs +ucode-mod-math`（`luci-base` 已带解释器
+  与这两个模块，seed 无需新增行）；仓库要求最低 OpenWrt 24.10，三条线均满足。
+  其余 18 个仓库无变化。镜像未重编、未上机验证。
 - 第三方插件授权状态统一记 `LICENSE_REVIEW_REQUIRED`：即使 Makefile 里写了
   `PKG_LICENSE`，也尚未做过随镜像公开分发的法务确认。自维护包按各自
   `PKG_LICENSE` 记录。
@@ -37,7 +43,7 @@
 | 2 | LED 风扇控制 | luci-app-ledfancontrol | Arthur97172/luci-app-ledfancontrol | 1.1.3-r1 | luci-i18n-ledfancontrol-zh-cn | GPL-3.0-only |
 | 3 | NS-SECM | luci-app-nssecm | Arthur97172/luci-app-nssecm | 1.0.1-r1 | luci-i18n-nssecm-zh-cn | GPL-3.0-only |
 | 4 | 在线升级 | luci-app-online-upgrade | Arthur97172/luci-app-online-upgrade | 1.1.3-r4 | luci-i18n-online-upgrade-zh-cn | GPL-2.0-only |
-| 5 | 订阅存储 | luci-app-substore | Arthur97172/luci-app-substore | 2.7.4-r1 | luci-i18n-substore-zh-cn | 未声明 |
+| 5 | 订阅存储 | luci-app-substore | Arthur97172/luci-app-substore | 2.9.0-r1 | luci-i18n-substore-zh-cn | 未声明 |
 | 6 | 任务计划 | luci-app-tasks | Arthur97172/luci-app-tasks | 1.1.8-r1 | luci-i18n-tasks-zh-cn | GPL-3.0-only |
 | 7 | SmartNetPilot | luci-app-smartnetpilot | Arthur97172/luci-app-smartnetpilot | 1.2.7-r1 | luci-i18n-smartnetpilot-zh-cn | GPL-3.0-only |
 | 8 | 核心状态 | luci-app-corestatus | Arthur97172/luci-app-corestatus | 1.0.4-r1 | luci-i18n-corestatus-zh-cn | GPL-3.0-only |
@@ -110,7 +116,7 @@ mesh 的 batman 组件等），便于反查。
 | ledfancontrol | luci-base | ucode/Lua | 无 |
 | nssecm | luci-base | ucode/Lua | 无 |
 | online-upgrade | curl、jsonfilter | ucode | 无 |
-| substore | luci-lua-runtime、luci-compat | Lua | 依赖 Lua 栈，seed 已显式选择 |
+| substore | luci-base、ucode-mod-fs、ucode-mod-math | ucode | 2.8.0 起后端整体迁到 ucode，不再依赖 Lua 栈；`luci-base` 已带 ucode 解释器与这两个模块 |
 | tasks | luci-base | ucode | 无 |
 | smartnetpilot | luci-base | ucode | 无 |
 | corestatus | ucode、ucode-mod-fs | ucode | 无 |
