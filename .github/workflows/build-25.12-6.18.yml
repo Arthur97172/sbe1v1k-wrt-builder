@@ -124,38 +124,73 @@ jobs:
           cat sources/buildroot-25.12-6.18/target/linux/generic/kernel-6.18
 
       - name: Build
-        # 单设备（askey_sbe1v1k，NSS 数据通路）跑一遍 world；失败重编沿用
-        # build.log 里的失败包名，.config 保持在该设备选择上。
+        # 单设备（askey_sbe1v1k，NSS 数据通路）跑一遍 world。非 verbose 的
+        # world 用 `make -s` 跑每个包，包内部的编译错误被丢弃，所以失败时
+        # 先按 build.log 里的失败包名用 V=s -j1 重编：真正的编译错误在这里
+        # 进 job 日志与附件。
+        #
+        # 重编通过说明是瞬态（2026-11-28 run 19：chinadns-ng 下载在 29 s 内
+        # 失败，重编即过），此时再增量重跑一次 world，通过则本次构建照常
+        # 继续；第二次仍失败才判构建失败，并再重编一次最近失败目标并把错误
+        # 写进日志。只重试一轮，保持总耗时在 job 超时之内。
         run: |
           set -o pipefail
+
+          # 重编失败目标并开 V=s；失败时把错误摘要与尾部全文留在日志里。
+          diagnose() {
+            local rerun="$RUNNER_TEMP/rerun-${GITHUB_RUN_NUMBER}-$(echo "$1" | tr '/' '_')-$(date +%s).log"
+            if ./25.12-6.18/build/sbe1v1k-build.sh "$2" V=s -j1 >"$rerun" 2>&1; then
+              echo "===== $1 以 V=s -j1 重编通过，未复现 ====="
+              return 0
+            fi
+            cat "$rerun" >> build.log
+            echo "===== error 摘要（前 8 处） ====="
+            grep -n -m 8 -E 'error:|Error [0-9]+$|No such file or directory|undefined reference' "$rerun" \
+              || echo "（未匹配到常见错误模式，见下方尾部）"
+            echo "===== $1 重建日志尾部 200 行 ====="
+            tail -n 200 "$rerun"
+            return 1
+          }
+
+          # 按 build.log 里最近一次失败的目标设置 rebuild/what（空 = 未识别）。
+          last_failure() {
+            local pkg tgt
+            pkg=$(sed -n 's/.*ERROR: package\/\([^ ]*\) failed to build.*/\1/p' build.log | tail -n1)
+            tgt=$(sed -n 's/.*ERROR: \(target\/[^ ]*\) failed to build.*/\1/p' build.log | tail -n1)
+            if [ -n "$pkg" ]; then rebuild="package/$pkg/compile"; what="$pkg"
+            elif [ -n "$tgt" ]; then rebuild="$tgt/compile"; what="$tgt"
+            else rebuild=""; what=""; fi
+          }
+
           if ./25.12-6.18/scripts/ci/build-images.sh world 2>&1 | tee build.log; then
             exit 0
           fi
-          # 非 verbose 的 world 用 `make -s` 跑每个包，包内部的编译错误被丢弃。
-          # 这里只重编失败的包并开 V=s：错误进 job 日志，完整输出进附件。
-          pkg=$(sed -n 's/.*ERROR: package\/\([^ ]*\) failed to build.*/\1/p' build.log | head -n1)
-          tgt=$(sed -n 's/.*ERROR: \(target\/[^ ]*\) failed to build.*/\1/p' build.log | head -n1)
-          if [ -n "$pkg" ]; then rebuild="package/$pkg/compile"; what="$pkg"
-          elif [ -n "$tgt" ]; then rebuild="$tgt/compile"; what="$tgt"
-          else rebuild=""; what=""; fi
           {
-            echo "===== 构建失败：${what:-未能从 build.log 识别失败的目标} ====="
+            echo "===== world 第 1 次失败 ====="
             df -h /
             free -h
           } 2>&1 | tee -a build.log
+
+          rebuild=""; what=""
+          last_failure
+          if [ -z "$rebuild" ]; then
+            echo "===== 未能从 build.log 识别失败的目标，直接判失败 =====" | tee -a build.log
+            exit 1
+          fi
+          if ! diagnose "$what" "$rebuild"; then
+            exit 1
+          fi
+
+          echo "===== 重新执行 world（增量，第 2 次） =====" | tee -a build.log
+          if ./25.12-6.18/scripts/ci/build-images.sh world 2>&1 | tee -a build.log; then
+            echo "===== world 第 2 次 PASS（首次失败为瞬态，已恢复） =====" | tee -a build.log
+            exit 0
+          fi
+          echo "===== world 第 2 次失败 =====" | tee -a build.log
+          rebuild=""; what=""
+          last_failure
           if [ -n "$rebuild" ]; then
-            rerun="$RUNNER_TEMP/rerun-${GITHUB_RUN_NUMBER}.log"
-            if ./25.12-6.18/build/sbe1v1k-build.sh "$rebuild" V=s -j1 >"$rerun" 2>&1; then
-              echo "===== $what 以 V=s -j1 重编通过，未复现 ====="
-              sudo dmesg --ctime 2>/dev/null | tail -n 30 || true
-            else
-              cat "$rerun" >> build.log
-              echo "===== error 摘要（前 8 处） ====="
-              grep -n -m 8 -E 'error:|Error [0-9]+$|No such file or directory|undefined reference' "$rerun" \
-                || echo "（未匹配到常见错误模式，见下方尾部）"
-              echo "===== $what 重建日志尾部 200 行 ====="
-              tail -n 200 "$rerun"
-            fi
+            diagnose "$what" "$rebuild" || true
           fi
           exit 1
 

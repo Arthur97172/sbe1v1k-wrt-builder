@@ -130,45 +130,76 @@ jobs:
           grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)=' "$CFG"
 
       - name: Build
+        # 非 verbose 的 world 用 `make -s` 跑每个包，包内部的编译错误被丢弃
+        # （include/subdir.mk 的 log_make 只在 CONFIG_BUILD_LOG=y 时才把输出 tee
+        # 到 logs/，本配置没开）。于是 build.log 只剩一行
+        # "ERROR: package/X failed to build"。失败时先用 V=s -j1 重编失败目标，
+        # 真正的编译错误进 job 日志与附件；重编通过说明是瞬态（并发时序、磁盘、
+        # 被 OOM 杀掉的 cc1、包下载抖动），此时增量重跑一次 world，通过则构建
+        # 照常继续；第二次仍失败才判失败。只重试一轮，保持总耗时在超时之内。
+        #
+        # target/linux 也会以同样的方式失败（内核补丁、kconfig 合并的错误
+        # 都发生在这一步；2026-11-14 的 #23 就是 conf --syncconfig 遇到未
+        # 配置的新符号退出 1），所以两种失败目标都按同一方式重编。
         run: |
           set -o pipefail
+
+          # 重编失败目标并开 V=s；失败时把错误摘要与尾部全文留在日志里。
+          diagnose() {
+            local rerun="$RUNNER_TEMP/rerun-${GITHUB_RUN_NUMBER}-$(echo "$1" | tr '/' '_')-$(date +%s).log"
+            if ./25.12-6.12/build/sbe1v1k-build.sh "$2" V=s -j1 >"$rerun" 2>&1; then
+              echo "===== $1 以 V=s -j1 重编通过，未复现 ====="
+              sudo dmesg --ctime 2>/dev/null | tail -n 30 || true
+              return 0
+            fi
+            cat "$rerun" >> build.log
+            echo "===== error 摘要（前 8 处） ====="
+            grep -n -m 8 -E 'error:|Error [0-9]+$|No such file or directory|undefined reference' "$rerun" \
+              || echo "（未匹配到常见错误模式，见下方尾部）"
+            echo "===== $1 重建日志尾部 200 行 ====="
+            tail -n 200 "$rerun"
+            return 1
+          }
+
+          # 按 build.log 里最近一次失败的目标设置 rebuild/what（空 = 未识别）。
+          last_failure() {
+            local pkg tgt
+            pkg=$(sed -n 's/.*ERROR: package\/\([^ ]*\) failed to build.*/\1/p' build.log | tail -n1)
+            tgt=$(sed -n 's/.*ERROR: \(target\/[^ ]*\) failed to build.*/\1/p' build.log | tail -n1)
+            if [ -n "$pkg" ]; then rebuild="package/$pkg/compile"; what="$pkg"
+            elif [ -n "$tgt" ]; then rebuild="$tgt/compile"; what="$tgt"
+            else rebuild=""; what=""; fi
+          }
+
           if ./25.12-6.12/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee build.log; then
             exit 0
           fi
-          # 非 verbose 的 world 用 `make -s` 跑每个包，包内部的编译错误被丢弃
-          # （include/subdir.mk 的 log_make 只在 CONFIG_BUILD_LOG=y 时才把输出 tee
-          # 到 logs/，本配置没开）。于是 build.log 只剩一行
-          # "ERROR: package/X failed to build"，看不出真正原因。
-          # 这里只重编失败的包并开 V=s：错误进 job 日志，完整输出进 build.log 附件。
-          #
-          # target/linux 也会以同样的方式失败（内核补丁、kconfig 合并的错误
-          # 都发生在这一步；2026-11-14 的 #23 就是 conf --syncconfig 遇到未
-          # 配置的新符号退出 1），所以两种失败目标都按同一方式重编。
-          pkg=$(sed -n 's/.*ERROR: package\/\([^ ]*\) failed to build.*/\1/p' build.log | head -n1)
-          tgt=$(sed -n 's/.*ERROR: \(target\/[^ ]*\) failed to build.*/\1/p' build.log | head -n1)
-          if [ -n "$pkg" ]; then rebuild="package/$pkg/compile"; what="$pkg"
-          elif [ -n "$tgt" ]; then rebuild="$tgt/compile"; what="$tgt"
-          else rebuild=""; what=""; fi
           {
-            echo "===== 构建失败：${what:-未能从 build.log 识别失败的目标} ====="
+            echo "===== world 第 1 次失败 ====="
             df -h /
             free -h
           } 2>&1 | tee -a build.log
+
+          rebuild=""; what=""
+          last_failure
+          if [ -z "$rebuild" ]; then
+            echo "===== 未能从 build.log 识别失败的目标，直接判失败 =====" | tee -a build.log
+            exit 1
+          fi
+          if ! diagnose "$what" "$rebuild"; then
+            exit 1
+          fi
+
+          echo "===== 重新执行 world（增量，第 2 次） =====" | tee -a build.log
+          if ./25.12-6.12/build/sbe1v1k-build.sh world -j"$(nproc)" 2>&1 | tee -a build.log; then
+            echo "===== world 第 2 次 PASS（首次失败为瞬态，已恢复） =====" | tee -a build.log
+            exit 0
+          fi
+          echo "===== world 第 2 次失败 =====" | tee -a build.log
+          rebuild=""; what=""
+          last_failure
           if [ -n "$rebuild" ]; then
-            rerun="$RUNNER_TEMP/rerun-${GITHUB_RUN_NUMBER}.log"
-            if ./25.12-6.12/build/sbe1v1k-build.sh "$rebuild" V=s -j1 >"$rerun" 2>&1; then
-              # 串行重编却通过：失败要么与并发时序有关，要么是包外的因素（磁盘、
-              # 被 OOM 杀掉的 cc1 等）。把这些也留进日志。
-              echo "===== $what 以 V=s -j1 重编通过，未复现 ====="
-              sudo dmesg --ctime 2>/dev/null | tail -n 30 || true
-            else
-              cat "$rerun" >> build.log
-              echo "===== error 摘要（前 8 处） ====="
-              grep -n -m 8 -E 'error:|Error [0-9]+$|No such file or directory|undefined reference' "$rerun" \
-                || echo "（未匹配到常见错误模式，见下方尾部）"
-              echo "===== $what 重建日志尾部 200 行 ====="
-              tail -n 200 "$rerun"
-            fi
+            diagnose "$what" "$rebuild" || true
           fi
           exit 1
 
