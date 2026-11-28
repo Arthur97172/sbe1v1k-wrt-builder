@@ -47,12 +47,14 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
+    # 2026-11-28：建 Release 从独立 release 作业挪进本作业（同 25.12 两条线）。
+    # 原设计靠 Actions artifact 在两个作业间传 ~146 MB 固件；账号 artifact
+    # 存储配额一满（run 146 报 "Artifact storage quota has been hit"），编译与
+    # verify 全 PASS 的一轮就在上传 artifact 时被判失败，release 作业被跳过，
+    # 整轮产物丢失。现在编完直接在 $RUNNER_TEMP/release 上发布，不经过 artifact。
+    # 代价：本作业在构建期间持有 contents: write（本仓库的脚本均可审计）。
     permissions:
-      contents: read
-    outputs:
-      source_tag: ${{ steps.tag.outputs.tag }}
-      release_tag: ${{ steps.meta.outputs.tag }}
-      vline: ${{ steps.meta.outputs.vline }}
+      contents: write
 
     steps:
       - name: Checkout
@@ -293,7 +295,12 @@ jobs:
           echo "vline=$VLINE" >> "$GITHUB_OUTPUT"
 
       - name: Upload build log
+        # artifact 存储是账号级配额（run 146 报 "Artifact storage quota has been
+        # hit"）：日志只是方便下载的副本，上传失败不得判死整轮构建与发布。
+        # 固件不进 artifact：本作业稍后用 gh 直接发布到 Release，那里才是
+        # 下载入口；每轮 ~146 MB × 30 天是配额的主要占用。
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: build-log-${{ github.run_number }}
@@ -307,40 +314,15 @@ jobs:
             verify.log
             fp.json
           if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload firmware artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbe1v1k-firmware-${{ github.run_number }}
-          path: |
-            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin
-            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb
-            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb
-          if-no-files-found: error
-          retention-days: 30
-
-  release:
-    needs: build
-    if: success()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    steps:
-      - name: Download firmware artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sbe1v1k-firmware-${{ github.run_number }}
-          path: ${{ runner.temp }}/release
+          retention-days: 3
 
       - name: Create GitHub Release
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.build.outputs.release_tag }}
-          SOURCE_TAG: ${{ needs.build.outputs.source_tag }}
-          VLINE: ${{ needs.build.outputs.vline }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          SOURCE_TAG: ${{ steps.tag.outputs.tag }}
+          VLINE: ${{ steps.meta.outputs.vline }}
         run: |
           set -eu
           # 步骤日志和 artifact 对匿名访问不可读，失败原因必须压成 ::error::

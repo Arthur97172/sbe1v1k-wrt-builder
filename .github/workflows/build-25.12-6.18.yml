@@ -240,7 +240,12 @@ jobs:
           ls -lh "$REL"
 
       - name: Upload build log
+        # artifact 存储是账号级配额（run 146 报 "Artifact storage quota has been
+        # hit"）：日志只是方便下载的副本，上传失败不得判死整轮构建与发布。
+        # 固件不进 artifact（原来每轮 ~150 MB × 30 天，是配额的主要占用）：
+        # 本作业稍后用 gh 直接发布到 Release，那里才是下载入口。
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: build-log-25.12-6.18-${{ github.run_number }}
@@ -250,19 +255,7 @@ jobs:
             kernel-report.txt
             sources/buildroot-25.12-6.18/.sbe-plugins.tsv
           if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload firmware artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbe1v1k-25.12-6.18-firmware-${{ github.run_number }}
-          path: |
-            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-sysupgrade.bin
-            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-squashfs-factory.bin
-            ${{ runner.temp }}/release/openwrt-qualcommbe-ipq95xx-askey_sbe1v1k-initramfs-uImage.itb
-          if-no-files-found: error
-          retention-days: 30
+          retention-days: 3
 
       - name: Create GitHub Release
         if: success()
