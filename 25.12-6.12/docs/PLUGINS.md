@@ -12,6 +12,12 @@
   SmartNetPilot 前进（1.1.9-r1 → 1.2.7-r1），`passwall-packages` 分支头
   前进到 65ae3f5e（只动 smartdns、v2ray-geodata 两个本项目未启用的包），
   其余 16 个仓库已是最新。中文包无新增项。
+- 2026-11-28 用户要求再核一轮（远端解析 + 与 24.10 同口径）：`oxidns`
+  （v1.5.5 → v1.5.8）、`tasks`（1.1.2-r1 → 1.1.8-r1）、`passwall`
+  （26.11.11-1 → 26.11.23-1）、`argon`（v3.1.4 → v3.2.0）四个前进，
+  `passwall-packages` 分支头前进到 f941f174（只动 sing-box、v2ray-geodata
+  两个本项目未启用的包，6 个入选包内容未变），其余仓库已是最新。
+  清单 pin 已同步到 `thirdparty-pins.conf`；镜像未重编、未上机验证。
 - 第三方插件授权状态统一记 `LICENSE_REVIEW_REQUIRED`：即使 Makefile 里写了
   `PKG_LICENSE`，也尚未做过随镜像公开分发的法务确认。自维护包按各自
   `PKG_LICENSE` 记录。
@@ -27,17 +33,17 @@
 | 3 | NS-SECM | luci-app-nssecm | Arthur97172/luci-app-nssecm | 1.0.1-r1 | luci-i18n-nssecm-zh-cn | GPL-3.0-only |
 | 4 | 在线升级 | luci-app-online-upgrade | Arthur97172/luci-app-online-upgrade | 1.1.3-r4 | luci-i18n-online-upgrade-zh-cn | GPL-2.0-only |
 | 5 | 订阅存储 | luci-app-substore | Arthur97172/luci-app-substore | 2.7.3-r3 | luci-i18n-substore-zh-cn | 未声明 |
-| 6 | 任务计划 | luci-app-tasks | Arthur97172/luci-app-tasks | 1.1.2-r1 | luci-i18n-tasks-zh-cn | GPL-3.0-only |
+| 6 | 任务计划 | luci-app-tasks | Arthur97172/luci-app-tasks | 1.1.8-r1 | luci-i18n-tasks-zh-cn | GPL-3.0-only |
 | 7 | SmartNetPilot | luci-app-smartnetpilot | Arthur97172/luci-app-smartnetpilot | 1.2.7-r1 | luci-i18n-smartnetpilot-zh-cn | GPL-3.0-only |
 | 8 | 核心状态 | luci-app-corestatus | Arthur97172/luci-app-corestatus | 1.0.4-r1 | luci-i18n-corestatus-zh-cn | GPL-3.0-only |
-| 9 | OxiDNS | luci-app-oxidns | Arthur97172/luci-app-oxidns | 1.5.5-r1 | luci-i18n-oxidns-zh-cn | GPL-3.0-or-later |
+| 9 | OxiDNS | luci-app-oxidns | Arthur97172/luci-app-oxidns | 1.5.8-r1 | luci-i18n-oxidns-zh-cn | GPL-3.0-or-later |
 | 10 | 关机 | luci-app-poweroff | Arthur97172/luci-app-poweroff | 1.0.0-r1 | luci-i18n-poweroff-zh-cn | GPL-3.0-only |
-| 11 | Mesh 助手 | luci-app-meshassistant | Arthur97172/luci-app-meshassistant | 2.8.4-r1 | luci-i18n-meshassistant-zh-cn | GPL-3.0-only |
+| 11 | Mesh 助手 | luci-app-meshassistant | Arthur97172/luci-app-meshassistant | 2.9.0-r1 | luci-i18n-meshassistant-zh-cn | GPL-3.0-only |
 | 12 | TurboACC | luci-app-turboacc | Arthur97172/luci-app-turboacc | 1.3.2-r1 | luci-i18n-turboacc-zh-cn | GPL-3.0-only |
-| 13 | PassWall | luci-app-passwall | Openwrt-Passwall/openwrt-passwall | 26.11.11-r1 | luci-i18n-passwall-zh-cn | LICENSE_REVIEW_REQUIRED |
+| 13 | PassWall | luci-app-passwall | Openwrt-Passwall/openwrt-passwall | 26.11.23-r1 | luci-i18n-passwall-zh-cn | LICENSE_REVIEW_REQUIRED |
 | 14 | Nikki | luci-app-nikki | nikkinikki-org/OpenWrt-nikki | 1.26.2-r1 | luci-i18n-nikki-zh-cn | LICENSE_REVIEW_REQUIRED |
 | 15 | OpenClash | luci-app-openclash | vernesong/OpenClash | 0.48.002 | 无独立包（自带 .lmo） | LICENSE_REVIEW_REQUIRED |
-| 16 | Argon 主题 | luci-theme-argon | jerrykuku/luci-theme-argon | 3.1.4-r20261113 | luci-i18n-argon-config-zh-cn | LICENSE_REVIEW_REQUIRED |
+| 16 | Argon 主题 | luci-theme-argon | jerrykuku/luci-theme-argon | 3.2.0-r20261124 | luci-i18n-argon-config-zh-cn | LICENSE_REVIEW_REQUIRED |
 | 17 | Argon 设置 | （并入 luci-theme-argon） | 同上 | — | 同上 | 同上 |
 | 18 | mosdns | luci-app-mosdns + mosdns（+ geo2txt） | sbwml/luci-app-mosdns | 1.7.15-r1 / 5.3.4-r15 | luci-i18n-mosdns-zh-cn | LICENSE_REVIEW_REQUIRED |
 

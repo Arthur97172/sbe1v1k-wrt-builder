@@ -349,6 +349,11 @@ release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户�
 `passwall-packages` 分支头前进（7 个入选包内容未变）、`argon`（`v3.1.4` → `v3.2.0`）；
 `nikki` 仍保持不动（pin 已过 tag `v1.26.2`），其余 pin 不变。本轮本地
 `defconfig` 复核 `.config` 无变化；镜像未重编、未上机验证（`NOT TESTED`）。
+2026-11-28 用户要求再查一轮：`oxidns`（`v1.5.6` → `v1.5.8`）与
+`passwall-packages` 分支头前进（7 个入选包内容未变）；`tasks`、`passwall`、
+`argon` 在 2026-11-24 那一轮已达最新 tag，`nikki` 仍保持不动，其余 pin 不变。
+镜像未重编、未上机验证（`NOT TESTED`）；24.10 的 CI 源自从 `sources-v*`
+Release 导出，本文件改动须重新导出源码包后才会进入 CI 构建。
 
 | 应用 | 远端（`https://github.com/Arthur97172/…`） | **固定 SHA** | 提交时间 | 提交标题 | 许可证 | 本地体积 |
 |---|---|---|---|---|---|---|
@@ -360,8 +365,8 @@ release tag（`v1.5.5` / `2.8.4-r1`，其余 pin 不动）。2026-11-19 用户�
 | `luci-app-tasks` | `luci-app-tasks` | `4030f7c7cd282a7ae959f9e0c43e20347c5d2e2c` | 2026-11-23T23:50:59Z | `Discard added sections when the form does not validate`（tag `1.1.8-r1`，`PKG_VERSION 1.1.8`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 448 KB |
 | `luci-app-smartnetpilot` | `luci-app-smartnetpilot` | `14b42cc05d81a72e15dba461880b0a851175a219` | 2026-11-22T00:26:49Z | `fix: keep the theme's chevron on select fields`（tag `1.2.7-r1`） | GPL-3.0-only（`LICENSE`） | 860 KB |
 | `luci-app-corestatus` | `luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | 2026-11-14T03:04:06Z | `Merge branch 'release-1.0.4'`（tag `v1.0.4`） | GPL-3.0-only（`LICENSE`；Makefile `PKG_LICENSE` 同） | 388 KB |
-| `luci-app-oxidns` | `luci-app-oxidns` | `851ceb403f485c7382620897e8eb84364d92ef5e` | 2026-11-24T11:56:02Z | `fix(config): stack guided rows on phone widths`（tag `v1.5.6`，`PKG_VERSION 1.5.6`） | GPL-3.0-or-later（`LICENSE`） | 1.2 MB |
-| `luci-app-meshassistant` | `luci-app-meshassistant` | `88f1056e7bdb0c712757fb9feecce3d7499186f7` | 2026-11-16T09:11:27Z | `Hide the per-band thresholds behind a checkbox`（tag `2.8.4-r1`） | GPL-3.0-only（`LICENSE`） | 944 KB |
+| `luci-app-oxidns` | `luci-app-oxidns` | `d98211bc4dbd6cacabda714461dc0dc96424db3e` | 2026-11-28T02:09:07Z | `fix(config): keep inline alert boxes inside the section card`（tag `v1.5.8`，`PKG_VERSION 1.5.8`） | GPL-3.0-or-later（`LICENSE`） | 1.2 MB |
+| `luci-app-meshassistant` | `luci-app-meshassistant` | `923503ac036479bf1607fbccd6ffe5ad1c0ffacf` | 2026-11-28T02:04:42Z | `Offer board-declared external LAN ports for wired backhaul`（无 tag，按提交） | GPL-3.0-only（`LICENSE`） | 1068 KB |
 | `luci-app-turboacc` | `luci-app-turboacc` | `d10cc9337a2a04dcdadd42ceac04aa272c780454` | 2026-11-19T11:32:51Z | `Release 1.3.2-r1`（tag `1.3.2-r1`） | GPL-3.0-only（`LICENSE`；`PKG_LICENSE` 同） | 340 KB |
 
 十一个目录的 `git status --porcelain` 均为空（工作区与 pin 一致）。十一个应用
@@ -470,7 +475,7 @@ mosdns 前端（`luci-app-mosdns` + `geo2txt`）源码构建，mosdns 后端本�
 | 目录 | 远端 | **固定 commit** | 提交时间 | 提交标题 | 许可证 |
 |---|---|---|---|---|---|
 | `openwrt-passwall` | `Openwrt-Passwall/openwrt-passwall` | `c3a2c54390d7bbfcce8920e81ca72521b2ad38ed` | 2026-11-23T14:25:34Z | `luci: bump 26.11.23`（tag `26.11.23-1`） | GPL-3.0（`LICENSE`；Makefile 头声明 GPLv3） |
-| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `a7e65d1d5d624f4b7910ba738ba7045fc2f534ce` | 2026-11-23T17:46:30Z | `v2ray-geosite: update to 202611222203 (#784)`（仓库无版本 tag，取 `main` 分支头；2026-11-24 刷新，7 个入选包内容未变） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
+| `openwrt-passwall-packages` | `Openwrt-Passwall/openwrt-passwall-packages` | `f941f174da66f7229814601a2f0c67f2be52e039` | 2026-11-27T13:42:58+08:00 | `sing-box: update to 1.14.5 (#786)`（仓库无版本 tag，取 `main` 分支头；2026-11-28 刷新，7 个入选包内容未变） | 逐包声明（见下表）；仓库无顶层 `LICENSE` |
 | `OpenWrt-nikki` | `nikkinikki-org/OpenWrt-nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | 2026-10-14T17:11:28+08:00 | `fix: do not restart cron service after crontab changed` | GPL-3.0（`LICENSE`） |
 | `OpenClash` | `vernesong/OpenClash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | 2026-10-11T13:10:57+08:00 | `0.48.002` | **MIT**（`LICENSE`，Copyright 2019-2026 vernesong） |
 | `luci-app-poweroff` | `Arthur97172/luci-app-poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | 2026-10-25T13:34:55Z | `docs: reorder README sections and add screenshot` | GPL-3.0-only（`LICENSE` 与 `PKG_LICENSE` 一致） |
@@ -566,10 +571,10 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `apps/luci-app-corestatus` | `5c62f19094504e682974ff69ca1d12fea2bf5deb` | v1.0.4（tag；PKG_VERSION 1.0.4；PKG_RELEASE 1） |
 | `apps/luci-app-fcc` | `bbedf062ecd5f4795674fd9ba8c1e9a7ac555b55` | 1.2.4-r1（tag；PKG_VERSION 1.2.4） |
 | `apps/luci-app-ledfancontrol` | `1f032f39bb41e81f53389eb493711eecd3429834` | 1.1.3-r1（tag；PKG_VERSION 1.1.3；2026-11-19 刷新） |
-| `apps/luci-app-meshassistant` | `88f1056e7bdb0c712757fb9feecce3d7499186f7` | 2.8.4-r1（tag）；依赖 routing feed 的 batctl/kmod-batman-adv |
+| `apps/luci-app-meshassistant` | `923503ac036479bf1607fbccd6ffe5ad1c0ffacf` | 2.9.0-r1；2026-11-28 起 eth0 外部口回程；依赖 routing feed 的 batctl/kmod-batman-adv |
 | `apps/luci-app-nssecm` | `acc222cf1db502e19091ac73339701ad068b490f` | 1.0.1-r1（tag） |
 | `apps/luci-app-online-upgrade` | `82e42330e63ca63cff238e9d82b160aa253c7990` | 1.1.3-r4（tag） |
-| `apps/luci-app-oxidns` | `851ceb403f485c7382620897e8eb84364d92ef5e` | v1.5.6（tag；PKG_VERSION 1.5.6；手机宽度下引导行改为堆叠；2026-11-24 刷新） |
+| `apps/luci-app-oxidns` | `d98211bc4dbd6cacabda714461dc0dc96424db3e` | v1.5.8（tag；PKG_VERSION 1.5.8；内联提示框收在分区内；2026-11-28 刷新） |
 | `apps/luci-app-smartnetpilot` | `14b42cc05d81a72e15dba461880b0a851175a219` | 1.2.7-r1（tag；2026-11-22 刷新） |
 | `apps/luci-app-substore` | `af1649541acb63eba447bb0f5652eb990cf17c1f` | 2.7.3-r3（tag） |
 | `apps/luci-app-tasks` | `4030f7c7cd282a7ae959f9e0c43e20347c5d2e2c` | 1.1.8-r1（tag；PKG_VERSION 1.1.8；表单校验失败时丢弃新增分段；2026-11-24 刷新） |
@@ -579,7 +584,7 @@ commit”。标记行本身不要删改，否则脚本会报错退出。
 | `repo nikki` | `78e1a751d55ed0762811f054ee699049473da7b8` | thirdparty/OpenWrt-nikki |
 | `repo openclash` | `e553e82e01c697aefbe1555261a503f425e00ccd` | thirdparty/OpenClash |
 | `repo passwall` | `c3a2c54390d7bbfcce8920e81ca72521b2ad38ed` | thirdparty/openwrt-passwall |
-| `repo passwall-packages` | `a7e65d1d5d624f4b7910ba738ba7045fc2f534ce` | thirdparty/openwrt-passwall-packages |
+| `repo passwall-packages` | `f941f174da66f7229814601a2f0c67f2be52e039` | thirdparty/openwrt-passwall-packages |
 | `repo poweroff` | `05f8ac3e8bfc6c176efe7648959cb816cf555b51` | thirdparty/luci-app-poweroff |
 <!-- pins:end -->
 
