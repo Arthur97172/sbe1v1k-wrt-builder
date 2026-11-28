@@ -459,6 +459,18 @@ if grep -q 'sbe_ports.main.wan_port' "$ETH0H" 2>/dev/null; then
 else
 	bad "eth0-lan-attach 没有角色判断：eth0 作 WAN 时会被挂回 br-lan"
 fi
+# MESH 助手的有线回程口（design B）：eth0 被挂到 bat0 时，开机/hotplug/
+# monitor 三条路径都不得把它抢回 br-lan；角色切换也必须先拒绝。
+if grep -qF '[ "$(master)" = "bat0" ]' "$ETH0H" 2>/dev/null; then
+	ok "eth0-lan-attach 遇到 bat0 回程口时停手"
+else
+	bad "eth0-lan-attach 没有 bat0 判断：MESH 助手的有线回程口会被抢回 br-lan"
+fi
+if grep -q 'eth0_bat0_hardif' "$ROLEH" 2>/dev/null; then
+	ok "sbe-port-roles 在 eth0 作 bat0 回程口时拒绝切换角色"
+else
+	bad "sbe-port-roles 没有 bat0 hardif 判断：切换角色会切断 MESH 助手的回程"
+fi
 if grep -q "wan_port='eth1'" "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan" &&
    grep -q 'sbe-port-roles enable' "$ROOTFS/etc/uci-defaults/99-spectrum-eth0-unmanaged-lan"; then
 	ok "uci-defaults 写 sbe_ports 默认值（eth1）并启用角色服务"

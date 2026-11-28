@@ -194,6 +194,19 @@ eth0 不能交给 netifd：LAN 地址变更触发的 teardown 会把 RTL8261N/dp
 放到后台执行，不阻塞 `hotplug-call` 里的其它脚本。需要手工接管桥成员时
 `touch /var/run/eth0-lan-attach.disabled` 即可让 attach 停手（tmpfs，重启失效）。
 
+**MESH 助手的 eth0 有线回程（design B，2026-11-28）。** `luci-app-meshassistant`
+自 2.9.0 起把「board.json 声明为 LAN、但不在 br-lan `ports` 里」的端口视为
+外部口：本机 board.json 的 `network.lan.devices` 含 eth0，而首启脚本已把它从
+桥 ports 摘除，所以插件「有线回程端口」下拉里会出现 eth0。选中后插件在
+network reload 之后把 eth0 挂到 `bat0`（`batctl meshif bat0 interface -M add
+eth0`、`ip link set up`、按链路速率写 `throughput_override`），不建 UCI 接口、
+不让 netifd 拥有 eth0，因此不触发 RTL8261N 假环回；取消或换口时先
+`batctl ... -M del`，再按原状态把 eth0 挂回 br-lan（内核级，不进 UCI）。
+`eth0-lan-attach` 三个入口遇到 `master=bat0` 直接停手；`sbe-port-roles` 在
+`set eth0`/`none`、`live` 与开机收敛发现 eth0 是 bat0 hardif 时拒绝接管，提示
+先在插件里取消回程（`status` 也会打印该状态）。其他路由器 board.json 与
+br-lan ports 一致，行为不变。静态检查 PASS；真机 NOT TESTED。
+
 这套机制是绕开驱动的临时措施：根治办法是修 RTL8261N/dp1 在 teardown 后进入
 假 10G 环回的驱动问题（`build/kernel-overlay/drivers/net/phy/rtl8261n`），修好后
 连同 helper、两个 hotplug 钩子和 init 服务一起删除。

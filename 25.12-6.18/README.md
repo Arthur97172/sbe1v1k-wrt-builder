@@ -156,6 +156,17 @@
   `check-packages.sh` 在 seed、defconfig 结果与镜像 apk 数据库三处反查；
   上游改名/删包会在 defconfig 后立刻指名失败，不会静默少包。
 
+**MESH 助手的有线回程（eth0，design B，2026-11-28）。** 与 6.12 同实现：
+`luci-app-meshassistant` ≥ 2.9.0 把 board.json 声明为 LAN、但不在 br-lan
+`ports` 里的 eth0 收进「有线回程端口」下拉，选中后在 netifd 之外把它挂到
+`bat0`（`batctl meshif bat0 interface -M add eth0`，取消时 `-M del` 并挂回
+br-lan），不写 UCI 接口。固件侧：`eth0-lan-attach` 三个入口遇到
+`master=bat0` 直接停手；`sbe-port-roles` 在 eth0 是 bat0 hardif 时拒绝
+`set eth0`/`none`、`live` 与开机收敛，提示先在插件里取消回程（`status`
+打印该状态）。6.18 用主线 rtl8261n，无 RTL8261N 假环回问题，该守卫只为
+避免抢桥/切断回程。插件侧细节见 6.12 README 同名段。静态检查 PASS；
+真机 NOT TESTED。
+
 ## 构建（本机）
 
 ```sh

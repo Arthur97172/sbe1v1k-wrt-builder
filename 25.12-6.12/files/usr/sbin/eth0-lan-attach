@@ -27,6 +27,12 @@ master() {
 attach() {
 	[ -e "$DISABLE" ] && return 0
 	[ "$(uci -q get sbe_ports.main.wan_port 2>/dev/null)" = "eth0" ] && return 0
+
+	# MESH 助手把 eth0 选作有线回程口时，它已被挂到 bat0（同样在 netifd
+	# 之外）。抢回 br-lan 会断掉回程，并让 batman-adv 失去接口的 rx_handler；
+	# 取消回程时插件会自己把它挂回 br-lan，重启也会从干净状态重来。
+	[ "$(master)" = "bat0" ] && return 0
+
 	[ -e /sys/class/net/eth0 ] || return 1
 	[ -e /sys/class/net/br-lan ] || return 1
 

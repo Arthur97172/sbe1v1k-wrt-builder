@@ -51,6 +51,13 @@ log() { logger -t "$TAG" "$*" 2>/dev/null; }
 say() { printf '%s\n' "$*"; log "$*"; }
 die() { say "错误：$*"; exit 1; }
 
+# eth0 被 MESH 助手选作有线回程口时，以 bat0 hardif 的身份挂在 netifd 之外。
+# 此时接管 eth0（切 WAN 或收进 LAN）会摘掉 batman-adv 的 rx_handler、切断
+# 回程，因此角色切换一律拒绝：先请在 MESH 助手里取消有线回程。
+eth0_bat0_hardif() {
+	[ "$(basename "$(readlink -f /sys/class/net/eth0/master 2>/dev/null)" 2>/dev/null)" = bat0 ]
+}
+
 usage() {
 	printf '%s\n' \
 		"用法：sbe-port-roles [apply|live|status|set <eth0|eth1|none>]" \
@@ -322,6 +329,16 @@ warn_eth0_live() {
 apply_role() {
 	local role=$1 force=$2 brsec want_ports changed=0
 
+	# eth0 与 none 两种角色的目标状态都要动 eth0（WAN 或 LAN 桥口），与
+	# bat0 回程抢占。开机路径（S19）先于 batman-adv 启动、不会命中，这里
+	# 兜住 live/apply 的手工调用与插件取消失败后的残留状态。
+	case "$role" in
+	eth0 | none)
+		eth0_bat0_hardif &&
+			die "eth0 正作为 MESH 助手的有线回程口（挂接在 bat0 上）；请先在 MESH 助手中取消有线回程，再切换端口角色"
+		;;
+	esac
+
 	ssdk_apply "$role" "$force" ||
 		die "SSDK 成员表未能收敛到 $role；UCI 保持不变（避免软硬不一致）"
 
@@ -352,6 +369,9 @@ do_status() {
 	brsec=$(brlan_section)
 	printf 'wan_port=%s\n' "$role"
 	printf 'br-lan ports=%s\n' "${brsec:+$(uci -q get "network.$brsec.ports")}"
+	if eth0_bat0_hardif; then
+		printf '%s\n' 'eth0=bat0 hardif（MESH 助手有线回程；切到 eth0/none 前需先取消回程）'
+	fi
 	for iface in $(uci_interfaces); do
 		dev=$(uci -q get "network.$iface.device" 2>/dev/null)
 		case "$dev" in
@@ -386,6 +406,14 @@ do_set() {
 		;;
 	esac
 	prev=$(read_role)
+	# 必须在写 UCI 之前拒绝：apply_role 里再报错时角色已经落盘，会留下
+	# 「UCI 说 eth0 是 WAN、实际还是 bat0 hardif」的软硬不一致。
+	case "$role" in
+	eth0 | none)
+		eth0_bat0_hardif &&
+			die "eth0 正作为 MESH 助手的有线回程口（挂接在 bat0 上）；请先在 MESH 助手中取消有线回程，再切换端口角色"
+		;;
+	esac
 	if [ "$role" = eth0 ] || [ "$prev" = eth0 ]; then
 		warn_eth0_live
 	fi

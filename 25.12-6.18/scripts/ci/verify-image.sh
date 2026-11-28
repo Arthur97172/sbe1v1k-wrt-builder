@@ -260,6 +260,14 @@ check_rootfs() {
 		grep -q 'nss-board' "$R/$f" 2>/dev/null \
 			&& ok "[$tag] /$f 按数据通路门控" || bad "[$tag] /$f 缺 nss-board 门控"
 	done
+	# MESH 助手的有线回程口（design B）：eth0 挂到 bat0 时，attach 三条
+	# 路径都不得把它抢回 br-lan；角色切换也必须先拒绝。
+	grep -qF '[ "$(master)" = "bat0" ]' "$R/usr/sbin/eth0-lan-attach" 2>/dev/null \
+		&& ok "[$tag] eth0-lan-attach 遇到 bat0 回程口时停手" \
+		|| bad "[$tag] eth0-lan-attach 没有 bat0 判断：MESH 助手的有线回程口会被抢回 br-lan"
+	grep -q 'eth0_bat0_hardif' "$R/usr/sbin/sbe-port-roles" 2>/dev/null \
+		&& ok "[$tag] sbe-port-roles 在 eth0 作 bat0 回程口时拒绝切换角色" \
+		|| bad "[$tag] sbe-port-roles 没有 bat0 hardif 判断：切换角色会切断 MESH 助手的回程"
 
 	# --- eth0 AN 看门狗（S95，移植自 6.12）-----------------------------
 	# 坏启动自愈依赖三件套齐全 + rc.d 链接 + 板名/数据通路门控：
