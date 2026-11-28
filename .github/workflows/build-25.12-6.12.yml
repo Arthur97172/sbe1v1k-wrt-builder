@@ -407,3 +407,21 @@ jobs:
           test "$n" = "3" || { echo "Release 资产数不是 3" >&2; exit 1; }
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | "\(.name) \(.size)"'
+
+      # 固件兜底（2026-11-28）：正常路径固件直接由上一步发布到 Release，
+      # 不进 artifact（账号级配额，见上面 Upload build log 的注释）；只有本作业
+      # 失败时才把已经收集好的固件传成 3 天期 artifact——典型场景是编完 1.5–3
+      # 小时、Create GitHub Release 重试 5 次仍失败，至少留一份可下载副本，
+      # 不必整轮重编。上传本身失败不影响结论（作业本来已是失败）。
+      - name: Upload firmware fallback artifact
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-fallback-25.12-6.12-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-squashfs-sysupgrade.bin
+            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-fit-uImage.itb
+            ${{ runner.temp }}/release/openwrt-ipq95xx-generic-spectrum_sbe1v1k-initramfs-fit-uImage.itb
+          if-no-files-found: ignore
+          retention-days: 3
