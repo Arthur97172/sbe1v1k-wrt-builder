@@ -809,15 +809,17 @@ nss-dp 0009（摘桥时置 STP FORWARDING）修复，v88-1 真机复查 PASS；e
 `ethernet0` 别名，bootloader 只把板级 base MAC 注入 eth0（DT
 `local-mac-address`，`addr_assign_type=0`）；eth1–eth3 没有 MAC，nss-dp 退化为
 `eth_hw_addr_random()`（dmesg: `GMAC2..4 Invalid MAC@ - using …`），每次启动
-都是新的本地管理 MAC。br-lan 默认继承端口里数值最小的 MAC，于是 br-lan 的
-MAC 和它的 `fe80::` 链路地址每次重启都跟着变（B 机实测 `b6:08:…`、`a2:36:…`、
+都是新的本地管理 MAC。br-lan 在 `eth2`/`eth3` 入桥时创建、`eth0` 由
+`eth0-lan-attach` 后挂且桥地址不随之重算，于是 br-lan 的 MAC 和它的 `fe80::`
+链路地址每次重启都跟着 eth2 的随机值变（B 机实测 `b6:08:…`、`a2:36:…`、
 `c6:4b:…`）。
 
 `etc/init.d/sbe-lan-mac`（START=19，晚于 nss(S15) 的 dp 装载、早于
 network(S20) 建桥）读 eth0 的稳定 MAC，派生 **eth1 = 基址+1、eth2 = 基址+2、
 eth3 = 基址+3** 并写回（+1 与厂商序列里 WAN 的 `…:21` 一致，上游 DHCP 租约
-不受影响）；eth0 随后被 `eth0-lan-attach` 挂进 br-lan，桥 MAC 收敛到数值最小
-的 eth0，跨重启恒定。脚本只改写带本地管理位的随机 MAC——bootloader/DT 若又
+不受影响）；eth0 随后被 `eth0-lan-attach` 挂进 br-lan。桥地址取创建时成员
+（`eth2`），eth0 后挂不触发重算，因此 br-lan 恒为 `eth2` 的基址+2，跨重启
+恒定。脚本只改写带本地管理位的随机 MAC——bootloader/DT 若又
 给它注入全局 MAC 则自动让位；eth0 自身是随机地址（env `ethaddr` 缺失）时整
 脚本跳过。NSS 档位为 `off` 时 eth0 不存在，脚本安静跳过。
 `verify-image.sh` 断言脚本与 S19 链接在镜像里。
@@ -829,9 +831,19 @@ eth3 = 基址+3** 并写回（+1 与厂商序列里 WAN 的 `…:21` 一致，�
 相同（24.10 测试机即 `90:d3:cf:4b:eb:82`）的机器上，eth1–eth3 会带着同一个
 全局 MAC、`addr_assign_type=0` 起来，S19 的随机地址判断一次都不触发。`0045`
 删掉 dp2–dp4 的别名后，dp2–dp4 回到无 MAC → 随机 → S19 固定，与 24.10 的
-`ethernet-macs` 完全同一套前提。**不要再加回 ethernet1–3 别名。** 状态：
-补丁 dry-run/装配验证 PASS，真机 `NOT TESTED`（待刷机确认 eth0–eth3 =
-基址+0..+3、br-lan 收敛到 eth0 base、跨重启不变）。
+`ethernet-macs` 完全同一套前提。**不要再加回 ethernet1–3 别名。**
+
+**真机 PASS（2026-11-28，本机构建镜像 `d63265ad…`，`sbe1v1k-25.12-ee524092`，
+`sysupgrade -n` 从 24.10 直接刷入，含重启复验）**：
+
+- `/proc/device-tree/aliases` 只剩 `ethernet0`（+`name`/`serial0`）；
+- `eth0`–`eth3` 恒为 `:81/:82/:83/:84`（`eth0` `addr_assign_type=0`，
+  `eth1`–`eth3` 为 `3`），每次启动 `sbe-lan-mac` 打三条
+  `ethN: <随机> -> <固定>` 日志；
+- `br-lan` 恒为 `:83`（= `eth2`），与 WAN（`eth1`=`:82`）不同，跨重启稳定；
+- WAN（`eth1`）DHCP 正常（上游租约 `192.168.10.232`，跨重启不变）；
+- 24.10 → 25.12 的 `sysupgrade` 直刷可行：24.10 侧 `platform.sh` 自带 tar
+  容器 + `mmc_do_flash`，`sysupgrade -T` 与 `-n` 均通过。
 
 **启动取证（v35 起，`files/` overlay）。** v34 在 S10boot 之后卡死时设备无串口、
 日志也不落盘，离线只剩 overlay 的磁盘痕迹，到不了 rcS 之后。为此：
