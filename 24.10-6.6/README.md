@@ -345,10 +345,10 @@ GPIO 40 原本就由 `pwm_pins/mux_5` 配成上拉 GPIO，缺的只是把风扇�
 - **上游应用**（feeds `luci`）：`luci-app-firewall`、`luci-app-ddns`、`luci-app-upnp`、
   `luci-app-ttyd`、`luci-app-uhttpd`、`luci-proto-wireguard`。
 - **项目与三方应用**：
-  - 本项目 feeds（`sources/apps`，11 个）：`luci-app-corestatus`、`luci-app-fcc`、
-    `luci-app-ledfancontrol`、`luci-app-meshassistant`、`luci-app-nssecm`、
-    `luci-app-online-upgrade`、`luci-app-oxidns`、`luci-app-smartnetpilot`、
-    `luci-app-substore`、`luci-app-tasks`、`luci-app-turboacc`
+  - 本项目 feeds（`sources/apps`，12 个）：`luci-app-corestatus`、`luci-app-fcc`、
+    `luci-app-fileassistant`、`luci-app-ledfancontrol`、`luci-app-meshassistant`、
+    `luci-app-nssecm`、`luci-app-online-upgrade`、`luci-app-oxidns`、
+    `luci-app-smartnetpilot`、`luci-app-substore`、`luci-app-tasks`、`luci-app-turboacc`
   - 三方 feeds（`sources/thirdparty-feed`）：`luci-app-mosdns`（含 `geo2txt`）、
     `luci-app-nikki`、`luci-app-openclash`、`luci-app-passwall`、`luci-app-poweroff`、
     `luci-theme-argon`；mosdns 后端是 `local-relayout/mosdns` 的预编译二进制包装包
@@ -744,11 +744,11 @@ buildroot/package/feeds/thirdparty/luci-app-foo	thirdparty/luci-app-foo
 `scripts/ci/assemble-sources.sh` 的 feeds 接线步：
 
 ```sh
-[ "$nl" = 177 ] || die 4 "package/feeds 软链应有 177 条，实际 $nl"
+[ "$nl" = 178 ] || die 4 "package/feeds 软链应有 178 条，实际 $nl"
 ```
 
-加一行就改成 178，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
-（`grep -rn '177' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
+加一行就改成 179，并同步改该步上方的注释与 `docs/SOURCE_ASSEMBLY.md` 里出现的条数
+（`grep -rn '178' 24.10-6.6/docs` 可列全）。如果新增了新的 `src-link` 源，还要改
 `feeds.conf.in` 和同一步的 `[ "$nf" = 11 ]`。
 
 #### 5. 文件 B：`build/custom-packages.conf`
@@ -874,7 +874,7 @@ push 后 `sources-24.10-6.6.yml` 自动以 `publish=false` 验证；通过后手
 |---|---|---|
 | `build/thirdparty-feeds.conf` | 新仓库加 `repo`+`link`；旧仓库只加 `link` | 删 `link`；仓库不再被引用时删 `repo` |
 | `build/feeds-links.conf` | 加 `package/feeds/thirdparty/<名字>` 行（含依赖包） | 删对应行 |
-| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 177 ]` 改成新总数 | 改回去 |
+| `scripts/ci/assemble-sources.sh` | `[ "$nl" = 178 ]` 改成新总数 | 改回去 |
 | `build/custom-packages.conf` | 加 `CUSTOM_PACKAGES="$CUSTOM_PACKAGES <名字>"` | 注释掉整行 |
 | `build/config-frozen/.config` | `make defconfig` 后整体替换 | 同左 |
 | `build/known-delta.conf` | 加 `fresh-only` 条目（新路径） | 删掉对应条目 |

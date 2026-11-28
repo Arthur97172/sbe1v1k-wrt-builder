@@ -78,7 +78,7 @@ ucode-mod-lua
 jsonfilter
 libacl
 
-# --- 12 个自维护应用 -------------------------------------------------------
+# --- 13 个自维护应用 -------------------------------------------------------
 luci-app-fcc
 ?luci-i18n-fcc-zh-cn
 luci-app-ledfancontrol
@@ -113,6 +113,8 @@ flock
 bash
 luci-app-turboacc
 ?luci-i18n-turboacc-zh-cn
+luci-app-fileassistant
+?luci-i18n-fileassistant-zh-cn
 
 # --- PassWall --------------------------------------------------------------
 luci-app-passwall

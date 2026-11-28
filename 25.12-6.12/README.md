@@ -28,12 +28,12 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
 │   ├── required-packages.txt 必装 / 可选 / 必禁包清单（四处反查的唯一来源）
 │   ├── required-packages-diag.txt      diag 变体的对应清单
 │   ├── required-packages-mainline.txt  mainline 变体的对应清单
-│   ├── thirdparty-pins.conf  18 个插件、18 个仓库的来源与离线 pin
+│   ├── thirdparty-pins.conf  19 个插件、19 个仓库的来源与离线 pin
 │   └── local-packages/       项目自带软件包
 │       ├── sbe1v1k-defaults/ 首启默认值（ttyd 默认关闭、WAN 侧放行 LuCI/SSH、时区 Asia/Taipei + 24 小时制）
 │       └── sbe-wifi-firmware/ Stage 2.5：QCN92XX 固件 / board-2.bin / regdb / bdf41（专有 blob，LICENSE_REVIEW_REQUIRED）
 ├── docs/
-│   ├── PLUGINS.md            18 个插件的来源、布局、中文包、依赖与风险
+│   ├── PLUGINS.md            19 个插件的来源、布局、中文包、依赖与风险
 │   ├── NSS_AUTOLOAD_OFF.md   NSS 禁自动加载 / 分层装载的机制与定位流程
 │   ├── NSS_WIFI_OFFLOAD_QSDK_TRACKING.md  Wi-Fi 卸载现状、6.12 wlan-open 触发条件与接入清单
 │   ├── V21_BOOT_AND_FAN_FIX.md  v21/v24 起不来 + 风扇满速的静态定案（0024–0027）
@@ -108,7 +108,7 @@ eMMC `0:ART` 生成 `cal-pci-*.bin`。CI 产物与本机构建一样带厂商固
     │   └── build-wifi-image.sh  本机一键出带厂商固件的镜像（CI 下拒绝运行）
     └── ci/
         ├── prepare-tree.sh   仅 CI：克隆上游、钉定 feeds、应用补丁、装本地包、装插件、装配 NSS
-        ├── fetch-plugins.sh  按 thirdparty-pins.conf 解析并安装 18 个插件（可单独运行）
+        ├── fetch-plugins.sh  按 thirdparty-pins.conf 解析并安装 19 个插件（可单独运行）
         ├── check-packages.sh 按 required-packages.txt 反查 seed / 包索引 / .config / 镜像
         ├── check-kernel.sh   检测 6.12 内核漂移（只报告，不改 pin）
         ├── export-nss-src.sh 打包 NSS 源码（ISC，仅源码），CI 自产时由 prepare-tree.sh 调用
@@ -1059,7 +1059,7 @@ dry-run 与 `verify-image.sh` 的断言覆盖。
 装配树位于 `<工作区>/sources/buildroot-25.12-6.12`。
 
 ```sh
-# 18 个插件：安装/跟新到最新（pinned 模式复现旧版本）
+# 19 个插件：安装/跟新到最新（pinned 模式复现旧版本）
 ./25.12-6.12/scripts/ci/fetch-plugins.sh
 cp 25.12-6.12/build/config-seed/ipq95xx-spectrum-sbe1v1k.seed \
    sources/buildroot-25.12-6.12/.config
@@ -1114,7 +1114,7 @@ NSS 源码：本机若已有厂商树 `sources/buildroot/qca/src/nss/base`，`ns
 `workflow_dispatch`）。
 
 流程：`prepare-tree.sh`（克隆上游并钉定提交、`feeds update/install`、应用补丁、
-装本地包、**装 18 个第三方插件**、**自产并校验 NSS 源码包后装配**）→
+装本地包、**装 19 个第三方插件**、**自产并校验 NSS 源码包后装配**）→
 `check-kernel.sh`（只报告）→ 写 `.config` + `check-packages seed` +
 `defconfig` + `check-packages index` / `config` → `world` 编译 →
 `verify-image.sh`（含逐包反查）→ 上传日志/产物 → **每次运行新建一个 Release**，
@@ -1130,7 +1130,7 @@ release notes 附插件提交表与内核检测结论。
 
 ### 第三方插件与构建时自动跟新
 
-18 个插件（12 个自维护 + 6 组第三方仓库）的来源、布局、中文包、依赖与
+19 个插件（13 个自维护 + 6 组第三方仓库）的来源、布局、中文包、依赖与
 风险见 [`docs/PLUGINS.md`](docs/PLUGINS.md)；机器可读清单是
 `build/thirdparty-pins.conf`。
 

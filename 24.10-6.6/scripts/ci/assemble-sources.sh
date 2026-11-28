@@ -76,7 +76,7 @@ PLAN='1  预检：工具、pin 表格式、磁盘余量
 10 就地叠加层：files-6.6/. → qca/src/linux-6.6/；bootloader/files/. → qca/src/u-boot-2025/
 11 构建系统补丁：build/build-fixes/SERIES（全部 tree 模式；0004/0007 空号）
 12 第三方树：passwall-selected 派生、thirdparty-feeds.sh fetch
-13 feeds 接线：feeds.conf + 11 条 feeds/<name> + 177 条 package/feeds 软链（依赖上一步）
+13 feeds 接线：feeds.conf + 11 条 feeds/<name> + 178 条 package/feeds 软链（依赖上一步）
 14 冻结配置：.config / version / version.date + 断言
 15 文档：README.md、PROVENANCE.md
 16 树指纹：tree-fingerprint.sh（+ 与基准比对）'
@@ -801,7 +801,7 @@ logmsg "  TP_MOSDNS_OK luci-app-mosdns + geo2txt + prebuilt mosdns；bandix 前�
 logmsg "  TP_OK thirdparty-feed=$(find "$SRC/thirdparty-feed" -maxdepth 1 -type l | wc -l | tr -d ' ') links"
 
 # =============================================================== 13. feeds
-# 必须排在第三方树之后：feeds.conf 的 src-link 与 177 条 package/feeds 链接里
+# 必须排在第三方树之后：feeds.conf 的 src-link 与 178 条 package/feeds 链接里
 # 有 thirdparty/、passwall-selected/ 的目标，它们都由上一步产出。
 step "feeds 接线"
 install -m 0644 "$BUILD/feeds.conf.in" "$SRC/buildroot/feeds.conf"
@@ -841,7 +841,7 @@ while IFS=$'\t' read -r link target rest; do
 	[ -f "$SRC/$target/Makefile" ] || die 4 "软件包目标没有 Makefile：$target"
 	nl=$((nl + 1))
 done < "$BUILD/feeds-links.conf"
-[ "$nl" = 177 ] || die 4 "package/feeds 软链应有 177 条，实际 $nl"
+[ "$nl" = 178 ] || die 4 "package/feeds 软链应有 178 条，实际 $nl"
 logmsg "  FEEDS_OK src-link=$nf package-links=$nl base->package"
 
 # =============================================================== 14. 配置

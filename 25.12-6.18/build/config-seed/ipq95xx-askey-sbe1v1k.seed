@@ -102,7 +102,7 @@ CONFIG_PACKAGE_luci-app-ttyd=y
 CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 
 # ---------------------------------------------------------------------------
-# 2026-11-22 用户要求：插件与组件清单对齐 25.12-6.12（18 个插件 + 官方页 +
+# 2026-11-22 用户要求：插件与组件清单对齐 25.12-6.12（18 个插件，11-28 增至 19；+ 官方页 +
 # 工具 + 运行时）。插件源码不在 feed 里：scripts/ci/fetch-plugins.sh 按
 # build/thirdparty-pins.conf 在每次构建时解析各仓库最新版本 tag 并装进
 # package/，实际提交记录在 <装配树>/.sbe-plugins.tsv。包选择与最终镜像由
@@ -173,7 +173,7 @@ CONFIG_PACKAGE_ucode-mod-lua=y
 CONFIG_PACKAGE_jsonfilter=y
 CONFIG_PACKAGE_libacl=y
 
-# --- 12 个自维护应用（Arthur97172，仓库根即包目录）-----------------------
+# --- 13 个自维护应用（Arthur97172，仓库根即包目录）-----------------------
 CONFIG_PACKAGE_luci-app-fcc=y
 CONFIG_PACKAGE_luci-i18n-fcc-zh-cn=y
 CONFIG_PACKAGE_luci-app-ledfancontrol=y
@@ -198,6 +198,8 @@ CONFIG_PACKAGE_luci-app-meshassistant=y
 CONFIG_PACKAGE_luci-i18n-meshassistant-zh-cn=y
 CONFIG_PACKAGE_luci-app-turboacc=y
 CONFIG_PACKAGE_luci-i18n-turboacc-zh-cn=y
+CONFIG_PACKAGE_luci-app-fileassistant=y
+CONFIG_PACKAGE_luci-i18n-fileassistant-zh-cn=y
 
 # --- meshassistant 运行时（routing feed 与 packages feed）-----------------
 CONFIG_PACKAGE_kmod-cfg80211=y

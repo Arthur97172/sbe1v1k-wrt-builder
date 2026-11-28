@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 把 build/thirdparty-pins.conf 里的 18 个插件装进 25.12 装配树的 package/。
+# 把 build/thirdparty-pins.conf 里的 19 个插件装进 25.12 装配树的 package/。
 #
 # 用法：
 #   scripts/ci/fetch-plugins.sh                 [工作区根]   默认 latest

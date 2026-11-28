@@ -1,6 +1,6 @@
 # 25.12-6.12 第三方插件清单与来源
 
-本文件是 `build/thirdparty-pins.conf` 的人读版本：18 个插件、18 个仓库的
+本文件是 `build/thirdparty-pins.conf` 的人读版本：19 个插件、19 个仓库的
 来源、布局、中文包、运行时依赖与风险。机器可读的唯一来源仍是
 `thirdparty-pins.conf`；包是否真的进了镜像由 `build/required-packages.txt`
 与 `scripts/ci/check-packages.sh` 反查（见 README「必装包反查」）。
@@ -18,13 +18,18 @@
   `passwall-packages` 分支头前进到 f941f174（只动 sing-box、v2ray-geodata
   两个本项目未启用的包，6 个入选包内容未变），其余仓库已是最新。
   清单 pin 已同步到 `thirdparty-pins.conf`；镜像未重编、未上机验证。
+- 2026-11-28 第二轮：新增自维护插件 `luci-app-fileassistant`（2.1.0-r1，
+  ucode 后端，中文包 `luci-i18n-fileassistant-zh-cn`），`substore`
+  2.7.3-r3 → 2.7.4-r1、`meshassistant` 2.9.0-r1 → 2.9.1-r1、
+  `passwall-packages` 分支头前进到 1ad22706（6 个入选包内容未变），
+  其余仓库已是最新。清单 pin 已同步；镜像未重编、未上机验证。
 - 第三方插件授权状态统一记 `LICENSE_REVIEW_REQUIRED`：即使 Makefile 里写了
   `PKG_LICENSE`，也尚未做过随镜像公开分发的法务确认。自维护包按各自
   `PKG_LICENSE` 记录。
 - 设备行为一律 `NOT TESTED`：本清单只保证「能编译、能进镜像」，不保证
   新版本插件在 SBE1V1K 上的运行时表现。
 
-## 一、18 个插件总表
+## 一、19 个插件总表
 
 | # | 插件 | 包名 | 仓库（owner/repo） | 版本实测 | 中文包 | 授权 |
 |---|---|---|---|---|---|---|
@@ -32,22 +37,23 @@
 | 2 | LED 风扇控制 | luci-app-ledfancontrol | Arthur97172/luci-app-ledfancontrol | 1.1.3-r1 | luci-i18n-ledfancontrol-zh-cn | GPL-3.0-only |
 | 3 | NS-SECM | luci-app-nssecm | Arthur97172/luci-app-nssecm | 1.0.1-r1 | luci-i18n-nssecm-zh-cn | GPL-3.0-only |
 | 4 | 在线升级 | luci-app-online-upgrade | Arthur97172/luci-app-online-upgrade | 1.1.3-r4 | luci-i18n-online-upgrade-zh-cn | GPL-2.0-only |
-| 5 | 订阅存储 | luci-app-substore | Arthur97172/luci-app-substore | 2.7.3-r3 | luci-i18n-substore-zh-cn | 未声明 |
+| 5 | 订阅存储 | luci-app-substore | Arthur97172/luci-app-substore | 2.7.4-r1 | luci-i18n-substore-zh-cn | 未声明 |
 | 6 | 任务计划 | luci-app-tasks | Arthur97172/luci-app-tasks | 1.1.8-r1 | luci-i18n-tasks-zh-cn | GPL-3.0-only |
 | 7 | SmartNetPilot | luci-app-smartnetpilot | Arthur97172/luci-app-smartnetpilot | 1.2.7-r1 | luci-i18n-smartnetpilot-zh-cn | GPL-3.0-only |
 | 8 | 核心状态 | luci-app-corestatus | Arthur97172/luci-app-corestatus | 1.0.4-r1 | luci-i18n-corestatus-zh-cn | GPL-3.0-only |
 | 9 | OxiDNS | luci-app-oxidns | Arthur97172/luci-app-oxidns | 1.5.8-r1 | luci-i18n-oxidns-zh-cn | GPL-3.0-or-later |
 | 10 | 关机 | luci-app-poweroff | Arthur97172/luci-app-poweroff | 1.0.0-r1 | luci-i18n-poweroff-zh-cn | GPL-3.0-only |
-| 11 | Mesh 助手 | luci-app-meshassistant | Arthur97172/luci-app-meshassistant | 2.9.0-r1 | luci-i18n-meshassistant-zh-cn | GPL-3.0-only |
+| 11 | Mesh 助手 | luci-app-meshassistant | Arthur97172/luci-app-meshassistant | 2.9.1-r1 | luci-i18n-meshassistant-zh-cn | GPL-3.0-only |
 | 12 | TurboACC | luci-app-turboacc | Arthur97172/luci-app-turboacc | 1.3.2-r1 | luci-i18n-turboacc-zh-cn | GPL-3.0-only |
-| 13 | PassWall | luci-app-passwall | Openwrt-Passwall/openwrt-passwall | 26.11.23-r1 | luci-i18n-passwall-zh-cn | LICENSE_REVIEW_REQUIRED |
-| 14 | Nikki | luci-app-nikki | nikkinikki-org/OpenWrt-nikki | 1.26.2-r1 | luci-i18n-nikki-zh-cn | LICENSE_REVIEW_REQUIRED |
-| 15 | OpenClash | luci-app-openclash | vernesong/OpenClash | 0.48.002 | 无独立包（自带 .lmo） | LICENSE_REVIEW_REQUIRED |
-| 16 | Argon 主题 | luci-theme-argon | jerrykuku/luci-theme-argon | 3.2.0-r20261124 | luci-i18n-argon-config-zh-cn | LICENSE_REVIEW_REQUIRED |
-| 17 | Argon 设置 | （并入 luci-theme-argon） | 同上 | — | 同上 | 同上 |
-| 18 | mosdns | luci-app-mosdns + mosdns（+ geo2txt） | sbwml/luci-app-mosdns | 1.7.15-r1 / 5.3.4-r15 | luci-i18n-mosdns-zh-cn | LICENSE_REVIEW_REQUIRED |
+| 13 | 文件助手 | luci-app-fileassistant | Arthur97172/luci-app-fileassistant | 2.1.0-r1 | luci-i18n-fileassistant-zh-cn | GPL-3.0-only |
+| 14 | PassWall | luci-app-passwall | Openwrt-Passwall/openwrt-passwall | 26.11.23-r1 | luci-i18n-passwall-zh-cn | LICENSE_REVIEW_REQUIRED |
+| 15 | Nikki | luci-app-nikki | nikkinikki-org/OpenWrt-nikki | 1.26.2-r1 | luci-i18n-nikki-zh-cn | LICENSE_REVIEW_REQUIRED |
+| 16 | OpenClash | luci-app-openclash | vernesong/OpenClash | 0.48.002 | 无独立包（自带 .lmo） | LICENSE_REVIEW_REQUIRED |
+| 17 | Argon 主题 | luci-theme-argon | jerrykuku/luci-theme-argon | 3.2.0-r20261124 | luci-i18n-argon-config-zh-cn | LICENSE_REVIEW_REQUIRED |
+| 18 | Argon 设置 | （并入 luci-theme-argon） | 同上 | — | 同上 | 同上 |
+| 19 | mosdns | luci-app-mosdns + mosdns（+ geo2txt） | sbwml/luci-app-mosdns | 1.7.15-r1 / 5.3.4-r15 | luci-i18n-mosdns-zh-cn | LICENSE_REVIEW_REQUIRED |
 
-合计：12 个自维护应用 + 6 组第三方仓库。带出的后端/内核包
+合计：13 个自维护应用 + 6 组第三方仓库。带出的后端/内核包
 （xray-core、sing-box、mihomo-meta、mosdns、geo2txt 等）见第四节。
 
 ## 二、布局与安装方式
@@ -57,7 +63,7 @@
 
 | 仓库 | 包目录 | 说明 |
 |---|---|---|
-| 12 个自维护 | 仓库根（`.`） | 根目录就是包目录，`po/zh_Hans` 齐全 |
+| 13 个自维护 | 仓库根（`.`） | 根目录就是包目录，`po/zh_Hans` 齐全 |
 | openwrt-passwall | `luci-app-passwall/` | 根下只有这一个包 |
 | openwrt-passwall-packages | `chinadns-ng`、`dns2socks`、`ipt2socks`、`shadowsocksr-libev`、`simple-obfs`、`tcping` | 6 个子目录子集，不整仓安装 |
 | OpenWrt-nikki | `nikki/`、`luci-app-nikki/`、`mihomo-meta/` | mihomo-meta 从源码用树内 golang 编译 |
@@ -92,7 +98,7 @@
 
 ## 四、按插件的依赖与风险
 
-### 12 个自维护应用
+### 13 个自维护应用
 
 Makefile 的 `LUCI_DEPENDS` 决定运行时依赖，defconfig 自动带入；seed 里
 显式写出的只是其中「不写就可能被静默丢弃」的部分（lua 运行时、ucode、
@@ -112,8 +118,9 @@ mesh 的 batman 组件等），便于反查。
 | poweroff | luci-base | ucode | 与已移除的 `poweroffdevice` 无关 |
 | meshassistant | kmod-cfg80211、batctl-default、kmod-batman-adv、dawn、bash、luci-proto-batman-adv、socat、flock、iw | ucode | `+iw` 由 `iw-full` 的 PROVIDES 满足；`iw` 与 `iw-full` 只能装一个，seed 显式关 `iw` |
 | turboacc | firewall4、ucode、ucode-mod-fs、ucode-mod-uci、ucode-mod-ubus | ucode | 无 |
+| fileassistant | luci-base、ucode、ucode-mod-fs | ucode | 无 |
 
-### PassWall 家族（第 13 项）
+### PassWall 家族（第 14 项）
 
 - `luci-app-passwall` 只取 UI 包；`INCLUDE_Xray`、`INCLUDE_SingBox`、
   `INCLUDE_Simple_Obfs`、`INCLUDE_ShadowsocksR_Libev_Client` 打开，其余
@@ -129,7 +136,7 @@ mesh 的 batman 组件等），便于反查。
 - 风险：上游改 `INCLUDE_*` 符号名时，`check-packages.sh config` 会在
   defconfig 后指名失败；修 seed 即可，不影响其他插件。
 
-### Nikki / mihomo（第 14 项）
+### Nikki / mihomo（第 15 项）
 
 - 三个包：`nikki`（后端）、`luci-app-nikki`（UI）、`mihomo-meta`
   （mihomo 内核，`PROVIDES mihomo`，是 DEFAULT_VARIANT）。
@@ -138,7 +145,7 @@ mesh 的 batman 组件等），便于反查。
 - 风险：新版 mihomo 可能要求比 25.12 自带更新的 Go。失败时的回退是禁用
   nikki 三项，passwall 的 xray/sing-box 覆盖同类功能。
 
-### OpenClash（第 15 项）
+### OpenClash（第 16 项）
 
 - 只有 `luci-app-openclash` 一个包；不捆绑内核，运行时由 Web UI 下载。
 - 依赖 `ruby` + `ruby-yaml`（配置解析脚本）。`CONFIG_RUBY_ENABLE_YJIT` 明确
@@ -146,7 +153,7 @@ mesh 的 batman 组件等），便于反查。
 - 中文没有独立包：`.lmo` 由包内工具直接编译安装。
 - 风险：ruby 3.4 在 25.12 的构建问题；失败时回退为禁用 openclash + ruby。
 
-### Argon 主题（第 16/17 项）
+### Argon 主题（第 17/18 项）
 
 - `luci-theme-argon` v3 起把设置页并入主题包，仓库里的
   `compat/luci-app-argon-config/` 只是空迁移包，与主题包文件冲突。
@@ -155,7 +162,7 @@ mesh 的 batman 组件等），便于反查。
 - 中文包 `luci-i18n-argon-config-zh-cn` 随主题包安装。
 - 风险：上游若把 compat 目录改回实体包，重名检查/seed 断言会先失败。
 
-### mosdns（第 18 项，2026-11-15 取代 bandix）
+### mosdns（第 19 项，2026-11-15 取代 bandix）
 
 - 一个仓库三个包：`mosdns`（后端，Go 源码）、`luci-app-mosdns`（UI，含
   `po/zh_Hans`，生成 `luci-i18n-mosdns-zh-cn`）、`geo2txt`（geosite/geoip

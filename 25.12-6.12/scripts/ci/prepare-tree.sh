@@ -19,7 +19,7 @@
 #   2. 生成 feeds.conf（openwrt-25.12 分支），feeds update 后把每个 feed
 #      检出到记录的提交，再 feeds install -a；
 #   3. 按顺序应用 25.12-6.12/patches/*.patch；
-#   4. 安装本地软件包与 18 个第三方插件（fetch-plugins.sh，默认每次解析
+#   4. 安装本地软件包与 19 个第三方插件（fetch-plugins.sh，默认每次解析
 #      最新版本 tag；SBE_PLUGIN_MODE=pinned 复现旧镜像，SBE_PLUGIN_STRICT=1
 #      时解析失败即中止），然后自产/复用/解包 NSS 源码并装配；
 #   5. 写入 version（REVISION）与 version.date（固定 SOURCE_DATE_EPOCH）；
@@ -286,7 +286,7 @@ for d in "$PROJ"/build/local-packages/*/; do
 	echo "[prepare]   package/$name"
 done
 
-# 18 个第三方插件（12 个自维护 + passwall/nikki/openclash/mosdns/argon）。
+# 19 个第三方插件（13 个自维护 + passwall/nikki/openclash/mosdns/argon）。
 # 默认在每次构建时解析各仓库最新版本 tag；只有新提交是 thirdparty-pins.conf
 # 里 pin 的后代才采用，分叉/回退/远端不可达都保持 pin（不中断构建）。
 # 实际提交记录在 <装配树>/.sbe-plugins.tsv，供 release notes 与日志引用；

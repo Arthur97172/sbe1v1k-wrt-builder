@@ -14,7 +14,7 @@
 # 步骤：
 #   1. 克隆并检出固定的 OPENWRT_SHA（main）；
 #   2. feeds update -a，按 feed_sha 检出固定提交，重建索引后 install -a；
-#   3. 安装 18 个第三方插件（fetch-plugins.sh，默认每次解析最新版本 tag；
+#   3. 安装 19 个第三方插件（fetch-plugins.sh，默认每次解析最新版本 tag；
 #      SBE_PLUGIN_MODE=pinned 复现旧镜像，SBE_PLUGIN_STRICT=1 时解析失败即
 #      中止），结果表写 <装配树>/.sbe-plugins.tsv；
 #   4. 把本目录的 files/ overlay 拷进装配树；
@@ -97,7 +97,7 @@ done
 echo "[prepare] feeds install -a"
 ( cd "$BR" && ./scripts/feeds install -a )
 
-# 18 个第三方插件（12 个自维护 + passwall/nikki/openclash/mosdns/argon）。
+# 19 个第三方插件（13 个自维护 + passwall/nikki/openclash/mosdns/argon）。
 # 默认在每次构建时解析各仓库最新版本 tag；只有新提交是 thirdparty-pins.conf
 # 里 pin 的后代才采用，分叉/回退/远端不可达都保持 pin（不中断构建）。
 # 必须在 feeds install 之后：脚本按 package/feeds/* 检查同名冲突。

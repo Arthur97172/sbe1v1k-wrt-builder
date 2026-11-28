@@ -33,10 +33,10 @@
   10G/1G=LAN）、LAN→WAN NAT 通、LuCI 200、风扇/LED 正常；2.4G/5G AP 正常
   （6G 当时因固件 regdb 未启用信道不可用，S3d 起三频含 6G 已真机 PASS）。详见
   `docs/S1B-DEVICE-TEST-2026-11-22.md`；重启复验待批准。
-- 插件栈（2026-11-22 按用户要求对齐 25.12-6.12）：18 个插件、官方 LuCI
-  页/WireGuard、工具与运行时全部写入种子与 `build/thirdparty-pins.conf`；
-  `fetch-plugins.sh --dry-run` 18 个仓库全部 same、`check-packages.sh seed`
-  107 项 PASS。与 6.12 的差异只在 `sbe-wifi-firmware`（6.18 用上游固件）；
+- 插件栈（2026-11-22 按用户要求对齐 25.12-6.12）：18 个插件（2026-11-28
+  增至 19，加入 `luci-app-fileassistant`）、官方 LuCI 页/WireGuard、工具与
+  运行时全部写入种子与 `build/thirdparty-pins.conf`；`fetch-plugins.sh
+  --dry-run` 当时 18 个仓库全部 same、`check-packages.sh seed` 107 项 PASS。与 6.12 的差异只在 `sbe-wifi-firmware`（6.18 用上游固件）；
   QSDK 组件从 S3d 起随镜像提供（见下条）。
 - 首启默认（S2 先行移植，2026-11-22 按用户要求）：`files/etc/uci-defaults/`
   里的 `99-allow-luci-wan`（WAN tcp 80/443 ACCEPT）与 `99-allow-ssh-wan`
@@ -92,7 +92,7 @@
   `ethernet1..3` 别名把同一个 env MAC 写进 dp2–dp4，见各自的 MAC 小节）；
   这里的 MAC 来源只有 nvmem `&ethaddr` 0–3，互不相同。
 - CI（S5，2026-11-24 起含内核检测）：`.github/workflows/build-25.12-6.18.yml`
-  与 `build-25.12-6.12.yml` 同结构——prepare 装配（含 18 插件）、
+  与 `build-25.12-6.12.yml` 同结构——prepare 装配（含 19 插件）、
   `check-kernel.sh` 内核漂移报告（只报告，不改 pin）、configure 三道包反查、
   `build-images.sh world` 单次构建、`verify-image.sh` 单镜像静态校验、
   发布 3 个资产（sysupgrade / factory / initramfs）到本次运行专属 Release
@@ -107,7 +107,7 @@
 ├── build/
 │   ├── config-seed/ipq95xx-askey-sbe1v1k.seed   # 目标/设备/LuCI/插件选择
 │   ├── required-packages.txt                    # 必装/可选/必禁唯一清单
-│   ├── thirdparty-pins.conf                     # 18 个插件的仓库与 pin
+│   ├── thirdparty-pins.conf                     # 19 个插件的仓库与 pin
 │   └── sbe1v1k-build.sh                         # make 包装（定位装配树）
 ├── docs/
 │   ├── PLAN-2026-11-22.md                       # 阶段计划与判据
@@ -131,7 +131,7 @@
 │   └── 0042-luci-version-drop-detached-head.patch  # 概览版本串去掉 detached HEAD 伪分支
 └── scripts/
     ├── ci/prepare-tree.sh                       # 克隆 main + 钉 feed + 插件装配
-    ├── ci/fetch-plugins.sh                      # 18 插件按最新 tag 安装
+    ├── ci/fetch-plugins.sh                      # 19 插件按最新 tag 安装
     ├── ci/check-kernel.sh                       # 6.18 内核漂移报告（只读）
     ├── ci/check-packages.sh                     # seed/index/config/db 反查
     ├── ci/build-images.sh                       # 单设备一次 make（NSS 唯一通路）
